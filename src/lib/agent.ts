@@ -36,10 +36,10 @@ export async function classifyWithAgent(
       throw new Error(`CLI install failed: ${await installCLI.stderr()}`);
     }
 
-    // Step 2: Install Agent SDK locally
+    // Step 2: Install Agent SDK AND Claude Code locally (SDK needs to find CLI next to itself)
     const installSDK = await sandbox.runCommand({
       cmd: "npm",
-      args: ["install", "@anthropic-ai/claude-agent-sdk"],
+      args: ["install", "@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-code"],
     });
     if (installSDK.exitCode !== 0) {
       throw new Error(`SDK install failed: ${await installSDK.stderr()}`);
