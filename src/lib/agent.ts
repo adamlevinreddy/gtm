@@ -6,8 +6,9 @@ import {
 } from "./prompts";
 
 /**
- * Classify unknown companies using Claude Agent SDK in a Vercel Sandbox.
- * No snapshot caching — builds fresh each time until we confirm it works.
+ * Classify unknown companies using Claude in a Vercel Sandbox.
+ * Follows the Vercel guide: installs @anthropic-ai/claude-code globally
+ * and @anthropic-ai/sdk locally, then runs a script that calls Claude.
  */
 export async function classifyWithAgent(
   companies: CompanyWithTitles[]
@@ -15,14 +16,9 @@ export async function classifyWithAgent(
   if (companies.length === 0) return [];
 
   const sandbox = await Sandbox.create({
-    runtime: "node22",
     resources: { vcpus: 4 },
     timeout: 300_000,
-    env: {
-      ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
-      ANTHROPIC_AUTH_TOKEN: process.env.AI_GATEWAY_API_KEY || "",
-      ANTHROPIC_API_KEY: "",
-    },
+    runtime: "node22",
   });
 
   try {
@@ -36,64 +32,55 @@ export async function classifyWithAgent(
       throw new Error(`CLI install failed: ${await installCLI.stderr()}`);
     }
 
-    // Step 2: Install Agent SDK AND Claude Code locally (SDK needs to find CLI next to itself)
+    // Step 2: Install Anthropic SDK locally (per Vercel guide)
     const installSDK = await sandbox.runCommand({
       cmd: "npm",
-      args: ["install", "@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-code"],
+      args: ["install", "@anthropic-ai/sdk"],
     });
     if (installSDK.exitCode !== 0) {
       throw new Error(`SDK install failed: ${await installSDK.stderr()}`);
     }
 
-    // Step 3: Verify claude is available and find its path
-    const verify = await sandbox.runCommand({
-      cmd: "bash",
-      args: ["-c", "which claude && claude --version 2>&1 || echo 'claude not found'"],
-    });
-    const verifyOutput = await verify.stdout();
-
-    // Step 4: Write the classification script
+    // Step 3: Write classification script using @anthropic-ai/sdk
     const userPrompt = buildClassificationPrompt(companies);
 
     const script = `
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import Anthropic from '@anthropic-ai/sdk';
+
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_AUTH_TOKEN,
+  baseURL: process.env.ANTHROPIC_BASE_URL,
+});
 
 const systemPrompt = ${JSON.stringify(CLASSIFICATION_SYSTEM_PROMPT)};
 const userPrompt = ${JSON.stringify(userPrompt)};
 
-let result = "";
-
 try {
-  for await (const message of query({
-    prompt: userPrompt,
-    options: {
-      model: "claude-opus-4-6",
-      systemPrompt,
-      allowedTools: [],
-      maxTurns: 3,
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      env: {
-        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || "",
-        ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || "",
-        ANTHROPIC_API_KEY: "",
-      },
-    },
-  })) {
-    if (message.type === "result" && "result" in message) {
-      result = message.result;
+  const response = await client.messages.create({
+    model: "anthropic/claude-opus-4.6",
+    max_tokens: 16000,
+    thinking: { type: "adaptive" },
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+
+  let result = "";
+  for (const block of response.content) {
+    if (block.type === "text") {
+      result += block.text;
     }
   }
-} catch (err) {
-  process.stderr.write("AGENT_ERROR: " + (err instanceof Error ? err.message : String(err)) + "\\n");
-}
 
-const jsonMatch = result.match(/\\[[\\s\\S]*\\]/);
-if (jsonMatch) {
-  process.stdout.write(jsonMatch[0]);
-} else {
+  const jsonMatch = result.match(/\\[[\\s\\S]*\\]/);
+  if (jsonMatch) {
+    process.stdout.write(jsonMatch[0]);
+  } else {
+    process.stdout.write("[]");
+    process.stderr.write("NO_JSON_IN_RESPONSE: " + result.slice(0, 500) + "\\n");
+  }
+} catch (err) {
+  process.stderr.write("API_ERROR: " + (err instanceof Error ? err.message : String(err)) + "\\n");
   process.stdout.write("[]");
-  process.stderr.write("NO_JSON: " + result.slice(0, 1000) + "\\n");
 }
 `;
 
@@ -101,18 +88,22 @@ if (jsonMatch) {
       { path: "/vercel/sandbox/classify.mjs", content: Buffer.from(script, "utf-8") },
     ]);
 
-    // Step 5: Run the script
+    // Step 4: Run the script with API credentials
     const run = await sandbox.runCommand({
       cmd: "node",
       args: ["classify.mjs"],
       cwd: "/vercel/sandbox",
+      env: {
+        ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
+        ANTHROPIC_AUTH_TOKEN: process.env.AI_GATEWAY_API_KEY || "",
+      },
     });
 
     const stdout = await run.stdout();
     const stderr = await run.stderr();
 
     if (!stdout || stdout.trim() === "[]") {
-      throw new Error(`Agent returned no results. verify: ${verifyOutput} | stderr: ${stderr} | exit: ${run.exitCode}`);
+      throw new Error(`No results. stderr: ${stderr} | exit: ${run.exitCode}`);
     }
 
     const parsed: Array<{
