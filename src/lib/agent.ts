@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v6";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v7";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -20,6 +20,7 @@ async function getOrCreateSnapshot(): Promise<string> {
   await kv.del("sandbox:agent-snapshot-v3");
   await kv.del("sandbox:agent-snapshot-v4");
   await kv.del("sandbox:agent-snapshot-v5");
+  await kv.del("sandbox:agent-snapshot-v6");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
@@ -61,31 +62,15 @@ async function getOrCreateSnapshot(): Promise<string> {
       throw new Error(`CLI install failed (exit ${installCli.exitCode}): ${stderr}`);
     }
 
-    // Find the actual CLI entry point (not the symlink)
-    const findCli = await sandbox.runCommand({
-      cmd: "node",
-      args: ["-e", "console.log(require.resolve('@anthropic-ai/claude-code/cli.js'))"],
+    // Find the claude CLI binary
+    const which = await sandbox.runCommand({
+      cmd: "which",
+      args: ["claude"],
       cwd: "/vercel/sandbox",
     });
-    let claudePath = (await findCli.stdout()).trim();
-    if (!claudePath || findCli.exitCode !== 0) {
-      // Fallback: try the global install path
-      const globalFind = await sandbox.runCommand({
-        cmd: "bash",
-        args: ["-c", "ls /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js 2>/dev/null || ls /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js 2>/dev/null || echo ''"],
-        cwd: "/vercel/sandbox",
-      });
-      claudePath = (await globalFind.stdout()).trim();
-    }
+    const claudePath = (await which.stdout()).trim();
     if (!claudePath) {
-      // Diagnostic: list what's in the global modules
-      const diag = await sandbox.runCommand({
-        cmd: "bash",
-        args: ["-c", "find /usr/local/lib/node_modules/@anthropic-ai -name '*.js' -maxdepth 4 2>/dev/null | head -20; echo '---'; which claude 2>/dev/null; echo '---'; npm root -g 2>/dev/null; echo '---'; ls /usr/local/bin/claude* 2>/dev/null"],
-        cwd: "/vercel/sandbox",
-      });
-      const diagOutput = await diag.stdout();
-      throw new Error(`Claude CLI entry point not found. Diagnostics: ${diagOutput}`);
+      throw new Error("Claude CLI not found on PATH after global install");
     }
 
     // Store the path for the classification script
