@@ -148,10 +148,15 @@ if (jsonMatch) {
     });
 
     const stdout = await run.stdout();
+    const stderr = await run.stderr();
 
     if (run.exitCode !== 0) {
-      const stderr = await run.stderr();
       throw new Error(`Classification script failed (exit ${run.exitCode}): ${stderr}`);
+    }
+
+    // If stdout is empty or just "[]", check stderr for diagnostics
+    if (!stdout || stdout.trim() === "[]") {
+      throw new Error(`Agent returned no results. stderr: ${stderr || "(empty)"}, stdout: ${stdout || "(empty)"}`);
     }
 
     // Parse the JSON array from stdout
