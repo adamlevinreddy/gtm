@@ -57,6 +57,19 @@ export interface ReviewItem {
   rationale: string | null;
 }
 
+/** A HubSpot contact match found during classification */
+export interface HubSpotContactMatch {
+  name: string;
+  email: string | null;
+  title: string | null;
+}
+
+/** A company with HubSpot CRM matches */
+export interface HubSpotCompanyMatch {
+  company: string;
+  contacts: HubSpotContactMatch[];
+}
+
 /** Full review state stored in Vercel KV */
 export interface ReviewData {
   id: string;
@@ -75,4 +88,6 @@ export interface ReviewData {
     tagsAdded: number;
     prospectsAdded: number;
   } | null;
+  /** HubSpot CRM matches found during classification */
+  hubspotMatches?: HubSpotCompanyMatch[];
 }

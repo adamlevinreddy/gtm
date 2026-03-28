@@ -58,7 +58,7 @@ export async function POST(
   }
 
   // Unknown — classify with agent
-  const results = await classifyWithAgent([{ name: companyName, titles }]);
+  const { classifications: results } = await classifyWithAgent([{ name: companyName, titles }]);
   const result = results[0] || {
     name: companyName,
     action: "prospect" as const,

@@ -60,7 +60,7 @@ async function handleQuickCheck(companyName: string, slackThreadTs?: string) {
     return NextResponse.json(result);
   }
 
-  const agentResults = await classifyWithAgent([{ name: companyName, titles: [] }]);
+  const { classifications: agentResults } = await classifyWithAgent([{ name: companyName, titles: [] }]);
 
   const agentResult = agentResults[0] || {
     name: companyName,
@@ -103,7 +103,8 @@ async function handleBatchFromJson(companies: CompanyWithTitles[], source: strin
   let agentError: string | null = null;
   if (unknowns.length > 0) {
     try {
-      agentResults = await classifyWithAgent(unknowns);
+      const output = await classifyWithAgent(unknowns);
+      agentResults = output.classifications;
     } catch (err) {
       agentError = err instanceof Error ? err.message : String(err);
       console.error("Agent classification failed:", agentError);

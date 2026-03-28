@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   const counterKey = `review:${reviewId}:completed-batches`;
 
   try {
-    const agentResults = await classifyWithAgent(batch);
+    const { classifications: agentResults, hubspotMatches } = await classifyWithAgent(batch);
 
     // Update review in KV — append new items (atomic via get+set)
     const review = await getReview(reviewId);
@@ -68,6 +68,12 @@ export async function POST(req: NextRequest) {
       });
 
       review.items = [...review.items, ...newItems];
+
+      // Store HubSpot matches if any were found
+      if (hubspotMatches.length > 0) {
+        review.hubspotMatches = [...(review.hubspotMatches || []), ...hubspotMatches];
+      }
+
       await kv.set(`review:${reviewId}`, review, { ex: 7 * 24 * 60 * 60 });
     }
 
@@ -83,16 +89,24 @@ export async function POST(req: NextRequest) {
       const tagCount = finalReview?.items.filter((i) => i.action === "tag").length || 0;
       const prospectCount = finalReview?.items.filter((i) => i.action === "prospect").length || 0;
       const totalClassified = (finalReview?.items.length || 0);
+      const hsMatchCount = finalReview?.hubspotMatches?.length || 0;
 
       const baseUrl = "https://gtm-jet.vercel.app";
+      let summaryText = `:white_check_mark: Claude finished classifying ${totalClassified} companies:\n` +
+        `> :no_entry: *${excludeCount}* suggested for exclusion (vendors)\n` +
+        `> :label: *${tagCount}* suggested for tagging (BPO/Media)\n` +
+        `> :bust_in_silhouette: *${prospectCount}* identified as prospects\n`;
+
+      if (hsMatchCount > 0) {
+        summaryText += `> :mag: *${hsMatchCount}* companies found in HubSpot CRM\n`;
+      }
+
+      summaryText += `\n<${baseUrl}/review/${reviewId}|Review the ${excludeCount + tagCount} exclusion/tag suggestions>`;
+
       await getSlackClient().chat.postMessage({
         channel: slackChannel,
         thread_ts: slackThreadTs,
-        text: `:white_check_mark: Claude finished classifying ${totalClassified} companies:\n` +
-          `> :no_entry: *${excludeCount}* suggested for exclusion (vendors)\n` +
-          `> :label: *${tagCount}* suggested for tagging (BPO/Media)\n` +
-          `> :bust_in_silhouette: *${prospectCount}* identified as prospects\n\n` +
-          `<${baseUrl}/review/${reviewId}|Review the ${excludeCount + tagCount} exclusion/tag suggestions>`,
+        text: summaryText,
       });
 
       // Swap emoji: hourglass → checkmark
