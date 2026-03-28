@@ -4,13 +4,11 @@ import { CompanyClassifier } from "@/lib/classifier";
 import { fetchCompanyLists } from "@/lib/github";
 import { sendQuickClassification } from "@/lib/slack";
 import { parseUploadedFile } from "@/lib/parse-upload";
-import { classifyWithAgent } from "@/lib/agent";
 import { createReview } from "@/lib/kv";
-import type { ClassificationResult, ReviewItem } from "@/lib/types";
+import type { ClassificationResult } from "@/lib/types";
 
-export const maxDuration = 300;
+export const maxDuration = 60; // Known matching is fast — don't need 5 min
 
-// Simple deduplication — track event IDs we've already processed
 const processedEvents = new Set<string>();
 
 function getSlackClient() {
@@ -20,17 +18,13 @@ function getSlackClient() {
 async function addReaction(channel: string, timestamp: string, emoji: string) {
   try {
     await getSlackClient().reactions.add({ channel, name: emoji, timestamp });
-  } catch {
-    // Reaction may already exist
-  }
+  } catch { /* may already exist */ }
 }
 
 async function removeReaction(channel: string, timestamp: string, emoji: string) {
   try {
     await getSlackClient().reactions.remove({ channel, name: emoji, timestamp });
-  } catch {
-    // Reaction may not exist
-  }
+  } catch { /* may not exist */ }
 }
 
 async function replyInThread(channel: string, threadTs: string, text: string) {
@@ -40,19 +34,16 @@ async function replyInThread(channel: string, threadTs: string, text: string) {
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  // Slack URL verification challenge
   if (body.type === "url_verification") {
     return NextResponse.json({ challenge: body.challenge });
   }
 
-  // Deduplicate — Slack retries if we're slow
   const eventId = body.event_id || body.event?.client_msg_id || body.event?.ts;
   if (eventId && processedEvents.has(eventId)) {
     return NextResponse.json({ ok: true });
   }
   if (eventId) {
     processedEvents.add(eventId);
-    // Clean up old entries after 5 minutes to avoid memory leak
     setTimeout(() => processedEvents.delete(eventId), 5 * 60 * 1000);
   }
 
@@ -98,9 +89,7 @@ export async function POST(req: NextRequest) {
               channel, latest: event.ts, inclusive: true, limit: 1,
             });
             files = msgResult.messages?.[0]?.files;
-          } catch {
-            // Fall through
-          }
+          } catch { /* fall through */ }
         }
 
         if (!files || files.length === 0) {
@@ -109,18 +98,17 @@ export async function POST(req: NextRequest) {
         }
 
         await addReaction(channel, event.ts, "hourglass_flowing_sand");
-        await replyInThread(channel, event.ts, ":hourglass_flowing_sand: Processing your list...");
 
         try {
           const file = files[0];
 
-          // Download file from Slack
+          // Download file
           const fileResponse = await fetch(file.url_private_download || file.url_private, {
             headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
           });
           const rawBuffer = Buffer.from(await fileResponse.arrayBuffer());
 
-          // Decrypt if password-protected
+          // Decrypt if needed
           // eslint-disable-next-line @typescript-eslint/no-require-imports
           const officeCrypto = require("officecrypto-tool") as {
             isEncrypted: (buf: Buffer) => boolean;
@@ -139,11 +127,11 @@ export async function POST(req: NextRequest) {
             fileBuffer = await officeCrypto.decrypt(rawBuffer, { password });
           }
 
-          // Parse
+          // Parse file
           const companies = await parseUploadedFile(fileBuffer, file.name || "upload.xlsx");
           const source = (file.name || "upload").replace(/\.[^.]+$/, "");
 
-          // Classify known
+          // Known matching (fast)
           const lists = await fetchCompanyLists();
           const classifier = new CompanyClassifier(lists.exclusions, lists.tags, lists.prospects);
 
@@ -159,48 +147,43 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Classify unknowns with Claude Agent in Vercel Sandbox
-          let agentResults: ClassificationResult[] = [];
-          if (unknowns.length > 0) {
-            try {
-              await replyInThread(channel, event.ts, `:brain: Classifying ${unknowns.length} unknown companies with Claude...`);
-              agentResults = await classifyWithAgent(unknowns);
-            } catch (agentErr) {
-              const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
-              await replyInThread(channel, event.ts, `:warning: Agent classification failed: ${errMsg.slice(0, 500)}`);
-            }
-          }
+          // Store review in KV (unknowns will be populated by background job)
+          const reviewId = await createReview({ source, items: [], knownResults });
 
-          const reviewItems: ReviewItem[] = agentResults.map((r) => {
-            const companyData = unknowns.find((u) => u.name === r.name);
-            return {
-              name: r.name, titles: companyData?.titles || [],
-              action: r.action, category: r.category, rationale: r.rationale,
-            };
-          });
-
-          // Store in KV
-          const reviewId = await createReview({ source, items: reviewItems, knownResults });
-
-          // Build clean summary
+          // Post known matches summary immediately
           const excluded = knownResults.filter((r) => r.action === "exclude");
           const tagged = knownResults.filter((r) => r.action === "tag");
           const prospects = knownResults.filter((r) => r.action === "prospect");
-
           const baseUrl = "https://gtm-jet.vercel.app";
 
-          let summary = `:white_check_mark: *Classification complete: ${source}*\n\n`;
+          let summary = `:white_check_mark: *Known matches found for ${source}:*\n\n`;
           summary += `> *${companies.length}* companies processed\n`;
           summary += `> :no_entry: *${excluded.length}* vendors excluded\n`;
           summary += `> :label: *${tagged.length}* tagged for different outreach (BPO/Media)\n`;
           summary += `> :bust_in_silhouette: *${prospects.length}* known prospects\n`;
-          summary += `> :mag: *${unknowns.length}* unknown — ${agentResults.length > 0 ? "classified by Claude" : "needs classification"}\n`;
-
-          summary += `\n<${baseUrl}/review/${reviewId}|View full results & review>`;
+          summary += `> :mag: *${unknowns.length}* unknown — sending to Claude for classification...\n`;
+          summary += `\n<${baseUrl}/review/${reviewId}|View results>`;
 
           await replyInThread(channel, event.ts, summary);
 
-          // Swap hourglass for checkmark
+          // Fire-and-forget: classify unknowns in background
+          if (unknowns.length > 0) {
+            fetch(`${baseUrl}/api/classify/background`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                reviewId,
+                unknowns,
+                slackChannel: channel,
+                slackThreadTs: event.ts,
+                source,
+              }),
+            }).catch(() => {
+              // Fire and forget — background endpoint handles errors
+            });
+          }
+
+          // Swap hourglass for checkmark (known matching done)
           await removeReaction(channel, event.ts, "hourglass_flowing_sand");
           await addReaction(channel, event.ts, "white_check_mark");
         } catch (err) {
