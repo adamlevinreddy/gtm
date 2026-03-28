@@ -14,12 +14,14 @@ export async function POST(req: NextRequest) {
   if (body.event) {
     const event = body.event;
 
-    // Only respond to messages, not bot messages
-    if (event.type === "message" && !event.bot_id) {
-      const text = (event.text || "").toLowerCase().trim();
+    // Only respond when the bot is @mentioned, not on every message
+    if (event.type === "app_mention" && !event.bot_id) {
+      // Strip the bot mention (<@BOTID>) from the text
+      const rawText = (event.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
+      const text = rawText.toLowerCase();
 
       if (text.startsWith("check ")) {
-        const companyName = event.text.slice(6).trim();
+        const companyName = rawText.slice(6).trim();
         const baseUrl = process.env.VERCEL_URL
           ? `https://${process.env.VERCEL_URL}`
           : "http://localhost:3000";
