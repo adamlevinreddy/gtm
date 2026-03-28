@@ -84,10 +84,28 @@ export async function POST(req: NextRequest) {
           const fileResponse = await fetch(file.url_private_download || file.url_private, {
             headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
           });
-          const buffer = Buffer.from(await fileResponse.arrayBuffer());
+          const rawBuffer = Buffer.from(await fileResponse.arrayBuffer());
+
+          // Decrypt if password-protected
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const officeCrypto = require("officecrypto-tool") as {
+            isEncrypted: (buf: Buffer) => boolean;
+            decrypt: (buf: Buffer, opts: { password: string }) => Promise<Buffer>;
+          };
+          let fileBuffer: Buffer = rawBuffer;
+          if (officeCrypto.isEncrypted(rawBuffer)) {
+            const passwordMatch = rawText.match(/password\s+(?:is\s+)?["""']?([^"""'\s,]+)/i);
+            const password = passwordMatch ? passwordMatch[1] : undefined;
+            if (!password) {
+              await replyInThread(channel, event.ts, "This file is password-protected. Please include the password in your message, e.g. `@GTM Classifier classify this, the password is MyPassword`");
+              await addReaction(channel, event.ts, "x");
+              return NextResponse.json({ ok: true });
+            }
+            fileBuffer = await officeCrypto.decrypt(rawBuffer, { password });
+          }
 
           // Parse the file
-          const companies = await parseUploadedFile(buffer, file.name || "upload.xlsx");
+          const companies = await parseUploadedFile(fileBuffer, file.name || "upload.xlsx");
 
           // Extract source name from filename
           const source = (file.name || "upload").replace(/\.[^.]+$/, "");
