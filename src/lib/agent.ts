@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v2";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v3";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -16,6 +16,7 @@ const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v2";
 async function getOrCreateSnapshot(): Promise<string> {
   // Delete stale snapshots from previous versions
   await kv.del("sandbox:agent-snapshot-id");
+  await kv.del("sandbox:agent-snapshot-v2");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
