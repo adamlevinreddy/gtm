@@ -1,0 +1,691 @@
+{
+  "categories": {
+    "bpo": {
+      "label": "BPO / Outsourcing",
+      "action": "tag"
+    },
+    "media": {
+      "label": "Media / Press",
+      "action": "tag"
+    }
+  },
+  "companies": [
+    {
+      "name": "ABC (media)",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Afrishore",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Alorica",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Arise",
+      "aliases": [
+        "Arise Virtual Solutions"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Balance Staffing",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Bayside Support Services",
+      "aliases": [
+        "Bayside Support Services, LLC"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Belize Virtual Center Ltd.",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Big Event Media",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CAT America Media LLC",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CBE Companies",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CCI GLOBAL",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cin City Pictures",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CNBC",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Concentrix",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Conduent",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Continuum Global Solutions, LLC",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CX Dive",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CX Today",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CXChronicles",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Dash BPO",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Eastvantage",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Entrepreneur",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Etech Global Services",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ExpertSource Global Services",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Flowz Staffing",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Foundever",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Gear Inc.",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Harte Hanks",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Helpware",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Hexaware Technologies",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "HGS",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ibex",
+      "aliases": [
+        "Ibex",
+        "IBEX GLOBAL SOLUTIONS"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Inktel",
+      "aliases": [
+        "Inktel Contact Center Solutions"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Inspiro",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Instant Teams",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "IntelliBPO",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "InteLogix",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "IntouchCX",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "iQor",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Iterum Connections",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "KellyConnect",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "KMC Solutions",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Lean Solutions Group",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Liveops",
+      "aliases": [
+        "LiveOps",
+        "Liveops, Inc."
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Lumina Datamatics",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Mas Callnet India Pvt. Ltd.",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Maximus",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Metric Sherpa, Inc",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Movate",
+      "aliases": [
+        "Movate Inc",
+        "Movate Inc."
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Newsbreak",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "NexRep, LLC",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Nutun",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Omni Interactions",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "One Point One Solutions",
+      "aliases": [
+        "ONE POINT ONE SOLUTIONS"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "OneTouch Direct",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "OP360",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Peak Outsourcing",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Peak Support",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "PlusOne Company BPO",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Qualfon",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Quantanite",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Redial BPO",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Remote Agent Pools",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Response BPO",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ResultsCx",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Retail Tech Podcast",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ROI CX Solutions",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Salem Solutions",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Select VoiceCom",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ShyftOff",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Simpler Media Group",
+      "aliases": [],
+      "category": "media",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Skybridge Americas",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SourceCX",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Sourcefit",
+      "aliases": [
+        "Sourcefit, SourceCX"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SupportNinja",
+      "aliases": [
+        "SuppportNinja"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SupportZebra",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Sutherland",
+      "aliases": [
+        "Sutherland Global",
+        "Sutherland Labs (Sutherland Global)"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Tech Mahindra",
+      "aliases": [
+        "Tech Mahindra Americas Inc."
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TELUS Digital",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TP",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Transcom",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TTEC",
+      "aliases": [
+        "TTEC DIGITAL",
+        "TTEC Digital",
+        "TTecDigital",
+        "ttec"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Ubiquity",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "UnifyCX LLC",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ValueLabs",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "VenturesCX",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "VXI Global Solutions LLC",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "WNS Global Services",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Work for Impact",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Working Solutions",
+      "aliases": [
+        "Working Soltuions"
+      ],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "WorkUS Global Solutions",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "WOW24-7",
+      "aliases": [],
+      "category": "bpo",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    }
+  ]
+}
