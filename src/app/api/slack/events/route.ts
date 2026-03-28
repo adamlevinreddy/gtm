@@ -159,13 +159,15 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Classify unknowns with Claude
+          // Classify unknowns with Claude Agent in Vercel Sandbox
           let agentResults: ClassificationResult[] = [];
           if (unknowns.length > 0) {
             try {
+              await replyInThread(channel, event.ts, `:brain: Classifying ${unknowns.length} unknown companies with Claude...`);
               agentResults = await classifyWithAgent(unknowns);
-            } catch {
-              // Agent failed — continue with known matches only
+            } catch (agentErr) {
+              const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+              await replyInThread(channel, event.ts, `:warning: Agent classification failed: ${errMsg.slice(0, 500)}`);
             }
           }
 
