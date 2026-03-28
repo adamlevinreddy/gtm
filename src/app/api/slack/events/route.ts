@@ -166,26 +166,35 @@ export async function POST(req: NextRequest) {
 
           await replyInThread(channel, event.ts, summary);
 
-          // Fire-and-forget: classify unknowns in background
+          // Fire all batches in parallel — each gets its own function + sandbox
           if (unknowns.length > 0) {
-            fetch(`${baseUrl}/api/classify/background`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                reviewId,
-                unknowns,
-                slackChannel: channel,
-                slackThreadTs: event.ts,
-                source,
-              }),
-            }).catch(() => {
-              // Fire and forget — background endpoint handles errors
-            });
-          }
+            const BATCH_SIZE = 40;
+            const batches: typeof unknowns[] = [];
+            for (let i = 0; i < unknowns.length; i += BATCH_SIZE) {
+              batches.push(unknowns.slice(i, i + BATCH_SIZE));
+            }
 
-          // Swap hourglass for checkmark (known matching done)
-          await removeReaction(channel, event.ts, "hourglass_flowing_sand");
-          await addReaction(channel, event.ts, "white_check_mark");
+            for (let i = 0; i < batches.length; i++) {
+              fetch(`${baseUrl}/api/classify/background`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  reviewId,
+                  batch: batches[i],
+                  batchIndex: i,
+                  totalBatches: batches.length,
+                  totalUnknowns: unknowns.length,
+                  slackChannel: channel,
+                  slackThreadTs: event.ts,
+                }),
+              }).catch(() => { /* fire and forget */ });
+            }
+          } else {
+            // No unknowns — swap emoji immediately
+            await removeReaction(channel, event.ts, "hourglass_flowing_sand");
+            await addReaction(channel, event.ts, "white_check_mark");
+          }
+          // Hourglass stays until background batches finish and swap it
         } catch (err) {
           await removeReaction(channel, event.ts, "hourglass_flowing_sand");
           await addReaction(channel, event.ts, "x");
