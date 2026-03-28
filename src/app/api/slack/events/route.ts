@@ -180,45 +180,21 @@ export async function POST(req: NextRequest) {
           // Store in KV
           const reviewId = await createReview({ source, items: reviewItems, knownResults });
 
-          // Build detailed results
+          // Build clean summary
           const excluded = knownResults.filter((r) => r.action === "exclude");
           const tagged = knownResults.filter((r) => r.action === "tag");
           const prospects = knownResults.filter((r) => r.action === "prospect");
 
-          const baseUrl = process.env.VERCEL_URL
-            ? `https://${process.env.VERCEL_URL}`
-            : "https://gtm-jet.vercel.app";
+          const baseUrl = "https://gtm-jet.vercel.app";
 
-          // Build a detailed summary message
           let summary = `:white_check_mark: *Classification complete: ${source}*\n\n`;
-          summary += `*${companies.length}* total companies | *${knownResults.length}* known matches | *${unknowns.length}* unknown\n\n`;
+          summary += `> *${companies.length}* companies processed\n`;
+          summary += `> :no_entry: *${excluded.length}* vendors excluded\n`;
+          summary += `> :label: *${tagged.length}* tagged for different outreach (BPO/Media)\n`;
+          summary += `> :bust_in_silhouette: *${prospects.length}* known prospects\n`;
+          summary += `> :mag: *${unknowns.length}* unknown — ${agentResults.length > 0 ? "classified by Claude" : "needs classification"}\n`;
 
-          if (excluded.length > 0) {
-            summary += `:no_entry: *Excluded vendors (${excluded.length}):*\n`;
-            summary += excluded.slice(0, 20).map((r) => `  • ${r.name} _(${r.category})_`).join("\n");
-            if (excluded.length > 20) summary += `\n  _...and ${excluded.length - 20} more_`;
-            summary += "\n\n";
-          }
-
-          if (tagged.length > 0) {
-            summary += `:label: *Tagged — different outreach (${tagged.length}):*\n`;
-            summary += tagged.slice(0, 20).map((r) => `  • ${r.name} _(${r.category})_`).join("\n");
-            if (tagged.length > 20) summary += `\n  _...and ${tagged.length - 20} more_`;
-            summary += "\n\n";
-          }
-
-          if (prospects.length > 0) {
-            summary += `:white_check_mark: *Known prospects (${prospects.length}):*\n`;
-            summary += prospects.slice(0, 10).map((r) => `  • ${r.name}`).join("\n");
-            if (prospects.length > 10) summary += `\n  _...and ${prospects.length - 10} more_`;
-            summary += "\n\n";
-          }
-
-          summary += `:bar_chart: *${unknowns.length - agentResults.length > 0 ? unknowns.length + " unclassified (agent unavailable)" : unknowns.length + " classified by Claude"}*`;
-
-          if (reviewItems.length > 0 || unknowns.length > 0) {
-            summary += `\n\n<${baseUrl}/review/${reviewId}|:mag: Review & approve classifications>`;
-          }
+          summary += `\n<${baseUrl}/review/${reviewId}|View full results & review>`;
 
           await replyInThread(channel, event.ts, summary);
 
