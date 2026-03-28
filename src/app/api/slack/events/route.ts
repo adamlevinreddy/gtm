@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { WebClient } from "@slack/web-api";
 import { CompanyClassifier } from "@/lib/classifier";
 import { fetchCompanyLists } from "@/lib/github";
-import { sendQuickClassification, sendReviewNotification } from "@/lib/slack";
+import { sendQuickClassification } from "@/lib/slack";
 import { parseUploadedFile } from "@/lib/parse-upload";
 import { classifyWithAgent } from "@/lib/agent";
 import { createReview } from "@/lib/kv";
 import type { ClassificationResult, ReviewItem } from "@/lib/types";
 
-export const maxDuration = 300; // 5 min for file processing
+export const maxDuration = 300;
+
+// Simple deduplication — track event IDs we've already processed
+const processedEvents = new Set<string>();
 
 function getSlackClient() {
   return new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -18,7 +21,15 @@ async function addReaction(channel: string, timestamp: string, emoji: string) {
   try {
     await getSlackClient().reactions.add({ channel, name: emoji, timestamp });
   } catch {
-    // Reaction may already exist or fail — non-critical
+    // Reaction may already exist
+  }
+}
+
+async function removeReaction(channel: string, timestamp: string, emoji: string) {
+  try {
+    await getSlackClient().reactions.remove({ channel, name: emoji, timestamp });
+  } catch {
+    // Reaction may not exist
   }
 }
 
@@ -34,28 +45,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ challenge: body.challenge });
   }
 
-  // Handle events
+  // Deduplicate — Slack retries if we're slow
+  const eventId = body.event_id || body.event?.client_msg_id || body.event?.ts;
+  if (eventId && processedEvents.has(eventId)) {
+    return NextResponse.json({ ok: true });
+  }
+  if (eventId) {
+    processedEvents.add(eventId);
+    // Clean up old entries after 5 minutes to avoid memory leak
+    setTimeout(() => processedEvents.delete(eventId), 5 * 60 * 1000);
+  }
+
   if (body.event) {
     const event = body.event;
 
-    // Only respond when the bot is @mentioned
     if (event.type === "app_mention" && !event.bot_id) {
       const rawText = (event.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
       const text = rawText.toLowerCase();
       const channel = event.channel;
 
-      // --- QUICK CHECK: "@GTM Classifier check <company>" ---
+      // --- QUICK CHECK ---
       if (text.startsWith("check ")) {
         const companyName = rawText.slice(6).trim();
         await addReaction(channel, event.ts, "eyes");
 
         try {
           const lists = await fetchCompanyLists();
-          const classifier = new CompanyClassifier(
-            lists.exclusions,
-            lists.tags,
-            lists.prospects
-          );
+          const classifier = new CompanyClassifier(lists.exclusions, lists.tags, lists.prospects);
           const result = classifier.classifyKnown(companyName);
 
           await sendQuickClassification({
@@ -65,42 +81,40 @@ export async function POST(req: NextRequest) {
             confidence: result?.confidence || "none",
             threadTs: event.ts,
           });
+          await removeReaction(channel, event.ts, "eyes");
           await addReaction(channel, event.ts, "white_check_mark");
         } catch {
+          await removeReaction(channel, event.ts, "eyes");
           await addReaction(channel, event.ts, "x");
         }
       }
 
-      // --- FILE UPLOAD: "@GTM Classifier classify this" with file attached ---
+      // --- FILE CLASSIFICATION ---
       else if (text.includes("classify")) {
-        // Files may not be in the app_mention event — fetch the message to get them
         let files = event.files;
         if (!files || files.length === 0) {
           try {
             const msgResult = await getSlackClient().conversations.history({
-              channel,
-              latest: event.ts,
-              inclusive: true,
-              limit: 1,
+              channel, latest: event.ts, inclusive: true, limit: 1,
             });
             files = msgResult.messages?.[0]?.files;
           } catch {
-            // Fall through — files will be empty
+            // Fall through
           }
         }
 
         if (!files || files.length === 0) {
-          await replyInThread(channel, event.ts, "I don't see a file attached. Please upload a CSV or XLSX file in the same message as the classify command.");
+          await replyInThread(channel, event.ts, "I don't see a file attached. Upload a CSV or XLSX in the same message.");
           return NextResponse.json({ ok: true });
         }
 
         await addReaction(channel, event.ts, "hourglass_flowing_sand");
-        await replyInThread(channel, event.ts, "Got it — processing your list. I'll send a review link when ready.");
+        await replyInThread(channel, event.ts, ":hourglass_flowing_sand: Processing your list...");
 
         try {
           const file = files[0];
 
-          // Download the file from Slack
+          // Download file from Slack
           const fileResponse = await fetch(file.url_private_download || file.url_private, {
             headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
           });
@@ -117,20 +131,19 @@ export async function POST(req: NextRequest) {
             const passwordMatch = rawText.match(/password\s+(?:is\s+)?["""']?([^"""'\s,]+)/i);
             const password = passwordMatch ? passwordMatch[1] : undefined;
             if (!password) {
-              await replyInThread(channel, event.ts, "This file is password-protected. Please include the password in your message, e.g. `@GTM Classifier classify this, the password is MyPassword`");
+              await replyInThread(channel, event.ts, "This file is password-protected. Include the password: `@GTM Classifier classify this, the password is MyPassword`");
+              await removeReaction(channel, event.ts, "hourglass_flowing_sand");
               await addReaction(channel, event.ts, "x");
               return NextResponse.json({ ok: true });
             }
             fileBuffer = await officeCrypto.decrypt(rawBuffer, { password });
           }
 
-          // Parse the file
+          // Parse
           const companies = await parseUploadedFile(fileBuffer, file.name || "upload.xlsx");
-
-          // Extract source name from filename
           const source = (file.name || "upload").replace(/\.[^.]+$/, "");
 
-          // Classify
+          // Classify known
           const lists = await fetchCompanyLists();
           const classifier = new CompanyClassifier(lists.exclusions, lists.tags, lists.prospects);
 
@@ -146,50 +159,76 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Classify unknowns with Claude agent
+          // Classify unknowns with Claude
           let agentResults: ClassificationResult[] = [];
           if (unknowns.length > 0) {
             try {
               agentResults = await classifyWithAgent(unknowns);
             } catch {
-              await replyInThread(channel, event.ts, "Note: Claude agent classification failed for unknown companies. Showing known matches only.");
+              // Agent failed — continue with known matches only
             }
           }
 
           const reviewItems: ReviewItem[] = agentResults.map((r) => {
             const companyData = unknowns.find((u) => u.name === r.name);
             return {
-              name: r.name,
-              titles: companyData?.titles || [],
-              action: r.action,
-              category: r.category,
-              rationale: r.rationale,
+              name: r.name, titles: companyData?.titles || [],
+              action: r.action, category: r.category, rationale: r.rationale,
             };
           });
 
           // Store in KV
           const reviewId = await createReview({ source, items: reviewItems, knownResults });
 
-          const excludedCount = knownResults.filter((r) => r.action === "exclude").length;
-          const taggedCount = knownResults.filter((r) => r.action === "tag").length;
-          const prospectCount = knownResults.filter((r) => r.action === "prospect").length;
+          // Build detailed results
+          const excluded = knownResults.filter((r) => r.action === "exclude");
+          const tagged = knownResults.filter((r) => r.action === "tag");
+          const prospects = knownResults.filter((r) => r.action === "prospect");
 
-          // Send review notification to channel
-          await sendReviewNotification({
-            reviewId,
-            source,
-            totalCompanies: companies.length,
-            knownMatches: knownResults.length,
-            needsReview: reviewItems.length,
-            excludedCompanies: excludedCount,
-            taggedCompanies: taggedCount,
-            prospectCompanies: prospectCount,
-          });
+          const baseUrl = process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : "https://gtm-jet.vercel.app";
 
+          // Build a detailed summary message
+          let summary = `:white_check_mark: *Classification complete: ${source}*\n\n`;
+          summary += `*${companies.length}* total companies | *${knownResults.length}* known matches | *${unknowns.length}* unknown\n\n`;
+
+          if (excluded.length > 0) {
+            summary += `:no_entry: *Excluded vendors (${excluded.length}):*\n`;
+            summary += excluded.slice(0, 20).map((r) => `  • ${r.name} _(${r.category})_`).join("\n");
+            if (excluded.length > 20) summary += `\n  _...and ${excluded.length - 20} more_`;
+            summary += "\n\n";
+          }
+
+          if (tagged.length > 0) {
+            summary += `:label: *Tagged — different outreach (${tagged.length}):*\n`;
+            summary += tagged.slice(0, 20).map((r) => `  • ${r.name} _(${r.category})_`).join("\n");
+            if (tagged.length > 20) summary += `\n  _...and ${tagged.length - 20} more_`;
+            summary += "\n\n";
+          }
+
+          if (prospects.length > 0) {
+            summary += `:white_check_mark: *Known prospects (${prospects.length}):*\n`;
+            summary += prospects.slice(0, 10).map((r) => `  • ${r.name}`).join("\n");
+            if (prospects.length > 10) summary += `\n  _...and ${prospects.length - 10} more_`;
+            summary += "\n\n";
+          }
+
+          summary += `:bar_chart: *${unknowns.length - agentResults.length > 0 ? unknowns.length + " unclassified (agent unavailable)" : unknowns.length + " classified by Claude"}*`;
+
+          if (reviewItems.length > 0 || unknowns.length > 0) {
+            summary += `\n\n<${baseUrl}/review/${reviewId}|:mag: Review & approve classifications>`;
+          }
+
+          await replyInThread(channel, event.ts, summary);
+
+          // Swap hourglass for checkmark
+          await removeReaction(channel, event.ts, "hourglass_flowing_sand");
           await addReaction(channel, event.ts, "white_check_mark");
         } catch (err) {
+          await removeReaction(channel, event.ts, "hourglass_flowing_sand");
           await addReaction(channel, event.ts, "x");
-          await replyInThread(channel, event.ts, `Error processing file: ${err instanceof Error ? err.message : "Unknown error"}`);
+          await replyInThread(channel, event.ts, `Error: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
       }
 
@@ -198,7 +237,7 @@ export async function POST(req: NextRequest) {
         await replyInThread(channel, event.ts,
           "I can help with:\n" +
           "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
-          "• `@GTM Classifier classify this` — attach a CSV/XLSX file to classify a list"
+          "• `@GTM Classifier classify this` — attach a CSV/XLSX to classify a list"
         );
       }
     }
