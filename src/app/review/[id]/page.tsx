@@ -1,10 +1,85 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { ReviewTable } from "@/components/review-table";
 import { SubmitButton } from "@/components/submit-button";
-import type { ReviewData } from "@/lib/types";
+import type { ReviewData, ClassificationResult } from "@/lib/types";
+
+function CollapsibleSection({
+  title,
+  count,
+  color,
+  children,
+}: {
+  title: string;
+  count: number;
+  color: "red" | "amber" | "blue";
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const colorMap = {
+    red: {
+      border: "border-red-200",
+      bg: "bg-red-50",
+      text: "text-red-800",
+      badge: "bg-red-100 text-red-700",
+    },
+    amber: {
+      border: "border-amber-200",
+      bg: "bg-amber-50",
+      text: "text-amber-800",
+      badge: "bg-amber-100 text-amber-700",
+    },
+    blue: {
+      border: "border-blue-200",
+      bg: "bg-blue-50",
+      text: "text-blue-800",
+      badge: "bg-blue-100 text-blue-700",
+    },
+  };
+
+  const c = colorMap[color];
+
+  return (
+    <div className={`border ${c.border} rounded-lg overflow-hidden`}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`w-full flex items-center justify-between px-4 py-3 ${c.bg} hover:brightness-95 transition-all`}
+      >
+        <div className="flex items-center gap-2">
+          <span className={`text-sm font-medium ${c.text}`}>
+            {open ? "\u25BC" : "\u25B6"} {title}
+          </span>
+          <span
+            className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}
+          >
+            {count}
+          </span>
+        </div>
+      </button>
+      {open && <div className="px-4 py-3 text-sm text-gray-700">{children}</div>}
+    </div>
+  );
+}
+
+function groupByCategory(
+  results: ClassificationResult[]
+): Record<string, string[]> {
+  const groups: Record<string, string[]> = {};
+  for (const r of results) {
+    const key = r.category || "Uncategorized";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(r.name);
+  }
+  // Sort names within each group
+  for (const key of Object.keys(groups)) {
+    groups[key].sort((a, b) => a.localeCompare(b));
+  }
+  return groups;
+}
 
 export default function ReviewPage() {
   const params = useParams();
@@ -33,6 +108,18 @@ export default function ReviewPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const { excluded, tagged, prospects } = useMemo(() => {
+    if (!review) return { excluded: [], tagged: [], prospects: [] };
+    return {
+      excluded: review.knownResults.filter((r) => r.action === "exclude"),
+      tagged: review.knownResults.filter((r) => r.action === "tag"),
+      prospects: review.knownResults.filter((r) => r.action === "prospect"),
+    };
+  }, [review]);
+
+  const excludedGroups = useMemo(() => groupByCategory(excluded), [excluded]);
+  const taggedGroups = useMemo(() => groupByCategory(tagged), [tagged]);
 
   if (loading) {
     return (
@@ -77,13 +164,91 @@ export default function ReviewPage() {
     );
   }
 
+  const totalProcessed = review.knownResults.length + review.items.length;
+
   return (
     <main className="min-h-screen p-8 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Review: {review.source}</h1>
         <p className="text-gray-500 mt-1">
-          {review.knownResults.length} companies matched automatically.{" "}
-          {review.items.length} need your review.
+          {totalProcessed} companies processed. {review.knownResults.length} known
+          matches. {review.items.length} need review.
+        </p>
+      </div>
+
+      {/* Known Results Summary */}
+      <div className="mb-8 space-y-3">
+        <CollapsibleSection
+          title="Excluded Vendors"
+          count={excluded.length}
+          color="red"
+        >
+          {excluded.length === 0 ? (
+            <p className="text-gray-400 italic">None</p>
+          ) : (
+            <div className="space-y-2">
+              {Object.entries(excludedGroups)
+                .sort(([, a], [, b]) => b.length - a.length)
+                .map(([category, names]) => (
+                  <div key={category}>
+                    <span className="font-medium text-gray-900">
+                      {category} ({names.length}):
+                    </span>{" "}
+                    <span className="text-gray-600">{names.join(", ")}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title="Tagged — Different Outreach"
+          count={tagged.length}
+          color="amber"
+        >
+          {tagged.length === 0 ? (
+            <p className="text-gray-400 italic">None</p>
+          ) : (
+            <div className="space-y-2">
+              {Object.entries(taggedGroups)
+                .sort(([, a], [, b]) => b.length - a.length)
+                .map(([category, names]) => (
+                  <div key={category}>
+                    <span className="font-medium text-gray-900">
+                      {category} ({names.length}):
+                    </span>{" "}
+                    <span className="text-gray-600">{names.join(", ")}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title="Known Prospects"
+          count={prospects.length}
+          color="blue"
+        >
+          {prospects.length === 0 ? (
+            <p className="text-gray-400 italic">None</p>
+          ) : (
+            <p className="text-gray-600">
+              {prospects
+                .map((p) => p.name)
+                .sort((a, b) => a.localeCompare(b))
+                .join(", ")}
+            </p>
+          )}
+        </CollapsibleSection>
+      </div>
+
+      {/* Divider before review table */}
+      <div className="border-t border-gray-300 pt-6 mb-4">
+        <h2 className="text-lg font-semibold text-gray-800">
+          Review Claude&apos;s Classifications ({review.items.length})
+        </h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Accept or reject each classification below.
         </p>
       </div>
 
