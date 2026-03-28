@@ -100,8 +100,14 @@ async function handleBatchFromJson(companies: CompanyWithTitles[], source: strin
   }
 
   let agentResults: ClassificationResult[] = [];
+  let agentError: string | null = null;
   if (unknowns.length > 0) {
-    agentResults = await classifyWithAgent(unknowns);
+    try {
+      agentResults = await classifyWithAgent(unknowns);
+    } catch (err) {
+      agentError = err instanceof Error ? err.message : String(err);
+      console.error("Agent classification failed:", agentError);
+    }
   }
 
   const reviewItems: ReviewItem[] = agentResults.map((r) => {
@@ -136,7 +142,9 @@ async function handleBatchFromJson(companies: CompanyWithTitles[], source: strin
     reviewId,
     totalCompanies: companies.length,
     knownMatches: knownResults.length,
+    unknowns: unknowns.length,
     needsReview: reviewItems.length,
+    agentError,
     reviewUrl: `/review/${reviewId}`,
   });
 }
