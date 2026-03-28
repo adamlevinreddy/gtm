@@ -175,15 +175,17 @@ const userPrompt = ${JSON.stringify(userPrompt)};
 const enhancedSystem = systemPrompt + \`
 
 ## HubSpot CRM Lookup
-You have a search_hubspot tool that lets you look up contacts in our HubSpot CRM by company name.
-For companies you classify as "prospect", use the tool to check if we already have contacts there.
-After completing all classifications, report any HubSpot matches you found.
+You have a search_hubspot tool that lets you look up contacts in our HubSpot CRM by company name and job title.
+For companies you classify as "prospect", search HubSpot for each company+title combination from the input.
+You MUST pass BOTH company_name AND job_title to the tool — we only want exact title matches, not just anyone at the company.
+
+IMPORTANT: Only include a contact in hubspot_matches if their job title in HubSpot matches the title from the conference list. Do NOT include contacts who merely work at the same company but have a different title.
 
 Your final output must be a JSON object with two keys:
 - "classifications": the array of classification results (same format as before)
-- "hubspot_matches": an array of objects like {"company": "...", "contacts": [{"name": "...", "email": "...", "title": "..."}]}
+- "hubspot_matches": an array of objects like {"company": "...", "contacts": [{"name": "...", "title": "..."}]}
 
-Only include companies in hubspot_matches if the search actually returned results.\`;
+Only include companies in hubspot_matches if the search returned contacts with matching titles.\`;
 
 try {
   let messages = [{ role: "user", content: userPrompt }];

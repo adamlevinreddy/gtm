@@ -266,7 +266,6 @@ export default function ReviewPage() {
                     <th className="text-left px-4 py-2 font-medium text-purple-700">Name</th>
                     <th className="text-left px-4 py-2 font-medium text-purple-700">Title</th>
                     <th className="text-left px-4 py-2 font-medium text-purple-700">Company</th>
-                    <th className="text-left px-4 py-2 font-medium text-purple-700">Email</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -276,13 +275,6 @@ export default function ReviewPage() {
                         <td className="px-4 py-2 font-medium text-gray-900">{contact.name}</td>
                         <td className="px-4 py-2 text-gray-600">{contact.title || "—"}</td>
                         <td className="px-4 py-2 text-gray-600">{match.company}</td>
-                        <td className="px-4 py-2 text-gray-500">
-                          {contact.email ? (
-                            <a href={`mailto:${contact.email}`} className="text-purple-600 hover:underline">
-                              {contact.email}
-                            </a>
-                          ) : "—"}
-                        </td>
                       </tr>
                     ))
                   )}
