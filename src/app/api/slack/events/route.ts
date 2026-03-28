@@ -72,13 +72,33 @@ export async function POST(req: NextRequest) {
       }
 
       // --- FILE UPLOAD: "@GTM Classifier classify this" with file attached ---
-      else if (text.includes("classify") && event.files && event.files.length > 0) {
+      else if (text.includes("classify")) {
+        // Files may not be in the app_mention event — fetch the message to get them
+        let files = event.files;
+        if (!files || files.length === 0) {
+          try {
+            const msgResult = await getSlackClient().conversations.history({
+              channel,
+              latest: event.ts,
+              inclusive: true,
+              limit: 1,
+            });
+            files = msgResult.messages?.[0]?.files;
+          } catch {
+            // Fall through — files will be empty
+          }
+        }
+
+        if (!files || files.length === 0) {
+          await replyInThread(channel, event.ts, "I don't see a file attached. Please upload a CSV or XLSX file in the same message as the classify command.");
+          return NextResponse.json({ ok: true });
+        }
+
         await addReaction(channel, event.ts, "hourglass_flowing_sand");
         await replyInThread(channel, event.ts, "Got it — processing your list. I'll send a review link when ready.");
 
         try {
-          const file = event.files[0];
-          const slack = getSlackClient();
+          const file = files[0];
 
           // Download the file from Slack
           const fileResponse = await fetch(file.url_private_download || file.url_private, {
