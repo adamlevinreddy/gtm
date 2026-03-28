@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v7";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v8";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -21,6 +21,7 @@ async function getOrCreateSnapshot(): Promise<string> {
   await kv.del("sandbox:agent-snapshot-v4");
   await kv.del("sandbox:agent-snapshot-v5");
   await kv.del("sandbox:agent-snapshot-v6");
+  await kv.del("sandbox:agent-snapshot-v7");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
@@ -62,13 +63,13 @@ async function getOrCreateSnapshot(): Promise<string> {
       throw new Error(`CLI install failed (exit ${installCli.exitCode}): ${stderr}`);
     }
 
-    // Find the claude CLI binary
-    const which = await sandbox.runCommand({
-      cmd: "which",
-      args: ["claude"],
+    // Find the claude CLI JS entry point (resolve through symlinks)
+    const findJs = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "readlink -f $(which claude) 2>/dev/null || realpath $(which claude) 2>/dev/null || which claude"],
       cwd: "/vercel/sandbox",
     });
-    const claudePath = (await which.stdout()).trim();
+    const claudePath = (await findJs.stdout()).trim();
     if (!claudePath) {
       throw new Error("Claude CLI not found on PATH after global install");
     }
