@@ -1,7 +1,7 @@
 // src/app/api/review/[id]/commit/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getReview, markCommitted } from "@/lib/kv";
-import { fetchCompanyLists, commitCompanyListUpdates } from "@/lib/github";
+import { commitCompanyListUpdates } from "@/lib/database";
 import { sendCommitConfirmation } from "@/lib/slack";
 
 export const maxDuration = 60;
@@ -26,40 +26,42 @@ export async function POST(
     return NextResponse.json({ error: "No decisions found" }, { status: 400 });
   }
 
-  const lists = await fetchCompanyLists();
-  const today = new Date().toISOString().split("T")[0];
-
   let exclusionsAdded = 0;
   let tagsAdded = 0;
   let prospectsAdded = 0;
+
+  const inserts: {
+    name: string;
+    action: "exclude" | "tag" | "prospect";
+    category: string | null;
+    categoryLabel: string | null;
+    source: string;
+    note: string | null;
+  }[] = [];
 
   for (const item of review.items) {
     const decision = review.decisions[item.name];
     if (!decision) continue;
 
     if (decision === "accept") {
-      if (item.action === "exclude" && item.category) {
-        lists.exclusions.companies.push({
-          name: item.name, aliases: [], category: item.category,
-          added: today, source: review.source,
-        });
-        exclusionsAdded++;
-      } else if (item.action === "tag" && item.category) {
-        lists.tags.companies.push({
-          name: item.name, aliases: [], category: item.category,
-          added: today, source: review.source,
-        });
-        tagsAdded++;
-      } else if (item.action === "prospect") {
-        lists.prospects.companies.push({
-          name: item.name, aliases: [], added: today,
-          source: review.source, note: item.rationale || "",
-        });
-        prospectsAdded++;
-      }
+      inserts.push({
+        name: item.name,
+        action: item.action,
+        category: item.category,
+        categoryLabel: null,
+        source: review.source,
+        note: item.rationale,
+      });
+      if (item.action === "exclude") exclusionsAdded++;
+      else if (item.action === "tag") tagsAdded++;
+      else if (item.action === "prospect") prospectsAdded++;
     } else if (decision === "reject") {
-      lists.prospects.companies.push({
-        name: item.name, aliases: [], added: today,
+      // Rejected classifications become prospects for manual follow-up
+      inserts.push({
+        name: item.name,
+        action: "prospect",
+        category: null,
+        categoryLabel: null,
         source: review.source,
         note: `Rejected Claude classification: ${item.action}/${item.category}`,
       });
@@ -67,18 +69,11 @@ export async function POST(
     }
   }
 
-  const message = `Update company lists from ${review.source} — ${exclusionsAdded} exclusions, ${tagsAdded} tags, ${prospectsAdded} prospects`;
-
   try {
-    await commitCompanyListUpdates({
-      exclusions: lists.exclusions, exclusionsSha: lists.shas.exclusions,
-      tags: lists.tags, tagsSha: lists.shas.tags,
-      prospects: lists.prospects, prospectsSha: lists.shas.prospects,
-      message,
-    });
+    await commitCompanyListUpdates(inserts);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `GitHub commit failed: ${errMsg}` }, { status: 500 });
+    return NextResponse.json({ error: `Database write failed: ${errMsg}` }, { status: 500 });
   }
 
   const summary = { exclusionsAdded, tagsAdded, prospectsAdded };

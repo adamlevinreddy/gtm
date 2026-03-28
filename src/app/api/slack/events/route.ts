@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WebClient } from "@slack/web-api";
 import { CompanyClassifier } from "@/lib/classifier";
-import { fetchCompanyLists } from "@/lib/github";
+import { fetchCompanyLists } from "@/lib/database";
 import { sendQuickClassification } from "@/lib/slack";
 import { parseUploadedFile } from "@/lib/parse-upload";
 import { createReview } from "@/lib/kv";

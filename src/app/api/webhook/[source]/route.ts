@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CompanyClassifier } from "@/lib/classifier";
-import { fetchCompanyLists } from "@/lib/github";
+import { fetchCompanyLists } from "@/lib/database";
 import { classifyWithAgent } from "@/lib/agent";
 import { sendQuickClassification } from "@/lib/slack";
 

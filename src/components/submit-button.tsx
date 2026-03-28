@@ -37,7 +37,7 @@ export function SubmitButton({ reviewId, decisions, onSubmitted }: SubmitButtonP
         }
       }
 
-      setStatus("Committing to GitHub...");
+      setStatus("Saving to database...");
 
       const commitRes = await fetch(`/api/review/${reviewId}/commit`, {
         method: "POST",
