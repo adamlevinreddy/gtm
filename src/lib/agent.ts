@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-id";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v2";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -31,22 +31,28 @@ async function getOrCreateSnapshot(): Promise<string> {
   });
 
   try {
-    // Install Agent SDK + Claude Code CLI
-    const install = await sandbox.runCommand({
+    // Install Agent SDK locally
+    const installSdk = await sandbox.runCommand({
       cmd: "npm",
-      args: [
-        "install",
-        "--no-save",
-        "@anthropic-ai/claude-agent-sdk",
-        "@anthropic-ai/claude-code",
-      ],
+      args: ["install", "--no-save", "@anthropic-ai/claude-agent-sdk"],
       cwd: "/vercel/sandbox",
       sudo: true,
     });
+    if (installSdk.exitCode !== 0) {
+      const stderr = await installSdk.stderr();
+      throw new Error(`SDK install failed (exit ${installSdk.exitCode}): ${stderr}`);
+    }
 
-    if (install.exitCode !== 0) {
-      const stderr = await install.stderr();
-      throw new Error(`npm install failed (exit ${install.exitCode}): ${stderr}`);
+    // Install Claude Code CLI globally so it's on PATH
+    const installCli = await sandbox.runCommand({
+      cmd: "npm",
+      args: ["install", "-g", "@anthropic-ai/claude-code"],
+      cwd: "/vercel/sandbox",
+      sudo: true,
+    });
+    if (installCli.exitCode !== 0) {
+      const stderr = await installCli.stderr();
+      throw new Error(`CLI install failed (exit ${installCli.exitCode}): ${stderr}`);
     }
 
     // Snapshot captures installed deps — reusable without reinstall
