@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v3";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v4";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -17,6 +17,7 @@ async function getOrCreateSnapshot(): Promise<string> {
   // Delete stale snapshots from previous versions
   await kv.del("sandbox:agent-snapshot-id");
   await kv.del("sandbox:agent-snapshot-v2");
+  await kv.del("sandbox:agent-snapshot-v3");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
@@ -58,6 +59,22 @@ async function getOrCreateSnapshot(): Promise<string> {
       throw new Error(`CLI install failed (exit ${installCli.exitCode}): ${stderr}`);
     }
 
+    // Find the claude binary path
+    const which = await sandbox.runCommand({
+      cmd: "which",
+      args: ["claude"],
+      cwd: "/vercel/sandbox",
+    });
+    const claudePath = (await which.stdout()).trim();
+    if (!claudePath) {
+      throw new Error("Claude CLI not found on PATH after global install");
+    }
+
+    // Store the path for the classification script
+    await sandbox.writeFiles([
+      { path: "/vercel/sandbox/.claude-path", content: Buffer.from(claudePath, "utf-8") },
+    ]);
+
     // Snapshot captures installed deps — reusable without reinstall
     const snapshot = await sandbox.snapshot();
     // sandbox is stopped after snapshot
@@ -98,10 +115,16 @@ export async function classifyWithAgent(
   try {
     const userPrompt = buildClassificationPrompt(companies);
 
+    // Read the claude CLI path from the snapshot
+    const claudePathBuf = await sandbox.readFileToBuffer({ path: "/vercel/sandbox/.claude-path" });
+    const claudeCliPath = claudePathBuf ? claudePathBuf.toString("utf-8").trim() : "/usr/local/bin/claude";
+
     // Write the classification script
     const script = `
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { readFileSync } from "fs";
 
+const claudePath = ${JSON.stringify(claudeCliPath)};
 const systemPrompt = ${JSON.stringify(CLASSIFICATION_SYSTEM_PROMPT)};
 const userPrompt = ${JSON.stringify(userPrompt)};
 
@@ -113,10 +136,11 @@ try {
     options: {
       model: "claude-opus-4-6",
       systemPrompt,
-      allowedTools: ["WebSearch"],
-      maxTurns: 5,
+      allowedTools: [],
+      maxTurns: 3,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      pathToClaudeCodeExecutable: claudePath,
       env: {
         ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
