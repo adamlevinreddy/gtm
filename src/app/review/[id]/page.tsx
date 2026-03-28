@@ -172,7 +172,7 @@ export default function ReviewPage() {
         <h1 className="text-2xl font-bold text-gray-900">Review: {review.source}</h1>
         <p className="text-gray-500 mt-1">
           {totalProcessed} companies processed. {review.knownResults.length} known
-          matches. {review.items.length} need review.
+          matches. {review.items.filter(i => i.action === "exclude" || i.action === "tag").length} suggestions to review.
         </p>
       </div>
 
@@ -242,17 +242,40 @@ export default function ReviewPage() {
         </CollapsibleSection>
       </div>
 
-      {/* Divider before review table */}
-      <div className="border-t border-gray-300 pt-6 mb-4">
-        <h2 className="text-lg font-semibold text-gray-800">
-          Review Claude&apos;s Classifications ({review.items.length})
-        </h2>
-        <p className="text-sm text-gray-500 mt-1">
-          Accept or reject each classification below.
-        </p>
-      </div>
+      {/* Divider before review table — only show exclude/tag suggestions */}
+      {(() => {
+        const reviewableItems = review.items.filter(
+          (item) => item.action === "exclude" || item.action === "tag"
+        );
+        const prospectItems = review.items.filter(
+          (item) => item.action === "prospect"
+        );
+        return (
+          <>
+            <div className="border-t border-gray-300 pt-6 mb-4">
+              <h2 className="text-lg font-semibold text-gray-800">
+                Review Claude&apos;s Suggestions ({reviewableItems.length})
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Claude suggests excluding or tagging these companies. Accept to add them to your lists, or reject to keep them as prospects.
+                {prospectItems.length > 0 && (
+                  <span className="text-gray-400"> ({prospectItems.length} companies identified as prospects — no action needed.)</span>
+                )}
+              </p>
+            </div>
 
-      <ReviewTable items={review.items} onDecisionsChange={setDecisions} />
+            {reviewableItems.length > 0 ? (
+              <ReviewTable items={reviewableItems} onDecisionsChange={setDecisions} />
+            ) : (
+              <p className="text-gray-400 italic py-8 text-center">
+                {review.items.length === 0
+                  ? "Classification still in progress... refresh in a moment."
+                  : "No exclusion or tag suggestions — all unknowns were identified as prospects."}
+              </p>
+            )}
+          </>
+        );
+      })()}
 
       <div className="mt-6 sticky bottom-0 bg-white py-4 border-t">
         <SubmitButton
