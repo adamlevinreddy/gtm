@@ -57,8 +57,17 @@ export async function classifyWithAgent(
     // Step 3: Write classification script with HubSpot tool use
     const userPrompt = buildClassificationPrompt(companies);
 
+    // Build a map of company -> lowercase titles for post-filtering HubSpot results
+    const titlesByCompany: Record<string, string[]> = {};
+    for (const c of companies) {
+      titlesByCompany[c.name.toLowerCase()] = c.titles.map((t) => t.toLowerCase().trim());
+    }
+
     const script = `
 import Anthropic from '@anthropic-ai/sdk';
+
+// Conference titles for filtering HubSpot results to exact matches
+const CONFERENCE_TITLES = ${JSON.stringify(titlesByCompany)};
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_AUTH_TOKEN,
@@ -242,7 +251,25 @@ try {
   // Try to parse as the new format {classifications, hubspot_matches}
   const jsonMatch = result.match(/\\{[\\s\\S]*\\}/);
   if (jsonMatch) {
-    process.stdout.write(jsonMatch[0]);
+    // Post-filter: only keep HubSpot contacts with exact title matches
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.hubspot_matches) {
+        parsed.hubspot_matches = parsed.hubspot_matches
+          .map(m => {
+            const companyTitles = CONFERENCE_TITLES[m.company.toLowerCase()] || [];
+            const filtered = (m.contacts || []).filter(c => {
+              const hsTitle = (c.title || "").toLowerCase().trim();
+              return companyTitles.some(ct => ct === hsTitle);
+            });
+            return filtered.length > 0 ? { company: m.company, contacts: filtered } : null;
+          })
+          .filter(Boolean);
+      }
+      process.stdout.write(JSON.stringify(parsed));
+    } catch {
+      process.stdout.write(jsonMatch[0]);
+    }
   } else {
     // Fallback: try array format
     const arrayMatch = result.match(/\\[[\\s\\S]*\\]/);

@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
 
           // Fire all batches in parallel — each gets its own function + sandbox
           if (unknowns.length > 0) {
-            const BATCH_SIZE = 40;
+            const BATCH_SIZE = 20;
             const batches: typeof unknowns[] = [];
             for (let i = 0; i < unknowns.length; i += BATCH_SIZE) {
               batches.push(unknowns.slice(i, i + BATCH_SIZE));
