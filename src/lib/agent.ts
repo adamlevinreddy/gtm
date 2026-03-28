@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v5";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v6";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -19,6 +19,7 @@ async function getOrCreateSnapshot(): Promise<string> {
   await kv.del("sandbox:agent-snapshot-v2");
   await kv.del("sandbox:agent-snapshot-v3");
   await kv.del("sandbox:agent-snapshot-v4");
+  await kv.del("sandbox:agent-snapshot-v5");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
@@ -77,7 +78,14 @@ async function getOrCreateSnapshot(): Promise<string> {
       claudePath = (await globalFind.stdout()).trim();
     }
     if (!claudePath) {
-      throw new Error("Claude CLI entry point not found after install");
+      // Diagnostic: list what's in the global modules
+      const diag = await sandbox.runCommand({
+        cmd: "bash",
+        args: ["-c", "find /usr/local/lib/node_modules/@anthropic-ai -name '*.js' -maxdepth 4 2>/dev/null | head -20; echo '---'; which claude 2>/dev/null; echo '---'; npm root -g 2>/dev/null; echo '---'; ls /usr/local/bin/claude* 2>/dev/null"],
+        cwd: "/vercel/sandbox",
+      });
+      const diagOutput = await diag.stdout();
+      throw new Error(`Claude CLI entry point not found. Diagnostics: ${diagOutput}`);
     }
 
     // Store the path for the classification script
