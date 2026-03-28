@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v9";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v10";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -23,6 +23,7 @@ async function getOrCreateSnapshot(): Promise<string> {
   await kv.del("sandbox:agent-snapshot-v6");
   await kv.del("sandbox:agent-snapshot-v7");
   await kv.del("sandbox:agent-snapshot-v8");
+  await kv.del("sandbox:agent-snapshot-v9");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
@@ -74,8 +75,8 @@ async function getOrCreateSnapshot(): Promise<string> {
     if (!cliJsPath) {
       throw new Error("cli.js not found anywhere after install");
     }
-    // pathToClaudeCodeExecutable should be the DIRECTORY containing cli.js
-    const claudePath = cliJsPath.replace(/\/cli\.js$/, "");
+    // pathToClaudeCodeExecutable is the full path to the cli.js file
+    const claudePath = cliJsPath;
 
     // Store the path for the classification script
     await sandbox.writeFiles([
