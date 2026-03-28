@@ -6,7 +6,7 @@ import {
   buildClassificationPrompt,
 } from "./prompts";
 
-const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v4";
+const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v5";
 
 /**
  * Get or create a sandbox snapshot with the Agent SDK pre-installed.
@@ -18,6 +18,7 @@ async function getOrCreateSnapshot(): Promise<string> {
   await kv.del("sandbox:agent-snapshot-id");
   await kv.del("sandbox:agent-snapshot-v2");
   await kv.del("sandbox:agent-snapshot-v3");
+  await kv.del("sandbox:agent-snapshot-v4");
 
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
@@ -59,15 +60,24 @@ async function getOrCreateSnapshot(): Promise<string> {
       throw new Error(`CLI install failed (exit ${installCli.exitCode}): ${stderr}`);
     }
 
-    // Find the claude binary path
-    const which = await sandbox.runCommand({
-      cmd: "which",
-      args: ["claude"],
+    // Find the actual CLI entry point (not the symlink)
+    const findCli = await sandbox.runCommand({
+      cmd: "node",
+      args: ["-e", "console.log(require.resolve('@anthropic-ai/claude-code/cli.js'))"],
       cwd: "/vercel/sandbox",
     });
-    const claudePath = (await which.stdout()).trim();
+    let claudePath = (await findCli.stdout()).trim();
+    if (!claudePath || findCli.exitCode !== 0) {
+      // Fallback: try the global install path
+      const globalFind = await sandbox.runCommand({
+        cmd: "bash",
+        args: ["-c", "ls /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js 2>/dev/null || ls /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js 2>/dev/null || echo ''"],
+        cwd: "/vercel/sandbox",
+      });
+      claudePath = (await globalFind.stdout()).trim();
+    }
     if (!claudePath) {
-      throw new Error("Claude CLI not found on PATH after global install");
+      throw new Error("Claude CLI entry point not found after install");
     }
 
     // Store the path for the classification script
