@@ -14,7 +14,9 @@ const SNAPSHOT_KV_KEY = "sandbox:agent-snapshot-v2";
  * Subsequent calls reuse the snapshot (instant).
  */
 async function getOrCreateSnapshot(): Promise<string> {
-  // Check KV for cached snapshot ID
+  // Delete stale snapshots from previous versions
+  await kv.del("sandbox:agent-snapshot-id");
+
   const cached = await kv.get<string>(SNAPSHOT_KV_KEY);
   if (cached) return cached;
 
