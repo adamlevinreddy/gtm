@@ -11,6 +11,7 @@ interface SubmitButtonProps {
 export function SubmitButton({ reviewId, decisions, onSubmitted }: SubmitButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   const acceptCount = Object.values(decisions).filter((d) => d === "accept").length;
   const rejectCount = Object.values(decisions).filter((d) => d === "reject").length;
@@ -18,6 +19,7 @@ export function SubmitButton({ reviewId, decisions, onSubmitted }: SubmitButtonP
   async function handleSubmit() {
     setLoading(true);
     setError(null);
+    setStatus("Saving decisions...");
 
     try {
       const submitRes = await fetch(`/api/review/${reviewId}/submit`, {
@@ -26,21 +28,36 @@ export function SubmitButton({ reviewId, decisions, onSubmitted }: SubmitButtonP
         body: JSON.stringify({ decisions }),
       });
       if (!submitRes.ok) {
-        const data = await submitRes.json();
-        throw new Error(data.error || "Failed to submit decisions");
+        const text = await submitRes.text();
+        try {
+          const data = JSON.parse(text);
+          throw new Error(data.error || "Failed to submit decisions");
+        } catch {
+          throw new Error(`Submit failed (${submitRes.status}): ${text.slice(0, 200)}`);
+        }
       }
+
+      setStatus("Committing to GitHub...");
 
       const commitRes = await fetch(`/api/review/${reviewId}/commit`, {
         method: "POST",
       });
+
+      const commitText = await commitRes.text();
       if (!commitRes.ok) {
-        const data = await commitRes.json();
-        throw new Error(data.error || "Failed to commit changes");
+        try {
+          const data = JSON.parse(commitText);
+          throw new Error(data.error || "Failed to commit changes");
+        } catch {
+          throw new Error(`Commit failed (${commitRes.status}): ${commitText.slice(0, 200)}`);
+        }
       }
 
+      setStatus(null);
       onSubmitted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
+      setStatus(null);
     } finally {
       setLoading(false);
     }
@@ -59,6 +76,7 @@ export function SubmitButton({ reviewId, decisions, onSubmitted }: SubmitButtonP
       <span className="text-sm text-gray-500">
         {acceptCount} accepted, {rejectCount} rejected
       </span>
+      {status && <span className="text-sm text-blue-600">{status}</span>}
       {error && <span className="text-sm text-red-600">{error}</span>}
     </div>
   );

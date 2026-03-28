@@ -69,17 +69,26 @@ export async function POST(
 
   const message = `Update company lists from ${review.source} — ${exclusionsAdded} exclusions, ${tagsAdded} tags, ${prospectsAdded} prospects`;
 
-  await commitCompanyListUpdates({
-    exclusions: lists.exclusions, exclusionsSha: lists.shas.exclusions,
-    tags: lists.tags, tagsSha: lists.shas.tags,
-    prospects: lists.prospects, prospectsSha: lists.shas.prospects,
-    message,
-  });
+  try {
+    await commitCompanyListUpdates({
+      exclusions: lists.exclusions, exclusionsSha: lists.shas.exclusions,
+      tags: lists.tags, tagsSha: lists.shas.tags,
+      prospects: lists.prospects, prospectsSha: lists.shas.prospects,
+      message,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `GitHub commit failed: ${errMsg}` }, { status: 500 });
+  }
 
   const summary = { exclusionsAdded, tagsAdded, prospectsAdded };
   await markCommitted(id, summary);
 
-  await sendCommitConfirmation({ source: review.source, ...summary });
+  try {
+    await sendCommitConfirmation({ source: review.source, ...summary });
+  } catch {
+    // Slack notification is non-critical
+  }
 
   return NextResponse.json({ ok: true, ...summary });
 }
