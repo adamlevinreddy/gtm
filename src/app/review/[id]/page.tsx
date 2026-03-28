@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { ReviewTable } from "@/components/review-table";
 import { SubmitButton } from "@/components/submit-button";
-import type { ReviewData, ClassificationResult } from "@/lib/types";
+import type { ReviewData, ClassificationResult, HubSpotCompanyMatch } from "@/lib/types";
 
 function CollapsibleSection({
   title,
@@ -241,6 +241,57 @@ export default function ReviewPage() {
           )}
         </CollapsibleSection>
       </div>
+
+      {/* HubSpot CRM Matches */}
+      {review.hubspotMatches && review.hubspotMatches.length > 0 && (
+        <div className="mb-8">
+          <div className="border border-purple-200 rounded-lg overflow-hidden">
+            <div className="px-4 py-3 bg-purple-50">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-purple-800">
+                  HubSpot CRM Matches
+                </span>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                  {review.hubspotMatches.reduce((sum, m) => sum + m.contacts.length, 0)} contacts at {review.hubspotMatches.length} companies
+                </span>
+              </div>
+              <p className="text-xs text-purple-600 mt-1">
+                These attendees match existing contacts in your HubSpot CRM.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-purple-50/50 border-b border-purple-100">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-medium text-purple-700">Name</th>
+                    <th className="text-left px-4 py-2 font-medium text-purple-700">Title</th>
+                    <th className="text-left px-4 py-2 font-medium text-purple-700">Company</th>
+                    <th className="text-left px-4 py-2 font-medium text-purple-700">Email</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {review.hubspotMatches.flatMap((match) =>
+                    match.contacts.map((contact, i) => (
+                      <tr key={`${match.company}-${i}`} className="border-b border-purple-50">
+                        <td className="px-4 py-2 font-medium text-gray-900">{contact.name}</td>
+                        <td className="px-4 py-2 text-gray-600">{contact.title || "—"}</td>
+                        <td className="px-4 py-2 text-gray-600">{match.company}</td>
+                        <td className="px-4 py-2 text-gray-500">
+                          {contact.email ? (
+                            <a href={`mailto:${contact.email}`} className="text-purple-600 hover:underline">
+                              {contact.email}
+                            </a>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Divider before review table — only show exclude/tag suggestions */}
       {(() => {
