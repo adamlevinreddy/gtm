@@ -103,4 +103,12 @@ export interface ReviewData {
   } | null;
   /** HubSpot CRM matches found during classification */
   hubspotMatches?: HubSpotCompanyMatch[];
+  /** All attendees with persona classification (including those not in HubSpot) */
+  attendees?: {
+    company: string;
+    title: string;
+    persona: Persona;
+    inHubspot: boolean;
+    hubspotName?: string;
+  }[];
 }

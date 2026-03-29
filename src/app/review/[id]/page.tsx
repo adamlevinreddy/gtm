@@ -4,7 +4,19 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { ReviewTable } from "@/components/review-table";
 import { SubmitButton } from "@/components/submit-button";
-import type { ReviewData, ClassificationResult, HubSpotCompanyMatch } from "@/lib/types";
+import type { ReviewData, ClassificationResult } from "@/lib/types";
+
+const PERSONA_LABELS: Record<string, string> = {
+  cx_leadership: "CX/CC Leadership",
+  ld: "L&D",
+  qa: "QA Ops",
+  wfm: "WFM",
+  km: "Knowledge Mgmt",
+  sales_marketing: "Sales & Marketing",
+  it: "IT / Technology",
+  excluded: "Excluded",
+  unknown: "Unknown",
+};
 
 function CollapsibleSection({
   title,
@@ -14,32 +26,14 @@ function CollapsibleSection({
 }: {
   title: string;
   count: number;
-  color: "red" | "amber" | "blue";
+  color: "red" | "amber";
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-
   const colorMap = {
-    red: {
-      border: "border-red-200",
-      bg: "bg-red-50",
-      text: "text-red-800",
-      badge: "bg-red-100 text-red-700",
-    },
-    amber: {
-      border: "border-amber-200",
-      bg: "bg-amber-50",
-      text: "text-amber-800",
-      badge: "bg-amber-100 text-amber-700",
-    },
-    blue: {
-      border: "border-blue-200",
-      bg: "bg-blue-50",
-      text: "text-blue-800",
-      badge: "bg-blue-100 text-blue-700",
-    },
+    red: { border: "border-red-200", bg: "bg-red-50", text: "text-red-800", badge: "bg-red-100 text-red-700" },
+    amber: { border: "border-amber-200", bg: "bg-amber-50", text: "text-amber-800", badge: "bg-amber-100 text-amber-700" },
   };
-
   const c = colorMap[color];
 
   return (
@@ -53,11 +47,7 @@ function CollapsibleSection({
           <span className={`text-sm font-medium ${c.text}`}>
             {open ? "\u25BC" : "\u25B6"} {title}
           </span>
-          <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}
-          >
-            {count}
-          </span>
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.badge}`}>{count}</span>
         </div>
       </button>
       {open && <div className="px-4 py-3 text-sm text-gray-700">{children}</div>}
@@ -65,16 +55,13 @@ function CollapsibleSection({
   );
 }
 
-function groupByCategory(
-  results: ClassificationResult[]
-): Record<string, string[]> {
+function groupByCategory(results: ClassificationResult[]): Record<string, string[]> {
   const groups: Record<string, string[]> = {};
   for (const r of results) {
     const key = r.category || "Uncategorized";
     if (!groups[key]) groups[key] = [];
     groups[key].push(r.name);
   }
-  // Sort names within each group
   for (const key of Object.keys(groups)) {
     groups[key].sort((a, b) => a.localeCompare(b));
   }
@@ -90,6 +77,7 @@ export default function ReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, "accept" | "reject">>({});
   const [submitted, setSubmitted] = useState(false);
+  const [tab, setTab] = useState<"classification" | "attendees">("classification");
 
   useEffect(() => {
     fetch(`/api/review/${id}`)
@@ -119,6 +107,21 @@ export default function ReviewPage() {
 
   const excludedGroups = useMemo(() => groupByCategory(excluded), [excluded]);
   const taggedGroups = useMemo(() => groupByCategory(tagged), [tagged]);
+
+  const attendees = useMemo(() => {
+    if (!review?.attendees) return [];
+    return review.attendees.filter((a) => a.persona !== "excluded");
+  }, [review]);
+
+  const attendeesByPersona = useMemo(() => {
+    const groups: Record<string, typeof attendees> = {};
+    for (const a of attendees) {
+      const key = a.persona || "unknown";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(a);
+    }
+    return groups;
+  }, [attendees]);
 
   if (loading) {
     return (
@@ -158,7 +161,7 @@ export default function ReviewPage() {
     return (
       <main className="min-h-screen p-8 max-w-7xl mx-auto">
         <h1 className="text-2xl font-bold text-gray-900 mb-4">Review Submitted</h1>
-        <p className="text-gray-600">Your decisions have been submitted and are being committed to the repo.</p>
+        <p className="text-gray-600">Your decisions have been submitted and committed to the database.</p>
       </main>
     );
   }
@@ -170,165 +173,189 @@ export default function ReviewPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Review: {review.source}</h1>
         <p className="text-gray-500 mt-1">
-          {totalProcessed} companies processed. {review.knownResults.length} known
-          matches. {review.items.filter(i => i.action === "exclude" || i.action === "tag").length} suggestions to review.
+          {totalProcessed} companies processed. {review.knownResults.length} known matches.
+          {attendees.length > 0 && ` ${attendees.length} attendees classified.`}
         </p>
       </div>
 
-      {/* Known Results Summary */}
-      <div className="mb-8 space-y-3">
-        <CollapsibleSection
-          title="Excluded Vendors"
-          count={excluded.length}
-          color="red"
-        >
-          {excluded.length === 0 ? (
-            <p className="text-gray-400 italic">None</p>
-          ) : (
-            <div className="space-y-2">
-              {Object.entries(excludedGroups)
-                .sort(([, a], [, b]) => b.length - a.length)
-                .map(([category, names]) => (
-                  <div key={category}>
-                    <span className="font-medium text-gray-900">
-                      {category} ({names.length}):
-                    </span>{" "}
-                    <span className="text-gray-600">{names.join(", ")}</span>
-                  </div>
-                ))}
-            </div>
-          )}
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title="Tagged — Different Outreach"
-          count={tagged.length}
-          color="amber"
-        >
-          {tagged.length === 0 ? (
-            <p className="text-gray-400 italic">None</p>
-          ) : (
-            <div className="space-y-2">
-              {Object.entries(taggedGroups)
-                .sort(([, a], [, b]) => b.length - a.length)
-                .map(([category, names]) => (
-                  <div key={category}>
-                    <span className="font-medium text-gray-900">
-                      {category} ({names.length}):
-                    </span>{" "}
-                    <span className="text-gray-600">{names.join(", ")}</span>
-                  </div>
-                ))}
-            </div>
-          )}
-        </CollapsibleSection>
-
+      {/* Tabs */}
+      <div className="border-b border-gray-200 mb-6">
+        <nav className="flex gap-6">
+          <button
+            type="button"
+            onClick={() => setTab("classification")}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+              tab === "classification"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Classification
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("attendees")}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+              tab === "attendees"
+                ? "border-purple-600 text-purple-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Attendees
+            {attendees.length > 0 && (
+              <span className="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                {attendees.length}
+              </span>
+            )}
+          </button>
+        </nav>
       </div>
 
-      {/* HubSpot CRM Matches */}
-      {review.hubspotMatches && review.hubspotMatches.length > 0 && (
-        <div className="mb-8">
-          <div className="border border-purple-200 rounded-lg overflow-hidden">
-            <div className="px-4 py-3 bg-purple-50">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-purple-800">
-                  HubSpot CRM Matches
-                </span>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                  {review.hubspotMatches.reduce((sum, m) => sum + m.contacts.length, 0)} contacts at {review.hubspotMatches.length} companies
-                </span>
-              </div>
-              <p className="text-xs text-purple-600 mt-1">
-                These attendees match existing contacts in your HubSpot CRM.
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-purple-50/50 border-b border-purple-100">
-                  <tr>
-                    <th className="text-left px-4 py-2 font-medium text-purple-700">Name</th>
-                    <th className="text-left px-4 py-2 font-medium text-purple-700">Title</th>
-                    <th className="text-left px-4 py-2 font-medium text-purple-700">Company</th>
-                    <th className="text-left px-4 py-2 font-medium text-purple-700">Persona</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {review.hubspotMatches.flatMap((match) =>
-                    match.contacts
-                      .filter((contact) => contact.persona !== "excluded")
-                      .map((contact, i) => (
-                      <tr key={`${match.company}-${i}`} className="border-b border-purple-50">
-                        <td className="px-4 py-2 font-medium text-gray-900">{contact.name}</td>
-                        <td className="px-4 py-2 text-gray-600">{contact.title || "—"}</td>
-                        <td className="px-4 py-2 text-gray-600">{match.company}</td>
-                        <td className="px-4 py-2">
-                          {contact.persona && contact.persona !== "unknown" ? (
-                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">
-                              {contact.persona === "cx_leadership" ? "CX/CC Leadership" :
-                               contact.persona === "ld" ? "L&D" :
-                               contact.persona === "qa" ? "QA Ops" :
-                               contact.persona === "wfm" ? "WFM" :
-                               contact.persona === "km" ? "Knowledge Mgmt" :
-                               contact.persona === "sales_marketing" ? "Sales & Marketing" :
-                               contact.persona === "it" ? "IT / Technology" :
-                               contact.persona}
-                            </span>
-                          ) : (
-                            <span className="text-gray-400">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+      {/* Classification Tab */}
+      {tab === "classification" && (
+        <>
+          <div className="mb-8 space-y-3">
+            <CollapsibleSection title="Excluded Vendors" count={excluded.length} color="red">
+              {excluded.length === 0 ? (
+                <p className="text-gray-400 italic">None</p>
+              ) : (
+                <div className="space-y-2">
+                  {Object.entries(excludedGroups)
+                    .sort(([, a], [, b]) => b.length - a.length)
+                    .map(([category, names]) => (
+                      <div key={category}>
+                        <span className="font-medium text-gray-900">{category} ({names.length}):</span>{" "}
+                        <span className="text-gray-600">{names.join(", ")}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Tagged — Different Outreach" count={tagged.length} color="amber">
+              {tagged.length === 0 ? (
+                <p className="text-gray-400 italic">None</p>
+              ) : (
+                <div className="space-y-2">
+                  {Object.entries(taggedGroups)
+                    .sort(([, a], [, b]) => b.length - a.length)
+                    .map(([category, names]) => (
+                      <div key={category}>
+                        <span className="font-medium text-gray-900">{category} ({names.length}):</span>{" "}
+                        <span className="text-gray-600">{names.join(", ")}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </CollapsibleSection>
           </div>
-        </div>
+
+          {(() => {
+            const reviewableItems = review.items.filter(
+              (item) => item.action === "exclude" || item.action === "tag"
+            );
+            const prospectItems = review.items.filter(
+              (item) => item.action === "prospect"
+            );
+            return (
+              <>
+                <div className="border-t border-gray-300 pt-6 mb-4">
+                  <h2 className="text-lg font-semibold text-gray-800">
+                    Review Claude&apos;s Suggestions ({reviewableItems.length})
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Claude suggests excluding or tagging these companies. Accept to add them to your lists, or reject to keep them as prospects.
+                    {prospectItems.length > 0 && (
+                      <span className="text-gray-400"> ({prospectItems.length} companies identified as prospects — no action needed.)</span>
+                    )}
+                  </p>
+                </div>
+
+                {reviewableItems.length > 0 ? (
+                  <ReviewTable items={reviewableItems} onDecisionsChange={setDecisions} />
+                ) : (
+                  <p className="text-gray-400 italic py-8 text-center">
+                    {review.items.length === 0
+                      ? "Classification still in progress... refresh in a moment."
+                      : "No exclusion or tag suggestions — all unknowns were identified as prospects."}
+                  </p>
+                )}
+              </>
+            );
+          })()}
+
+          <div className="mt-6 sticky bottom-0 bg-white py-4 border-t">
+            <SubmitButton
+              reviewId={id}
+              decisions={decisions}
+              onSubmitted={() => setSubmitted(true)}
+            />
+          </div>
+        </>
       )}
 
-      {/* Divider before review table — only show exclude/tag suggestions */}
-      {(() => {
-        const reviewableItems = review.items.filter(
-          (item) => item.action === "exclude" || item.action === "tag"
-        );
-        const prospectItems = review.items.filter(
-          (item) => item.action === "prospect"
-        );
-        return (
-          <>
-            <div className="border-t border-gray-300 pt-6 mb-4">
-              <h2 className="text-lg font-semibold text-gray-800">
-                Review Claude&apos;s Suggestions ({reviewableItems.length})
-              </h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Claude suggests excluding or tagging these companies. Accept to add them to your lists, or reject to keep them as prospects.
-                {prospectItems.length > 0 && (
-                  <span className="text-gray-400"> ({prospectItems.length} companies identified as prospects — no action needed.)</span>
-                )}
-              </p>
-            </div>
+      {/* Attendees Tab */}
+      {tab === "attendees" && (
+        <div>
+          {attendees.length === 0 ? (
+            <p className="text-gray-400 italic py-8 text-center">
+              Attendee data still loading... refresh in a moment.
+            </p>
+          ) : (
+            <>
+              {/* Persona summary */}
+              <div className="flex flex-wrap gap-2 mb-6">
+                {Object.entries(attendeesByPersona)
+                  .sort(([, a], [, b]) => b.length - a.length)
+                  .map(([persona, list]) => (
+                    <span
+                      key={persona}
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700"
+                    >
+                      {PERSONA_LABELS[persona] || persona}
+                      <span className="font-bold">{list.length}</span>
+                    </span>
+                  ))}
+              </div>
 
-            {reviewableItems.length > 0 ? (
-              <ReviewTable items={reviewableItems} onDecisionsChange={setDecisions} />
-            ) : (
-              <p className="text-gray-400 italic py-8 text-center">
-                {review.items.length === 0
-                  ? "Classification still in progress... refresh in a moment."
-                  : "No exclusion or tag suggestions — all unknowns were identified as prospects."}
-              </p>
-            )}
-          </>
-        );
-      })()}
-
-      <div className="mt-6 sticky bottom-0 bg-white py-4 border-t">
-        <SubmitButton
-          reviewId={id}
-          decisions={decisions}
-          onSubmitted={() => setSubmitted(true)}
-        />
-      </div>
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-medium text-gray-700">Company</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-700">Title</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-700">Persona</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-700">In HubSpot</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-700">Contact Name</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendees.map((a, i) => (
+                      <tr key={`${a.company}-${a.title}-${i}`} className="border-b">
+                        <td className="px-4 py-2 font-medium text-gray-900">{a.company}</td>
+                        <td className="px-4 py-2 text-gray-600">{a.title}</td>
+                        <td className="px-4 py-2">
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">
+                            {PERSONA_LABELS[a.persona] || a.persona}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          {a.inHubspot ? (
+                            <span className="text-green-600 font-medium">Yes</span>
+                          ) : (
+                            <span className="text-gray-400">No</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-gray-600">{a.hubspotName || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </main>
   );
 }
