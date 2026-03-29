@@ -60,14 +60,24 @@ IMPORTANT:
 Respond with ONLY a valid JSON array of objects. No explanation text.`;
 
 /**
- * Use Claude in a Vercel Sandbox to extract structured contact data
- * from raw spreadsheet rows.
+ * Use Claude Code agents running in parallel inside a Vercel Sandbox
+ * to extract structured contact data from raw spreadsheet rows.
+ *
+ * Splits into batches of 20 and dispatches parallel agents for each batch.
  */
 export async function extractContactData(
   headers: string[],
   rows: Record<string, string>[]
 ): Promise<ExtractedContact[]> {
   if (rows.length === 0) return [];
+
+  const BATCH_SIZE = 20;
+  const batches: Record<string, string>[][] = [];
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    batches.push(rows.slice(i, i + BATCH_SIZE));
+  }
+
+  console.log(`[extract] Starting: ${rows.length} rows, ${batches.length} batches of ${BATCH_SIZE}`);
 
   const sandbox = await Sandbox.create({
     resources: { vcpus: 4 },
@@ -76,113 +86,147 @@ export async function extractContactData(
   });
 
   try {
-    const installCli = await sandbox.runCommand({
+    // Install Claude Code SDK locally for programmatic agent use
+    const install = await sandbox.runCommand({
       cmd: "npm",
-      args: ["install", "-g", "@anthropic-ai/claude-code"],
-      sudo: true,
+      args: ["install", "@anthropic-ai/claude-code"],
     });
-    if (installCli.exitCode !== 0) {
-      console.error(`[extract] CLI install failed: ${await installCli.stderr()}`);
+    if (install.exitCode !== 0) {
+      const stderr = await install.stderr();
+      console.error(`[extract] SDK install failed: ${stderr}`);
+      throw new Error(`Claude Code SDK install failed: ${stderr}`);
+    }
+    console.log("[extract] Claude Code SDK installed");
+
+    // Write batch data files so the script can read them
+    const batchFiles = batches.map((batch, i) => ({
+      path: `/vercel/sandbox/batch_${i}.json`,
+      content: Buffer.from(JSON.stringify(batch), "utf-8"),
+    }));
+    await sandbox.writeFiles(batchFiles);
+
+    // Write the orchestrator script that spawns parallel agents
+    const script = `
+import { query } from '@anthropic-ai/claude-code';
+import { readFileSync } from 'fs';
+
+const SYSTEM_PROMPT = ${JSON.stringify(EXTRACTION_SYSTEM_PROMPT)};
+const HEADERS = ${JSON.stringify(headers)};
+const BATCH_COUNT = ${batches.length};
+
+async function processAgent(batchIndex) {
+  const batchData = JSON.parse(readFileSync(\`/vercel/sandbox/batch_\${batchIndex}.json\`, 'utf-8'));
+
+  const prompt = [
+    "Extract structured contact data from these spreadsheet rows.",
+    "",
+    "Column headers: " + JSON.stringify(HEADERS),
+    "",
+    "Rows (" + batchData.length + "):",
+    JSON.stringify(batchData),
+    "",
+    "Return ONLY a JSON array of extracted contacts. No other text.",
+  ].join("\\n");
+
+  try {
+    const messages = [];
+    for await (const msg of query({
+      prompt,
+      abortController: new AbortController(),
+      options: {
+        maxTurns: 1,
+        systemPrompt: SYSTEM_PROMPT,
+      },
+    })) {
+      messages.push(msg);
     }
 
-    const installSdk = await sandbox.runCommand({
-      cmd: "npm",
-      args: ["install", "@anthropic-ai/sdk"],
-    });
-    if (installSdk.exitCode !== 0) {
-      console.error(`[extract] SDK install failed: ${await installSdk.stderr()}`);
+    // Extract text from assistant messages
+    let text = "";
+    for (const msg of messages) {
+      if (msg.type === "assistant" && msg.message?.content) {
+        for (const block of msg.message.content) {
+          if (block.type === "text") text += block.text;
+        }
+      }
     }
 
-    // Batch rows if too many (keep under ~100k tokens)
-    const BATCH_SIZE = 100;
-    const batches: Record<string, string>[][] = [];
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      batches.push(rows.slice(i, i + BATCH_SIZE));
+    const jsonMatch = text.match(/\\[[\\s\\S]*\\]/);
+    if (jsonMatch) {
+      return { batchIndex, results: JSON.parse(jsonMatch[0]), error: null };
     }
-
-    const allResults: ExtractedContact[] = [];
-
-    for (const batch of batches) {
-      const userPrompt = `Here are the column headers from the spreadsheet:\n${JSON.stringify(headers)}\n\nHere are the rows to extract (${batch.length} rows):\n${JSON.stringify(batch)}`;
-
-      const script = `
-import Anthropic from '@anthropic-ai/sdk';
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_AUTH_TOKEN,
-  baseURL: process.env.ANTHROPIC_BASE_URL,
-});
-
-const systemPrompt = ${JSON.stringify(EXTRACTION_SYSTEM_PROMPT)};
-const userPrompt = ${JSON.stringify(userPrompt)};
-
-try {
-  const response = await client.messages.create({
-    model: "anthropic/claude-opus-4.6",
-    max_tokens: 16000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-
-  let result = "";
-  for (const block of response.content) {
-    if (block.type === "text") result += block.text;
+    return { batchIndex, results: [], error: "No JSON array in response: " + text.slice(0, 200) };
+  } catch (err) {
+    return { batchIndex, results: [], error: String(err).slice(0, 300) };
   }
-
-  const jsonMatch = result.match(/\\[[\\s\\S]*\\]/);
-  if (jsonMatch) {
-    process.stdout.write(jsonMatch[0]);
-  } else {
-    process.stderr.write("NO_JSON: " + result.slice(0, 500) + "\\n");
-    process.stdout.write("[]");
-  }
-} catch (err) {
-  process.stderr.write("ERROR: " + (err instanceof Error ? err.message : String(err)) + "\\n");
-  process.stdout.write("[]");
 }
+
+// Dispatch all agents in parallel
+const agentPromises = [];
+for (let i = 0; i < BATCH_COUNT; i++) {
+  agentPromises.push(processAgent(i));
+}
+
+const results = await Promise.all(agentPromises);
+
+// Report errors
+for (const r of results) {
+  if (r.error) {
+    process.stderr.write("Batch " + r.batchIndex + " error: " + r.error + "\\n");
+  }
+}
+
+// Combine all results
+const combined = results.flatMap(r => r.results);
+process.stdout.write(JSON.stringify(combined));
 `;
 
-      await sandbox.writeFiles([
-        { path: "/vercel/sandbox/extract.mjs", content: Buffer.from(script, "utf-8") },
-      ]);
+    await sandbox.writeFiles([
+      { path: "/vercel/sandbox/orchestrator.mjs", content: Buffer.from(script, "utf-8") },
+    ]);
 
-      const run = await sandbox.runCommand({
-        cmd: "node",
-        args: ["extract.mjs"],
-        cwd: "/vercel/sandbox",
-        env: {
-          ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
-          ANTHROPIC_AUTH_TOKEN: process.env.AI_GATEWAY_API_KEY || "",
-        },
-      });
+    console.log(`[extract] Running orchestrator with ${batches.length} parallel agents`);
 
-      const stdout = await run.stdout();
-      const stderr = await run.stderr();
+    const run = await sandbox.runCommand({
+      cmd: "node",
+      args: ["orchestrator.mjs"],
+      cwd: "/vercel/sandbox",
+      env: {
+        ANTHROPIC_API_KEY: process.env.AI_GATEWAY_API_KEY || "",
+        ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
+      },
+    });
 
-      if (stderr) {
-        console.error(`[extract] Sandbox stderr (batch ${batches.indexOf(batch)}): ${stderr.slice(0, 500)}`);
-      }
-      if (run.exitCode !== 0) {
-        console.error(`[extract] Sandbox exit code: ${run.exitCode}`);
-      }
+    const stdout = await run.stdout();
+    const stderr = await run.stderr();
 
-      if (stdout && stdout.trim() !== "[]") {
-        try {
-          const parsed: ExtractedContact[] = JSON.parse(stdout);
-          // Attach raw rows back for reference
-          for (let i = 0; i < parsed.length && i < batch.length; i++) {
-            parsed[i].rawRow = batch[i];
-          }
-          allResults.push(...parsed);
-        } catch (parseErr) {
-          console.error(`[extract] JSON parse error: ${parseErr}. stdout: ${stdout.slice(0, 300)}`);
-        }
-      } else {
-        console.error(`[extract] Empty result from sandbox. stdout: "${stdout?.slice(0, 200)}", exit: ${run.exitCode}`);
-      }
+    if (stderr) {
+      console.error(`[extract] Orchestrator stderr: ${stderr.slice(0, 1000)}`);
+    }
+    if (run.exitCode !== 0) {
+      console.error(`[extract] Orchestrator exit code: ${run.exitCode}`);
     }
 
-    return allResults;
+    console.log(`[extract] Orchestrator done. stdout length: ${stdout?.length || 0}, exit: ${run.exitCode}`);
+
+    if (!stdout || stdout.trim() === "[]" || stdout.trim() === "") {
+      console.error(`[extract] Empty results. stdout: "${stdout?.slice(0, 300)}"`);
+      return [];
+    }
+
+    try {
+      const parsed: ExtractedContact[] = JSON.parse(stdout);
+      // Attach raw rows back — flatten batch mapping
+      const allRows = batches.flat();
+      for (let i = 0; i < parsed.length && i < allRows.length; i++) {
+        parsed[i].rawRow = allRows[i];
+      }
+      console.log(`[extract] Success: ${parsed.length} contacts extracted`);
+      return parsed;
+    } catch (parseErr) {
+      console.error(`[extract] JSON parse error: ${parseErr}. stdout: ${stdout.slice(0, 500)}`);
+      return [];
+    }
   } finally {
     await sandbox.stop();
   }
