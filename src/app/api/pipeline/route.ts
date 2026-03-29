@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import { v4 as uuidv4 } from "uuid";
 import { WebClient } from "@slack/web-api";
 import { extractContactData } from "@/lib/extract";
 import { scoreContacts, type ScoredContact } from "@/lib/scoring";
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest) {
 
   const slack = getSlackClient();
   const pipelineStart = Date.now();
+  const pipelineId = uuidv4();
+  const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://gtm-jet.vercel.app";
 
   try {
     // =========================================================================
@@ -263,12 +266,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Duration
+    // Store results in KV for the frontend
+    const pipelineResults = {
+      id: pipelineId,
+      fileName,
+      createdAt: new Date().toISOString(),
+      durationMs: Date.now() - pipelineStart,
+      stats: {
+        totalRows: rawData.rows.length,
+        extracted: extracted.length,
+        ranked: ranked.length,
+        filtered: filtered.length,
+        existingActivity: existingActivity.length,
+        enriched: enrichedCount,
+        hubspotCreated: hubspotResult.created,
+        hubspotSkipped: hubspotResult.skipped,
+        hubspotErrors: hubspotResult.errors,
+      },
+      ranked: ranked.map(c => ({ ...c, rawRow: undefined })),
+      filtered: filtered.map(c => ({ ...c, rawRow: undefined })),
+      existingActivity: existingActivity.map(c => ({ ...c, rawRow: undefined })),
+    };
+    await kv.set(`pipeline:${pipelineId}`, pipelineResults, { ex: 30 * 24 * 60 * 60 }); // 30 day TTL
+
+    // Duration + view button
     const durationSec = Math.round((Date.now() - pipelineStart) / 1000);
-    blocks.push({
-      type: "context",
-      elements: [{ type: "mrkdwn", text: `Pipeline completed in ${durationSec}s` }],
-    });
+    blocks.push(
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: `Pipeline completed in ${durationSec}s` }],
+      },
+      {
+        type: "actions",
+        elements: [{
+          type: "button",
+          text: { type: "plain_text", text: "View Full Results" },
+          url: `${baseUrl}/pipeline/${pipelineId}`,
+          style: "primary",
+        }],
+      }
+    );
 
     await slack.chat.postMessage({
       channel: slackChannel,

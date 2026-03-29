@@ -53,6 +53,35 @@ export async function findHubSpotContactByEmail(email: string): Promise<string |
 }
 
 /**
+ * Search for an existing contact in HubSpot by name + company.
+ * Fallback dedup for contacts without email.
+ */
+export async function findHubSpotContactByNameCompany(
+  firstName: string,
+  lastName: string,
+  company: string
+): Promise<string | null> {
+  const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
+    method: "POST",
+    body: JSON.stringify({
+      filterGroups: [{
+        filters: [
+          { propertyName: "firstname", operator: "EQ", value: firstName },
+          { propertyName: "lastname", operator: "EQ", value: lastName },
+          { propertyName: "company", operator: "CONTAINS_TOKEN", value: company },
+        ],
+      }],
+      properties: ["firstname", "lastname", "company"],
+      limit: 1,
+    }),
+  });
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.results?.[0]?.id ?? null;
+}
+
+/**
  * Search for an existing company in HubSpot by name.
  * Returns the HubSpot company ID if found, null otherwise.
  */
@@ -279,14 +308,21 @@ export async function pushContactsToHubSpot(
 
   for (const contact of contacts) {
     try {
-      // Skip if no email (HubSpot requires email for dedup)
-      if (!contact.email) {
+      // Need at least a name or email to create a contact
+      if (!contact.email && !contact.firstName && !contact.lastName) {
         skipped++;
         continue;
       }
 
-      // Check if contact already exists
-      const existingContactId = await findHubSpotContactByEmail(contact.email);
+      // Check if contact already exists (by email or name+company)
+      let existingContactId: string | null = null;
+      if (contact.email) {
+        existingContactId = await findHubSpotContactByEmail(contact.email);
+      } else if (contact.firstName && contact.lastName && contact.company) {
+        existingContactId = await findHubSpotContactByNameCompany(
+          contact.firstName, contact.lastName, contact.company
+        );
+      }
       if (existingContactId) {
         skipped++;
         continue;
