@@ -76,15 +76,22 @@ export async function extractContactData(
   });
 
   try {
-    await sandbox.runCommand({
+    const installCli = await sandbox.runCommand({
       cmd: "npm",
       args: ["install", "-g", "@anthropic-ai/claude-code"],
       sudo: true,
     });
-    await sandbox.runCommand({
+    if (installCli.exitCode !== 0) {
+      console.error(`[extract] CLI install failed: ${await installCli.stderr()}`);
+    }
+
+    const installSdk = await sandbox.runCommand({
       cmd: "npm",
       args: ["install", "@anthropic-ai/sdk"],
     });
+    if (installSdk.exitCode !== 0) {
+      console.error(`[extract] SDK install failed: ${await installSdk.stderr()}`);
+    }
 
     // Batch rows if too many (keep under ~100k tokens)
     const BATCH_SIZE = 100;
@@ -150,13 +157,28 @@ try {
       });
 
       const stdout = await run.stdout();
+      const stderr = await run.stderr();
+
+      if (stderr) {
+        console.error(`[extract] Sandbox stderr (batch ${batches.indexOf(batch)}): ${stderr.slice(0, 500)}`);
+      }
+      if (run.exitCode !== 0) {
+        console.error(`[extract] Sandbox exit code: ${run.exitCode}`);
+      }
+
       if (stdout && stdout.trim() !== "[]") {
-        const parsed: ExtractedContact[] = JSON.parse(stdout);
-        // Attach raw rows back for reference
-        for (let i = 0; i < parsed.length && i < batch.length; i++) {
-          parsed[i].rawRow = batch[i];
+        try {
+          const parsed: ExtractedContact[] = JSON.parse(stdout);
+          // Attach raw rows back for reference
+          for (let i = 0; i < parsed.length && i < batch.length; i++) {
+            parsed[i].rawRow = batch[i];
+          }
+          allResults.push(...parsed);
+        } catch (parseErr) {
+          console.error(`[extract] JSON parse error: ${parseErr}. stdout: ${stdout.slice(0, 300)}`);
         }
-        allResults.push(...parsed);
+      } else {
+        console.error(`[extract] Empty result from sandbox. stdout: "${stdout?.slice(0, 200)}", exit: ${run.exitCode}`);
       }
     }
 

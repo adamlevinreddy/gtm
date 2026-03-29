@@ -54,10 +54,12 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
 
     if (extracted.length === 0) {
+      await slack.reactions.remove({ channel: slackChannel, name: "brain", timestamp: slackThreadTs }).catch(() => {});
+      await slack.reactions.add({ channel: slackChannel, name: "warning", timestamp: slackThreadTs }).catch(() => {});
       await slack.chat.postMessage({
         channel: slackChannel,
         thread_ts: slackThreadTs,
-        text: "No contacts could be extracted from the file. Check the format and try again.",
+        text: `No contacts could be extracted from the file (${rawData.rows.length} rows, ${rawData.headers.length} columns: ${rawData.headers.slice(0, 5).join(", ")}...). Check the format and try again.`,
       });
       return NextResponse.json({ ok: false, error: "No contacts extracted" });
     }
