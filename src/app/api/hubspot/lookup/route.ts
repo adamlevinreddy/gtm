@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getReview } from "@/lib/kv";
 import { kv } from "@vercel/kv";
 import { markJobComplete } from "@/lib/completion";
+import { classifyPersonas } from "@/lib/persona";
 import type { HubSpotCompanyMatch } from "@/lib/types";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 /**
- * Look up company+title combos in HubSpot. Runs server-side (no sandbox needed).
- * Stores matches directly in the review's hubspotMatches field.
+ * Look up company+title combos in HubSpot (server-side API calls),
+ * then classify matched titles into personas (sandbox + Claude).
  */
 export async function POST(req: NextRequest) {
   const { reviewId, companies, isJob } = (await req.json()) as {
@@ -66,6 +67,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Persona-classify all matched titles via Claude sandbox
+  if (matches.length > 0) {
+    const allTitles = matches.flatMap((m) =>
+      m.contacts.map((c) => c.title).filter(Boolean) as string[]
+    );
+
+    try {
+      const personaMap = await classifyPersonas(allTitles);
+
+      // Attach persona to each contact
+      for (const match of matches) {
+        for (const contact of match.contacts) {
+          if (contact.title) {
+            contact.persona = personaMap[contact.title.toLowerCase().trim()] || "unknown";
+          }
+        }
+      }
+    } catch {
+      // Persona classification failed — matches still valid without it
+    }
+  }
+
   // Store matches in the review
   if (matches.length > 0) {
     const review = await getReview(reviewId);
@@ -75,7 +98,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Signal job completion
   if (isJob) {
     await markJobComplete(reviewId);
   }

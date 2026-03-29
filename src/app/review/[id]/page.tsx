@@ -249,15 +249,34 @@ export default function ReviewPage() {
                     <th className="text-left px-4 py-2 font-medium text-purple-700">Name</th>
                     <th className="text-left px-4 py-2 font-medium text-purple-700">Title</th>
                     <th className="text-left px-4 py-2 font-medium text-purple-700">Company</th>
+                    <th className="text-left px-4 py-2 font-medium text-purple-700">Persona</th>
                   </tr>
                 </thead>
                 <tbody>
                   {review.hubspotMatches.flatMap((match) =>
-                    match.contacts.map((contact, i) => (
+                    match.contacts
+                      .filter((contact) => contact.persona !== "excluded")
+                      .map((contact, i) => (
                       <tr key={`${match.company}-${i}`} className="border-b border-purple-50">
                         <td className="px-4 py-2 font-medium text-gray-900">{contact.name}</td>
                         <td className="px-4 py-2 text-gray-600">{contact.title || "—"}</td>
                         <td className="px-4 py-2 text-gray-600">{match.company}</td>
+                        <td className="px-4 py-2">
+                          {contact.persona && contact.persona !== "unknown" ? (
+                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">
+                              {contact.persona === "cx_leadership" ? "CX/CC Leadership" :
+                               contact.persona === "ld" ? "L&D" :
+                               contact.persona === "qa" ? "QA Ops" :
+                               contact.persona === "wfm" ? "WFM" :
+                               contact.persona === "km" ? "Knowledge Mgmt" :
+                               contact.persona === "sales_marketing" ? "Sales & Marketing" :
+                               contact.persona === "it" ? "IT / Technology" :
+                               contact.persona}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))
                   )}

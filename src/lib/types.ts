@@ -57,11 +57,24 @@ export interface ReviewItem {
   rationale: string | null;
 }
 
+/** Persona categories for contact center buyers */
+export type Persona =
+  | "ld"           // L&D / Training & Development
+  | "qa"           // QA Ops / Quality Assurance
+  | "wfm"          // Workforce Management
+  | "km"           // Knowledge Management
+  | "cx_leadership" // CX / Contact Center Leadership
+  | "sales_marketing" // Sales & Marketing
+  | "it"           // IT / Technology
+  | "excluded"     // Vendor-side or irrelevant roles
+  | "unknown";     // Could not classify
+
 /** A HubSpot contact match found during classification */
 export interface HubSpotContactMatch {
   name: string;
   email: string | null;
   title: string | null;
+  persona?: Persona;
 }
 
 /** A company with HubSpot CRM matches */
