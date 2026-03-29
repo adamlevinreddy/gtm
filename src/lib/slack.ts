@@ -55,8 +55,19 @@ export async function sendCommitConfirmation(params: {
   exclusionsAdded: number;
   tagsAdded: number;
   prospectsAdded: number;
+  contactsCreated?: number;
 }) {
   const client = getSlackClient();
+
+  const lines = [
+    `*${params.exclusionsAdded}* new exclusions added`,
+    `*${params.tagsAdded}* new tags added`,
+    `*${params.prospectsAdded}* confirmed as prospects`,
+  ];
+  if (params.contactsCreated) {
+    lines.push(`*${params.contactsCreated}* contacts persisted to database`);
+  }
+  lines.push("\nCompany lists updated. These will be caught automatically on future lists.");
 
   await client.chat.postMessage({
     channel: process.env.SLACK_CHANNEL_ID!,
@@ -67,15 +78,7 @@ export async function sendCommitConfirmation(params: {
       },
       {
         type: "section",
-        text: {
-          type: "mrkdwn",
-          text: [
-            `*${params.exclusionsAdded}* new exclusions added`,
-            `*${params.tagsAdded}* new tags added`,
-            `*${params.prospectsAdded}* confirmed as prospects`,
-            "\nCompany lists updated in GitHub. These will be caught automatically on future lists.",
-          ].join("\n"),
-        },
+        text: { type: "mrkdwn", text: lines.join("\n") },
       },
     ],
   });

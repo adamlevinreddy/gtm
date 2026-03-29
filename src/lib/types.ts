@@ -110,5 +110,11 @@ export interface ReviewData {
     persona: Persona;
     inHubspot: boolean;
     hubspotName?: string;
+    hubspotContactId?: string;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
   }[];
+  /** Original file name from the upload */
+  fileName?: string;
 }

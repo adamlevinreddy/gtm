@@ -6,6 +6,10 @@ import { sendQuickClassification } from "@/lib/slack";
 import { parseUploadedFile } from "@/lib/parse-upload";
 import { createReview } from "@/lib/kv";
 import { kv } from "@vercel/kv";
+import { db } from "@/lib/db";
+import { accounts, contacts, companies, conferenceLists, listContacts } from "@/lib/schema";
+import { eq, ilike } from "drizzle-orm";
+import { enrichContactViaApollo, enrichAccountViaApollo } from "@/lib/enrichment";
 import type { ClassificationResult } from "@/lib/types";
 
 export const maxDuration = 60; // Known matching is fast — don't need 5 min
@@ -149,7 +153,7 @@ export async function POST(req: NextRequest) {
           }
 
           // Store review in KV (unknowns will be populated by background job)
-          const reviewId = await createReview({ source, items: [], knownResults });
+          const reviewId = await createReview({ source, items: [], knownResults, fileName: file.name });
           const baseUrl = "https://gtm-jet.vercel.app";
 
           // Store metadata for the final combined message
@@ -217,12 +221,167 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // --- ENRICH COMPANY ---
+      else if (text.startsWith("enrich ")) {
+        const companyName = rawText.slice(7).trim();
+        await addReaction(channel, event.ts, "mag");
+
+        try {
+          // Find account
+          const accountRows = await db.select().from(accounts).where(eq(accounts.name, companyName)).limit(1);
+          if (accountRows.length === 0) {
+            await replyInThread(channel, event.ts, `No account found for "${companyName}". Upload a conference list first to create contacts.`);
+            await removeReaction(channel, event.ts, "mag");
+            return NextResponse.json({ ok: true });
+          }
+          const account = accountRows[0];
+
+          // Enrich the account
+          const accountResult = await enrichAccountViaApollo({
+            accountId: account.id,
+            domain: account.domain,
+            name: account.name,
+          });
+
+          // Find and enrich contacts at this account
+          const contactRows = await db.select().from(contacts).where(eq(contacts.accountId, account.id));
+          let enrichedCount = 0;
+
+          for (const contact of contactRows) {
+            try {
+              const result = await enrichContactViaApollo({ contactId: contact.id });
+              if (result.success) enrichedCount++;
+            } catch { /* continue with next contact */ }
+          }
+
+          const lines = [
+            `*${companyName}* enrichment complete:`,
+            `• Account: ${accountResult.success ? "enriched" : "no match"}`,
+            `• Contacts: ${enrichedCount}/${contactRows.length} enriched via Apollo`,
+          ];
+          if (account.industry) lines.push(`• Industry: ${account.industry}`);
+          if (account.employeeCount) lines.push(`• Employees: ${account.employeeCount.toLocaleString()}`);
+
+          await replyInThread(channel, event.ts, lines.join("\n"));
+          await removeReaction(channel, event.ts, "mag");
+          await addReaction(channel, event.ts, "white_check_mark");
+        } catch (err) {
+          await removeReaction(channel, event.ts, "mag");
+          await addReaction(channel, event.ts, "x");
+          await replyInThread(channel, event.ts, `Enrichment error: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+
+      // --- COMPANY STATUS ---
+      else if (text.startsWith("status ")) {
+        const companyName = rawText.slice(7).trim();
+        await addReaction(channel, event.ts, "mag");
+
+        try {
+          // Check classification
+          const classRows = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+
+          // Check account
+          const accountRows = await db.select().from(accounts).where(eq(accounts.name, companyName)).limit(1);
+
+          const lines: string[] = [`*${companyName}*`];
+
+          if (classRows.length > 0) {
+            const c = classRows[0];
+            lines.push(`\n*Classification:* ${c.action}${c.category ? ` (${c.category})` : ""} — added ${c.added} via ${c.source}`);
+          } else {
+            lines.push("\n*Classification:* not in database");
+          }
+
+          if (accountRows.length > 0) {
+            const a = accountRows[0];
+            lines.push(`\n*Account:*`);
+            if (a.tier) lines.push(`  Tier: ${a.tier}`);
+            if (a.status) lines.push(`  Status: ${a.status}`);
+            if (a.industry) lines.push(`  Industry: ${a.industry}`);
+            if (a.employeeCount) lines.push(`  Employees: ${a.employeeCount.toLocaleString()}`);
+            if (a.hubspotCompanyId) lines.push(`  HubSpot ID: ${a.hubspotCompanyId}`);
+            if (a.lastEnrichmentDate) lines.push(`  Last enriched: ${a.lastEnrichmentDate} (${a.lastEnrichmentSource})`);
+
+            // Count contacts
+            const contactRows = await db.select().from(contacts).where(eq(contacts.accountId, a.id));
+            lines.push(`\n*Contacts:* ${contactRows.length}`);
+            for (const ct of contactRows.slice(0, 10)) {
+              const name = [ct.firstName, ct.lastName].filter(Boolean).join(" ") || "—";
+              lines.push(`  • ${name} | ${ct.title || "—"} | ${ct.persona || "—"}${ct.hubspotContactId ? " | in HubSpot" : ""}`);
+            }
+            if (contactRows.length > 10) lines.push(`  _...and ${contactRows.length - 10} more_`);
+          } else {
+            lines.push("\n*Account:* no account record yet");
+          }
+
+          await replyInThread(channel, event.ts, lines.join("\n"));
+          await removeReaction(channel, event.ts, "mag");
+          await addReaction(channel, event.ts, "white_check_mark");
+        } catch {
+          await removeReaction(channel, event.ts, "mag");
+          await addReaction(channel, event.ts, "x");
+        }
+      }
+
+      // --- CONTACTS BY CONFERENCE ---
+      else if (text.startsWith("contacts ")) {
+        const query = rawText.slice(9).trim();
+        await addReaction(channel, event.ts, "mag");
+
+        try {
+          // Search conference lists by file name
+          const lists = await db
+            .select()
+            .from(conferenceLists)
+            .where(ilike(conferenceLists.fileName, `%${query}%`));
+
+          if (lists.length === 0) {
+            await replyInThread(channel, event.ts, `No conference lists found matching "${query}".`);
+            await removeReaction(channel, event.ts, "mag");
+            return NextResponse.json({ ok: true });
+          }
+
+          const lines: string[] = [];
+          for (const list of lists.slice(0, 3)) {
+            lines.push(`*${list.fileName}* (${list.totalContacts || 0} contacts, ${list.totalCompanies || 0} companies)`);
+
+            const contactJoins = await db
+              .select({ contact: contacts, lc: listContacts })
+              .from(listContacts)
+              .innerJoin(contacts, eq(listContacts.contactId, contacts.id))
+              .where(eq(listContacts.listId, list.id));
+
+            for (const { contact: ct, lc } of contactJoins.slice(0, 15)) {
+              const name = [ct.firstName, ct.lastName].filter(Boolean).join(" ") || "—";
+              const persona = ct.persona || "—";
+              const seq = ct.sequenceStatus !== "not_sequenced" ? ` | seq: ${ct.sequenceStatus}` : "";
+              const hs = lc.wasInHubspot ? " | in HubSpot" : "";
+              lines.push(`  • ${ct.companyName || "—"} | ${name} | ${ct.title || lc.originalTitle || "—"} | ${persona}${seq}${hs}`);
+            }
+            if (contactJoins.length > 15) lines.push(`  _...and ${contactJoins.length - 15} more_`);
+            lines.push("");
+          }
+          if (lists.length > 3) lines.push(`_${lists.length - 3} more lists match this query_`);
+
+          await replyInThread(channel, event.ts, lines.join("\n"));
+          await removeReaction(channel, event.ts, "mag");
+          await addReaction(channel, event.ts, "white_check_mark");
+        } catch {
+          await removeReaction(channel, event.ts, "mag");
+          await addReaction(channel, event.ts, "x");
+        }
+      }
+
       // --- UNKNOWN COMMAND ---
       else {
         await replyInThread(channel, event.ts,
           "I can help with:\n" +
           "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
-          "• `@GTM Classifier classify this` — attach a CSV/XLSX to classify a list"
+          "• `@GTM Classifier classify this` — attach a CSV/XLSX to classify a list\n" +
+          "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
+          "• `@GTM Classifier status <company>` — show everything we know\n" +
+          "• `@GTM Classifier contacts <conference>` — show contacts from a conference list"
         );
       }
     }

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReview, markCommitted } from "@/lib/kv";
 import { commitCompanyListUpdates } from "@/lib/database";
+import { persistAttendees } from "@/lib/contacts";
 import { sendCommitConfirmation } from "@/lib/slack";
 
 export const maxDuration = 60;
@@ -76,14 +77,31 @@ export async function POST(
     return NextResponse.json({ error: `Database write failed: ${errMsg}` }, { status: 500 });
   }
 
+  // Persist contacts from attendees (if any)
+  let contactsCreated = 0;
+  if (review.attendees && review.attendees.length > 0) {
+    try {
+      const result = await persistAttendees({
+        reviewId: id,
+        source: review.source,
+        fileName: review.fileName,
+        attendees: review.attendees,
+      });
+      contactsCreated = result.contactsCreated;
+    } catch (err) {
+      // Contact persistence is non-critical — log but don't fail the commit
+      console.error("Failed to persist contacts:", err);
+    }
+  }
+
   const summary = { exclusionsAdded, tagsAdded, prospectsAdded };
   await markCommitted(id, summary);
 
   try {
-    await sendCommitConfirmation({ source: review.source, ...summary });
+    await sendCommitConfirmation({ source: review.source, ...summary, contactsCreated });
   } catch {
     // Slack notification is non-critical
   }
 
-  return NextResponse.json({ ok: true, ...summary });
+  return NextResponse.json({ ok: true, ...summary, contactsCreated });
 }

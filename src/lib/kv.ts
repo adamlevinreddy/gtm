@@ -8,6 +8,7 @@ export async function createReview(params: {
   source: string;
   items: ReviewItem[];
   knownResults: ClassificationResult[];
+  fileName?: string;
 }): Promise<string> {
   const id = uuidv4();
   const review: ReviewData = {
@@ -19,6 +20,7 @@ export async function createReview(params: {
     knownResults: params.knownResults,
     decisions: null,
     commitSummary: null,
+    fileName: params.fileName,
   };
   await kv.set(`review:${id}`, review, { ex: REVIEW_TTL_SECONDS });
   return id;

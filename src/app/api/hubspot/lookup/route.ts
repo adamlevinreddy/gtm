@@ -3,6 +3,7 @@ import { getReview } from "@/lib/kv";
 import { kv } from "@vercel/kv";
 import { markJobComplete } from "@/lib/completion";
 import { classifyPersonas } from "@/lib/persona";
+import { logSync, recordAgentRun } from "@/lib/sync";
 import type { HubSpotCompanyMatch, Persona } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -21,8 +22,14 @@ export async function POST(req: NextRequest) {
 
   const token = process.env.HUBSPOT_API_KEY;
 
-  // Track which company+title combos matched HubSpot (and the contact name)
-  const hubspotHits = new Map<string, string>(); // "company|||title" -> contact name
+  // Track which company+title combos matched HubSpot (with full contact data)
+  const hubspotHits = new Map<string, {
+    name: string;
+    hubspotContactId: string;
+    email: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  }>(); // "company|||title" -> contact data
   const matches: HubSpotCompanyMatch[] = [];
 
   if (token) {
@@ -36,7 +43,7 @@ export async function POST(req: NextRequest) {
           },
           body: JSON.stringify({
             query: company.name,
-            properties: ["firstname", "lastname", "jobtitle", "company"],
+            properties: ["firstname", "lastname", "jobtitle", "company", "email", "lifecyclestage", "hs_lead_status"],
             limit: 20,
           }),
         });
@@ -53,16 +60,33 @@ export async function POST(req: NextRequest) {
             if (!hsTitle) return false;
             return conferenceTitles.some((ct: string) => ct === hsTitle);
           })
-          .map((c: { properties: { firstname?: string; lastname?: string; jobtitle?: string } }) => {
+          .map((c: { id: string; properties: { firstname?: string; lastname?: string; jobtitle?: string; email?: string } }) => {
             const name = [c.properties.firstname, c.properties.lastname].filter(Boolean).join(" ") || "Unknown";
             const title = c.properties.jobtitle || "";
-            hubspotHits.set(`${company.name}|||${title.toLowerCase().trim()}`, name);
-            return { name, email: null, title: title || null };
+            hubspotHits.set(`${company.name}|||${title.toLowerCase().trim()}`, {
+              name,
+              hubspotContactId: c.id,
+              email: c.properties.email || null,
+              firstName: c.properties.firstname || null,
+              lastName: c.properties.lastname || null,
+            });
+            return { name, email: c.properties.email || null, title: title || null };
           });
 
         if (matchingContacts.length > 0) {
           matches.push({ company: company.name, contacts: matchingContacts });
         }
+
+        // Log sync for each HubSpot search
+        await logSync({
+          system: "hubspot",
+          direction: "inbound",
+          entityType: "contact",
+          entityId: company.name,
+          operation: "search",
+          success: true,
+          changeset: { resultsCount: data.results.length, matchesCount: matchingContacts.length },
+        }).catch(() => { /* non-critical */ });
       } catch {
         // Skip on error
       }
@@ -72,10 +96,28 @@ export async function POST(req: NextRequest) {
   // Persona-classify ALL titles from the input (not just HubSpot matches)
   const allTitles = companies.flatMap((c) => c.titles);
   let personaMap: Record<string, Persona> = {};
+  const personaStartTime = Date.now();
   try {
     personaMap = await classifyPersonas(allTitles);
+    await recordAgentRun({
+      agentType: "persona",
+      status: "success",
+      model: "anthropic/claude-sonnet-4.6",
+      inputSummary: { titleCount: allTitles.length },
+      outputSummary: { classifiedCount: Object.keys(personaMap).length },
+      durationMs: Date.now() - personaStartTime,
+      reviewId,
+    }).catch(() => { /* non-critical */ });
   } catch {
     // Persona classification failed — continue without it
+    await recordAgentRun({
+      agentType: "persona",
+      status: "failed",
+      model: "anthropic/claude-sonnet-4.6",
+      inputSummary: { titleCount: allTitles.length },
+      durationMs: Date.now() - personaStartTime,
+      reviewId,
+    }).catch(() => { /* non-critical */ });
   }
 
   // Attach personas to HubSpot matches
@@ -94,19 +136,27 @@ export async function POST(req: NextRequest) {
     persona: Persona;
     inHubspot: boolean;
     hubspotName?: string;
+    hubspotContactId?: string;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
   }[] = [];
 
   for (const company of companies) {
     for (const title of company.titles) {
       const key = `${company.name}|||${title.toLowerCase().trim()}`;
-      const hsName = hubspotHits.get(key);
+      const hsData = hubspotHits.get(key);
       const persona = personaMap[title.toLowerCase().trim()] || "unknown";
       attendees.push({
         company: company.name,
         title,
         persona,
-        inHubspot: !!hsName,
-        hubspotName: hsName,
+        inHubspot: !!hsData,
+        hubspotName: hsData?.name,
+        hubspotContactId: hsData?.hubspotContactId,
+        email: hsData?.email ?? undefined,
+        firstName: hsData?.firstName ?? undefined,
+        lastName: hsData?.lastName ?? undefined,
       });
     }
   }
