@@ -55,10 +55,14 @@ export async function POST(req: NextRequest) {
   if (body.event) {
     const event = body.event;
 
+    console.log(`[slack] Event type: ${event.type}, bot_id: ${event.bot_id || "none"}, text: "${(event.text || "").slice(0, 100)}"`);
+
     if (event.type === "app_mention" && !event.bot_id) {
       const rawText = (event.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
       const text = rawText.toLowerCase();
       const channel = event.channel;
+
+      console.log(`[slack] Parsed text: "${text}", has files: ${!!event.files}, file count: ${event.files?.length || 0}`);
 
       // --- QUICK CHECK ---
       if (text.startsWith("check ")) {
