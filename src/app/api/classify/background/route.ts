@@ -115,11 +115,15 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    await getSlackClient().chat.postMessage({
-      channel: slackChannel,
-      thread_ts: slackThreadTs,
-      text: `:warning: Batch ${batchIndex + 1}/${totalBatches} failed (${batch.length} companies): ${errMsg.slice(0, 200)}`,
-    });
+    // Log error to KV for debugging
+    await kv.set(`review:${reviewId}:error:${batchIndex}`, errMsg.slice(0, 500), { ex: 3600 });
+    try {
+      await getSlackClient().chat.postMessage({
+        channel: slackChannel,
+        thread_ts: slackThreadTs,
+        text: `:warning: Batch ${batchIndex + 1}/${totalBatches} failed (${batch.length} companies): ${errMsg.slice(0, 200)}`,
+      });
+    } catch { /* Slack post failed too */ }
 
     // Still increment counter so we don't block completion
     const completed = await kv.incr(counterKey);
