@@ -5,6 +5,7 @@ import { fetchCompanyLists } from "@/lib/database";
 import { sendQuickClassification } from "@/lib/slack";
 import { parseUploadedFile } from "@/lib/parse-upload";
 import { createReview } from "@/lib/kv";
+import { kv } from "@vercel/kv";
 import type { ClassificationResult } from "@/lib/types";
 
 export const maxDuration = 60; // Known matching is fast — don't need 5 min
@@ -149,63 +150,64 @@ export async function POST(req: NextRequest) {
 
           // Store review in KV (unknowns will be populated by background job)
           const reviewId = await createReview({ source, items: [], knownResults });
-
-          // Post known matches summary immediately
-          const excluded = knownResults.filter((r) => r.action === "exclude");
-          const tagged = knownResults.filter((r) => r.action === "tag");
-          const prospects = knownResults.filter((r) => r.action === "prospect");
           const baseUrl = "https://gtm-jet.vercel.app";
 
-          let summary = `:white_check_mark: *Known matches found for ${source}:*\n\n`;
-          summary += `> *${companies.length}* companies processed\n`;
-          summary += `> :no_entry: *${excluded.length}* vendors excluded\n`;
-          summary += `> :label: *${tagged.length}* tagged for different outreach (BPO/Media)\n`;
-          summary += `> :bust_in_silhouette: *${prospects.length}* known prospects\n`;
-          summary += `> :mag: *${unknowns.length}* unknown — sending to Claude for classification...\n`;
-          summary += `\n<${baseUrl}/review/${reviewId}|View results>`;
+          // Store metadata for the final combined message
+          const excluded = knownResults.filter((r) => r.action === "exclude");
+          const tagged = knownResults.filter((r) => r.action === "tag");
 
-          await replyInThread(channel, event.ts, summary);
-
-          // Fire HubSpot lookup for all non-excluded companies (prospects, tagged, unknowns)
+          // Determine jobs: HubSpot lookup (1) + classification batches (N)
           const hubspotCandidates = companies.filter((c) => {
             const known = classifier.classifyKnown(c.name);
             return !known || known.action !== "exclude";
           });
-          if (hubspotCandidates.length > 0) {
-            fetch(`${baseUrl}/api/hubspot/lookup`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ reviewId, companies: hubspotCandidates }),
-            }).catch(() => { /* fire and forget */ });
+
+          const BATCH_SIZE = 20;
+          const classifyBatches: typeof unknowns[] = [];
+          for (let i = 0; i < unknowns.length; i += BATCH_SIZE) {
+            classifyBatches.push(unknowns.slice(i, i + BATCH_SIZE));
           }
 
-          // Fire all batches in parallel — each gets its own function + sandbox
-          if (unknowns.length > 0) {
-            const BATCH_SIZE = 20;
-            const batches: typeof unknowns[] = [];
-            for (let i = 0; i < unknowns.length; i += BATCH_SIZE) {
-              batches.push(unknowns.slice(i, i + BATCH_SIZE));
-            }
+          // Total jobs = HubSpot lookup (always 1) + classification batches
+          const totalJobs = 1 + classifyBatches.length;
 
-            for (let i = 0; i < batches.length; i++) {
-              fetch(`${baseUrl}/api/classify/background`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  reviewId,
-                  batch: batches[i],
-                  batchIndex: i,
-                  totalBatches: batches.length,
-                  totalUnknowns: unknowns.length,
-                  slackChannel: channel,
-                  slackThreadTs: event.ts,
-                }),
-              }).catch(() => { /* fire and forget */ });
-            }
-          } else {
-            // No unknowns — swap emoji immediately
-            await removeReaction(channel, event.ts, "hourglass_flowing_sand");
-            await addReaction(channel, event.ts, "white_check_mark");
+          // Store completion metadata in KV for the final message
+          await kv.set(`review:${reviewId}:meta`, {
+            totalCompanies: companies.length,
+            excludedCount: excluded.length,
+            taggedCount: tagged.length,
+            unknownCount: unknowns.length,
+            totalJobs,
+            slackChannel: channel,
+            slackThreadTs: event.ts,
+          }, { ex: 7 * 24 * 60 * 60 });
+
+          // Fire HubSpot lookup (counts as 1 job toward completion)
+          fetch(`${baseUrl}/api/hubspot/lookup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              reviewId,
+              companies: hubspotCandidates,
+              isJob: true,
+            }),
+          }).catch(() => { /* fire and forget */ });
+
+          // Fire classification batches
+          for (let i = 0; i < classifyBatches.length; i++) {
+            fetch(`${baseUrl}/api/classify/background`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                reviewId,
+                batch: classifyBatches[i],
+                batchIndex: i,
+                totalBatches: classifyBatches.length,
+                totalUnknowns: unknowns.length,
+                slackChannel: channel,
+                slackThreadTs: event.ts,
+              }),
+            }).catch(() => { /* fire and forget */ });
           }
           // Hourglass stays until background batches finish and swap it
         } catch (err) {

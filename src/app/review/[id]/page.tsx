@@ -109,12 +109,11 @@ export default function ReviewPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const { excluded, tagged, prospects } = useMemo(() => {
-    if (!review) return { excluded: [], tagged: [], prospects: [] };
+  const { excluded, tagged } = useMemo(() => {
+    if (!review) return { excluded: [], tagged: [] };
     return {
       excluded: review.knownResults.filter((r) => r.action === "exclude"),
       tagged: review.knownResults.filter((r) => r.action === "tag"),
-      prospects: review.knownResults.filter((r) => r.action === "prospect"),
     };
   }, [review]);
 
@@ -224,22 +223,6 @@ export default function ReviewPage() {
           )}
         </CollapsibleSection>
 
-        <CollapsibleSection
-          title="Known Prospects"
-          count={prospects.length}
-          color="blue"
-        >
-          {prospects.length === 0 ? (
-            <p className="text-gray-400 italic">None</p>
-          ) : (
-            <p className="text-gray-600">
-              {prospects
-                .map((p) => p.name)
-                .sort((a, b) => a.localeCompare(b))
-                .join(", ")}
-            </p>
-          )}
-        </CollapsibleSection>
       </div>
 
       {/* HubSpot CRM Matches */}

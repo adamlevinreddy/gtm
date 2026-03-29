@@ -1,22 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReview } from "@/lib/kv";
 import { kv } from "@vercel/kv";
+import { markJobComplete } from "@/lib/completion";
 import type { HubSpotCompanyMatch } from "@/lib/types";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 /**
  * Look up company+title combos in HubSpot. Runs server-side (no sandbox needed).
  * Stores matches directly in the review's hubspotMatches field.
  */
 export async function POST(req: NextRequest) {
-  const { reviewId, companies } = (await req.json()) as {
+  const { reviewId, companies, isJob } = (await req.json()) as {
     reviewId: string;
     companies: { name: string; titles: string[] }[];
+    isJob?: boolean;
   };
 
   const token = process.env.HUBSPOT_API_KEY;
-  if (!token) return NextResponse.json({ ok: true, matches: 0 });
+  if (!token) {
+    if (isJob) await markJobComplete(reviewId);
+    return NextResponse.json({ ok: true, matches: 0 });
+  }
 
   const matches: HubSpotCompanyMatch[] = [];
 
@@ -68,6 +73,11 @@ export async function POST(req: NextRequest) {
       review.hubspotMatches = [...(review.hubspotMatches || []), ...matches];
       await kv.set(`review:${reviewId}`, review, { ex: 7 * 24 * 60 * 60 });
     }
+  }
+
+  // Signal job completion
+  if (isJob) {
+    await markJobComplete(reviewId);
   }
 
   return NextResponse.json({ ok: true, matches: matches.length });
