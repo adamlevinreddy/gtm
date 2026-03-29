@@ -60,10 +60,62 @@ function mapSeniority(
   return "unknown";
 }
 
+// ============================================================================
+// Apollo People Search (find people by company + title)
+// ============================================================================
+
+interface ApolloSearchResult {
+  people: ApolloPersonMatch[];
+  pagination: { total_entries: number };
+}
+
 /**
- * Enrich a contact via the Apollo People Enrichment API.
- * Updates the contact record and optionally the linked account.
- * Logs to enrichment_runs.
+ * Search Apollo for people at a company matching a title.
+ * Use this when we have company + title but no name/email.
+ * Returns the best matching person or null.
+ */
+export async function searchApolloByCompanyTitle(
+  companyName: string,
+  title: string
+): Promise<ApolloPersonMatch | null> {
+  const apiKey = process.env.APOLLO_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": apiKey,
+    },
+    body: JSON.stringify({
+      organization_name: companyName,
+      person_titles: [title],
+      page: 1,
+      per_page: 5,
+    }),
+  });
+
+  if (!res.ok) return null;
+
+  const data: ApolloSearchResult = await res.json();
+  if (!data.people || data.people.length === 0) return null;
+
+  // Return the first match — Apollo ranks by relevance
+  return data.people[0];
+}
+
+// ============================================================================
+// Apollo People Enrichment (with search-first strategy)
+// ============================================================================
+
+/**
+ * Enrich a contact via Apollo.
+ *
+ * Strategy:
+ * 1. If we have name + company → use People Match (enrichment) directly
+ * 2. If we only have company + title → use People Search first to find the person,
+ *    then use the search result data (which already includes email, name, etc.)
+ * 3. Updates the contact record and optionally the linked account.
  */
 export async function enrichContactViaApollo(params: {
   contactId: string;
@@ -71,6 +123,7 @@ export async function enrichContactViaApollo(params: {
   lastName?: string | null;
   email?: string | null;
   companyName?: string | null;
+  title?: string | null;
 }): Promise<{ success: boolean; person: ApolloPersonMatch | null }> {
   const apiKey = process.env.APOLLO_API_KEY;
   if (!apiKey) throw new Error("APOLLO_API_KEY not configured");
@@ -88,24 +141,46 @@ export async function enrichContactViaApollo(params: {
   const lastName = params.lastName || contact.lastName;
   const email = params.email || contact.email;
   const companyName = params.companyName || contact.companyName;
+  const title = params.title || contact.title;
 
-  const res = await fetch("https://api.apollo.io/api/v1/people/match", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Api-Key": apiKey,
-    },
-    body: JSON.stringify({
-      first_name: firstName,
-      last_name: lastName,
-      organization_name: companyName,
-      email: email,
-    }),
-  });
+  // Decide strategy based on available data
+  const hasName = firstName && lastName;
+  const hasIdentifier = hasName || email;
 
-  const raw = await res.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let raw: any;
 
-  if (!res.ok || !raw.person) {
+  if (hasIdentifier) {
+    // Strategy 1: Direct People Match (we have enough to identify someone)
+    const res = await fetch("https://api.apollo.io/api/v1/people/match", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+      },
+      body: JSON.stringify({
+        first_name: firstName,
+        last_name: lastName,
+        organization_name: companyName,
+        email: email,
+      }),
+    });
+    raw = await res.json();
+  } else if (companyName && title) {
+    // Strategy 2: Search by company + title first
+    const searchResult = await searchApolloByCompanyTitle(companyName, title);
+    if (searchResult && (searchResult.email || searchResult.first_name)) {
+      raw = { person: searchResult, source: "search" };
+    } else {
+      // Search returned nothing useful
+      raw = { person: null };
+    }
+  } else {
+    // Not enough data to search
+    raw = { person: null };
+  }
+
+  if (!raw.person) {
     // Log failed enrichment
     await db.insert(enrichmentRuns).values({
       contactId: params.contactId,
@@ -114,7 +189,7 @@ export async function enrichContactViaApollo(params: {
       status: "failed",
       creditsUsed: 0,
       rawPayload: raw,
-      errorMessage: raw.error || `HTTP ${res.status}`,
+      errorMessage: raw.error || "No person found",
       completedAt: new Date(),
     });
     return { success: false, person: null };

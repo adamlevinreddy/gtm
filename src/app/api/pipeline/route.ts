@@ -120,6 +120,7 @@ export async function POST(req: NextRequest) {
           lastName: contact.lastName,
           email: contact.email,
           companyName: contact.company,
+          title: contact.title,
         });
 
         if (result.success) {
