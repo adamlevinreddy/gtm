@@ -256,37 +256,87 @@ export async function associateContactToCompany(
 
 /**
  * Check which companies have deep existing activity in HubSpot.
- * Returns company names where we have deals, multiple engaged contacts, or recent activity.
+ * Returns company names where we have deals or contacts with significant engagement.
  */
 export async function getActiveHubSpotCompanies(): Promise<Set<string>> {
   const active = new Set<string>();
 
-  // Get companies with deals
-  const res = await hubspotFetch("/crm/v3/objects/deals", {
-    method: "GET",
-  });
-
-  if (res.ok) {
-    const data = await res.json();
-    for (const deal of data.results || []) {
-      // Get associated companies
-      const assocRes = await hubspotFetch(
-        `/crm/v3/objects/deals/${deal.id}/associations/companies`
-      );
-      if (assocRes.ok) {
-        const assocData = await assocRes.json();
-        for (const assoc of assocData.results || []) {
-          const companyRes = await hubspotFetch(`/crm/v3/objects/companies/${assoc.id}?properties=name`);
-          if (companyRes.ok) {
-            const companyData = await companyRes.json();
-            if (companyData.properties?.name) {
-              active.add(companyData.properties.name.toLowerCase());
+  // 1. Companies with deals
+  try {
+    const res = await hubspotFetch("/crm/v3/objects/deals?limit=100&properties=dealname");
+    if (res.ok) {
+      const data = await res.json();
+      for (const deal of data.results || []) {
+        try {
+          const assocRes = await hubspotFetch(
+            `/crm/v3/objects/deals/${deal.id}/associations/companies`
+          );
+          if (assocRes.ok) {
+            const assocData = await assocRes.json();
+            for (const assoc of assocData.results || []) {
+              const companyRes = await hubspotFetch(`/crm/v3/objects/companies/${assoc.id}?properties=name`);
+              if (companyRes.ok) {
+                const companyData = await companyRes.json();
+                if (companyData.properties?.name) {
+                  active.add(companyData.properties.name.toLowerCase());
+                }
+              }
             }
           }
-        }
+        } catch { /* continue */ }
       }
     }
-  }
+  } catch { /* continue without deals */ }
+
+  // 2. Contacts with recent activity (notes, meetings, emails in last 90 days)
+  try {
+    const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
+      method: "POST",
+      body: JSON.stringify({
+        filterGroups: [{
+          filters: [{
+            propertyName: "notes_last_updated",
+            operator: "GTE",
+            value: String(Date.now() - 90 * 24 * 60 * 60 * 1000),
+          }],
+        }],
+        properties: ["company"],
+        limit: 100,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      for (const contact of data.results || []) {
+        const company = contact.properties?.company;
+        if (company) active.add(company.toLowerCase());
+      }
+    }
+  } catch { /* continue without activity data */ }
+
+  // 3. Contacts with lifecycle stage beyond lead
+  try {
+    const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
+      method: "POST",
+      body: JSON.stringify({
+        filterGroups: [{
+          filters: [{
+            propertyName: "lifecyclestage",
+            operator: "IN",
+            values: ["opportunity", "customer", "evangelist"],
+          }],
+        }],
+        properties: ["company"],
+        limit: 100,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      for (const contact of data.results || []) {
+        const company = contact.properties?.company;
+        if (company) active.add(company.toLowerCase());
+      }
+    }
+  } catch { /* continue */ }
 
   return active;
 }

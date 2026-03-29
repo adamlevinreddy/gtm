@@ -90,13 +90,57 @@ export async function POST(req: NextRequest) {
       .sort((a, b) => b.score - a.score);
 
     // =========================================================================
-    // STEP 3: Enrich non-HubSpot contacts via Apollo
+    // STEP 3: Resolve names from HubSpot + enrich via Apollo
     // =========================================================================
     await slack.reactions.add({ channel: slackChannel, name: "mag", timestamp: slackThreadTs }).catch(() => {});
 
+    // For contacts without names, try to find them in HubSpot by company + title
+    const hubspotToken = process.env.HUBSPOT_API_KEY;
+    if (hubspotToken) {
+      for (const contact of ranked) {
+        if (contact.firstName && contact.lastName) continue; // already have name
+        if (!contact.company) continue;
+
+        try {
+          const res = await fetch("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${hubspotToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: contact.company,
+              properties: ["firstname", "lastname", "email", "jobtitle", "company"],
+              limit: 20,
+            }),
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+
+          // Find a contact at this company with a matching title
+          const titleLower = (contact.title || "").toLowerCase().trim();
+          for (const hsContact of data.results || []) {
+            const hsTitle = (hsContact.properties.jobtitle || "").toLowerCase().trim();
+            if (hsTitle === titleLower) {
+              contact.firstName = hsContact.properties.firstname || contact.firstName;
+              contact.lastName = hsContact.properties.lastname || contact.lastName;
+              contact.email = hsContact.properties.email || contact.email;
+              break;
+            }
+          }
+        } catch { /* continue */ }
+      }
+    }
+
+    // Now enrich via Apollo (top 50 by score, with names where possible)
     let enrichedCount = 0;
-    for (const contact of ranked.slice(0, 50)) { // Top 50 by score
+    for (const contact of ranked.slice(0, 50)) {
       try {
+        // Skip Apollo if we still have no name or email — it can't match
+        if (!contact.firstName && !contact.lastName && !contact.email) {
+          continue;
+        }
+
         // Persist to Supabase first
         const contactId = await findOrCreateContact({
           firstName: contact.firstName,
@@ -113,7 +157,7 @@ export async function POST(req: NextRequest) {
           await findOrCreateAccount(contact.company);
         }
 
-        // Enrich via Apollo
+        // Enrich via Apollo (now with reveal_personal_emails)
         const result = await enrichContactViaApollo({
           contactId,
           firstName: contact.firstName,
@@ -125,7 +169,6 @@ export async function POST(req: NextRequest) {
 
         if (result.success) {
           enrichedCount++;
-          // Update the scored contact with enriched data for HubSpot push
           if (result.person?.email && !contact.email) {
             contact.email = result.person.email;
           }

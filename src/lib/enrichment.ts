@@ -151,7 +151,7 @@ export async function enrichContactViaApollo(params: {
   let raw: any;
 
   if (hasIdentifier) {
-    // Strategy 1: Direct People Match (we have enough to identify someone)
+    // Strategy: People Match with email reveal (we have name or email)
     const res = await fetch("https://api.apollo.io/api/v1/people/match", {
       method: "POST",
       headers: {
@@ -163,21 +163,15 @@ export async function enrichContactViaApollo(params: {
         last_name: lastName,
         organization_name: companyName,
         email: email,
+        reveal_personal_emails: true,
       }),
     });
     raw = await res.json();
-  } else if (companyName && title) {
-    // Strategy 2: Search by company + title first
-    const searchResult = await searchApolloByCompanyTitle(companyName, title);
-    if (searchResult && (searchResult.email || searchResult.first_name)) {
-      raw = { person: searchResult, source: "search" };
-    } else {
-      // Search returned nothing useful
-      raw = { person: null };
-    }
   } else {
-    // Not enough data to search
-    raw = { person: null };
+    // No name or email — can't use Apollo People Match effectively.
+    // The People Search API is not available on this plan.
+    // Caller should try to resolve the name from HubSpot first.
+    raw = { person: null, reason: "no_name_or_email" };
   }
 
   if (!raw.person) {
