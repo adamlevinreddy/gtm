@@ -3,7 +3,7 @@ import { WebClient } from "@slack/web-api";
 import { CompanyClassifier } from "@/lib/classifier";
 import { fetchCompanyLists } from "@/lib/database";
 import { sendQuickClassification } from "@/lib/slack";
-import { parseUploadedFile } from "@/lib/parse-upload";
+import { parseUploadedFile, parseUploadedFileRaw } from "@/lib/parse-upload";
 import { createReview } from "@/lib/kv";
 import { kv } from "@vercel/kv";
 import { db } from "@/lib/db";
@@ -82,6 +82,81 @@ export async function POST(req: NextRequest) {
         } catch {
           await removeReaction(channel, event.ts, "eyes");
           await addReaction(channel, event.ts, "x");
+        }
+      }
+
+      // --- FULL PIPELINE (extract → score → enrich → push) ---
+      else if (text.includes("process") || text.includes("pipeline")) {
+        let files = event.files;
+        if (!files || files.length === 0) {
+          try {
+            const msgResult = await getSlackClient().conversations.history({
+              channel, latest: event.ts, inclusive: true, limit: 1,
+            });
+            files = msgResult.messages?.[0]?.files;
+          } catch { /* fall through */ }
+        }
+
+        if (!files || files.length === 0) {
+          await replyInThread(channel, event.ts, "I don't see a file attached. Upload a CSV or XLSX with `@GTM Classifier process this`.");
+          return NextResponse.json({ ok: true });
+        }
+
+        await addReaction(channel, event.ts, "hourglass_flowing_sand");
+
+        try {
+          const file = files[0];
+          const fileResponse = await fetch(file.url_private_download || file.url_private, {
+            headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+          });
+          const rawBuffer = Buffer.from(await fileResponse.arrayBuffer());
+
+          // Decrypt if needed
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const officeCrypto = require("officecrypto-tool") as {
+            isEncrypted: (buf: Buffer) => boolean;
+            decrypt: (buf: Buffer, opts: { password: string }) => Promise<Buffer>;
+          };
+          let fileBuffer: Buffer = rawBuffer;
+          if (officeCrypto.isEncrypted(rawBuffer)) {
+            const passwordMatch = rawText.match(/password\s+(?:is\s+)?["""']?([^"""'\s,]+)/i);
+            const password = passwordMatch ? passwordMatch[1] : undefined;
+            if (!password) {
+              await replyInThread(channel, event.ts, "This file is password-protected. Include the password in your message.");
+              await removeReaction(channel, event.ts, "hourglass_flowing_sand");
+              await addReaction(channel, event.ts, "x");
+              return NextResponse.json({ ok: true });
+            }
+            fileBuffer = await officeCrypto.decrypt(rawBuffer, { password });
+          }
+
+          // Parse raw data (all columns)
+          const rawData = await parseUploadedFileRaw(fileBuffer, file.name || "upload.xlsx");
+          const fileName = (file.name || "upload").replace(/\.[^.]+$/, "");
+
+          await replyInThread(channel, event.ts,
+            `Parsed ${rawData.rows.length} rows with ${rawData.headers.length} columns. Running full pipeline: extract → score → enrich → push to HubSpot...`
+          );
+
+          await removeReaction(channel, event.ts, "hourglass_flowing_sand");
+
+          // Fire the pipeline as a background job
+          const baseUrl = "https://gtm-jet.vercel.app";
+          fetch(`${baseUrl}/api/pipeline`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              rawData,
+              fileName,
+              slackChannel: channel,
+              slackThreadTs: event.ts,
+            }),
+          }).catch(() => { /* fire and forget */ });
+
+        } catch (err) {
+          await removeReaction(channel, event.ts, "hourglass_flowing_sand");
+          await addReaction(channel, event.ts, "x");
+          await replyInThread(channel, event.ts, `Error: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
       }
 
@@ -377,8 +452,9 @@ export async function POST(req: NextRequest) {
       else {
         await replyInThread(channel, event.ts,
           "I can help with:\n" +
+          "• `@GTM Classifier process this` — *full pipeline*: extract → score → enrich → push to HubSpot\n" +
+          "• `@GTM Classifier classify this` — classify companies from a CSV/XLSX\n" +
           "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
-          "• `@GTM Classifier classify this` — attach a CSV/XLSX to classify a list\n" +
           "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
           "• `@GTM Classifier status <company>` — show everything we know\n" +
           "• `@GTM Classifier contacts <conference>` — show contacts from a conference list"
