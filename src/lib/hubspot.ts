@@ -256,64 +256,30 @@ export async function associateContactToCompany(
 
 /**
  * Check which companies have deep existing activity in HubSpot.
- * Returns company names where we have deals or contacts with significant engagement.
+ * Returns company names from deals + engaged contacts.
  */
 export async function getActiveHubSpotCompanies(): Promise<Set<string>> {
   const active = new Set<string>();
 
-  // 1. Companies with deals
+  // 1. Companies from deal names (fast — single API call, parse names from deal titles)
   try {
-    const res = await hubspotFetch("/crm/v3/objects/deals?limit=100&properties=dealname");
-    if (res.ok) {
+    let after: string | undefined;
+    do {
+      const url = `/crm/v3/objects/deals?limit=100&properties=dealname${after ? `&after=${after}` : ""}`;
+      const res = await hubspotFetch(url);
+      if (!res.ok) break;
       const data = await res.json();
       for (const deal of data.results || []) {
-        try {
-          const assocRes = await hubspotFetch(
-            `/crm/v3/objects/deals/${deal.id}/associations/companies`
-          );
-          if (assocRes.ok) {
-            const assocData = await assocRes.json();
-            for (const assoc of assocData.results || []) {
-              const companyRes = await hubspotFetch(`/crm/v3/objects/companies/${assoc.id}?properties=name`);
-              if (companyRes.ok) {
-                const companyData = await companyRes.json();
-                if (companyData.properties?.name) {
-                  active.add(companyData.properties.name.toLowerCase());
-                }
-              }
-            }
-          }
-        } catch { /* continue */ }
+        const dealName = deal.properties?.dealname || "";
+        // Deal names follow pattern "Company Name - Product" or just "Company Name"
+        const companyPart = dealName.split(/\s*[-–—]\s*/)[0].trim();
+        if (companyPart) active.add(companyPart.toLowerCase());
       }
-    }
-  } catch { /* continue without deals */ }
+      after = data.paging?.next?.after;
+    } while (after);
+  } catch { /* continue */ }
 
-  // 2. Contacts with recent activity (notes, meetings, emails in last 90 days)
-  try {
-    const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
-      method: "POST",
-      body: JSON.stringify({
-        filterGroups: [{
-          filters: [{
-            propertyName: "notes_last_updated",
-            operator: "GTE",
-            value: String(Date.now() - 90 * 24 * 60 * 60 * 1000),
-          }],
-        }],
-        properties: ["company"],
-        limit: 100,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      for (const contact of data.results || []) {
-        const company = contact.properties?.company;
-        if (company) active.add(company.toLowerCase());
-      }
-    }
-  } catch { /* continue without activity data */ }
-
-  // 3. Contacts with lifecycle stage beyond lead
+  // 2. Contacts at opportunity/customer lifecycle stage
   try {
     const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
       method: "POST",
@@ -338,6 +304,32 @@ export async function getActiveHubSpotCompanies(): Promise<Set<string>> {
     }
   } catch { /* continue */ }
 
+  // 3. Contacts with recent notes/activity
+  try {
+    const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
+      method: "POST",
+      body: JSON.stringify({
+        filterGroups: [{
+          filters: [{
+            propertyName: "notes_last_updated",
+            operator: "GTE",
+            value: String(Date.now() - 90 * 24 * 60 * 60 * 1000),
+          }],
+        }],
+        properties: ["company"],
+        limit: 100,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      for (const contact of data.results || []) {
+        const company = contact.properties?.company;
+        if (company) active.add(company.toLowerCase());
+      }
+    }
+  } catch { /* continue */ }
+
+  console.log(`[hubspot] Active companies: ${active.size} (${Array.from(active).slice(0, 10).join(", ")}...)`);
   return active;
 }
 
