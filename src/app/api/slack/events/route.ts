@@ -166,6 +166,19 @@ export async function POST(req: NextRequest) {
 
           await replyInThread(channel, event.ts, summary);
 
+          // Fire HubSpot lookup for all non-excluded companies (prospects, tagged, unknowns)
+          const hubspotCandidates = companies.filter((c) => {
+            const known = classifier.classifyKnown(c.name);
+            return !known || known.action !== "exclude";
+          });
+          if (hubspotCandidates.length > 0) {
+            fetch(`${baseUrl}/api/hubspot/lookup`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reviewId, companies: hubspotCandidates }),
+            }).catch(() => { /* fire and forget */ });
+          }
+
           // Fire all batches in parallel — each gets its own function + sandbox
           if (unknowns.length > 0) {
             const BATCH_SIZE = 20;
