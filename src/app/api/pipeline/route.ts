@@ -54,13 +54,14 @@ export async function POST(req: NextRequest) {
     await sandbox.writeFiles(files);
     console.log(`[pipeline] Wrote ${files.length} files. Starting agent...`);
 
-    // Fire the script — DO NOT await runCommand.
-    // The sandbox runs independently. It handles Slack + KV internally.
-    // When the script finishes, the sandbox auto-stops.
-    sandbox.runCommand({
+    // Fire the script in DETACHED mode — the command runs independently
+    // even after this function exits. The sandbox stays alive until the
+    // script finishes or the timeout expires.
+    const cmd = await sandbox.runCommand({
       cmd: "node",
       args: ["pipeline.mjs"],
       cwd: "/vercel/sandbox",
+      detached: true,
       env: {
         ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
         ANTHROPIC_AUTH_TOKEN: process.env.AI_GATEWAY_API_KEY || "",
@@ -71,20 +72,10 @@ export async function POST(req: NextRequest) {
         KV_REST_API_URL: process.env.KV_REST_API_URL || "",
         KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN || "",
       },
-    }).then(async (run) => {
-      // This runs when the sandbox finishes — but only if the function is still alive
-      const stderr = await run.stderr();
-      if (stderr) console.log(`[pipeline] stderr: ${stderr.slice(0, 1000)}`);
-      console.log(`[pipeline] Sandbox finished. Exit: ${run.exitCode}`);
-    }).catch((err) => {
-      console.error(`[pipeline] Sandbox error: ${err}`);
     });
 
-    // Small delay to ensure the sandbox command starts executing
-    await new Promise((r) => setTimeout(r, 2000));
-
-    console.log(`[pipeline] Sandbox running. Returning 200.`);
-    return NextResponse.json({ ok: true, pipelineId, sandboxId: sandbox.sandboxId });
+    console.log(`[pipeline] Command detached: ${cmd.cmdId}. Sandbox: ${sandbox.sandboxId}. Returning 200.`);
+    return NextResponse.json({ ok: true, pipelineId, sandboxId: sandbox.sandboxId, cmdId: cmd.cmdId });
 
   } catch (err) {
     console.error(`[pipeline] Setup error: ${err}`);
