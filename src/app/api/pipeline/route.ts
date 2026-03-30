@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { kv } from "@vercel/kv";
 import { v4 as uuidv4 } from "uuid";
 import { Sandbox } from "@vercel/sandbox";
@@ -48,6 +49,25 @@ export async function POST(req: NextRequest) {
   // Brain emoji — pipeline is working
   await slack.reactions.add({ channel: slackChannel, name: "brain", timestamp: slackThreadTs }).catch(() => {});
 
+  // Return 200 immediately — do all heavy work in after() callback
+  // This prevents the Slack handler's fetch from timing out
+  after(async () => {
+    await runPipeline(rawData, fileName, slackChannel, slackThreadTs, pipelineId, slack, pipelineStart, baseUrl);
+  });
+
+  return NextResponse.json({ ok: true, pipelineId });
+}
+
+async function runPipeline(
+  rawData: RawUploadData,
+  fileName: string,
+  slackChannel: string,
+  slackThreadTs: string,
+  pipelineId: string,
+  slack: WebClient,
+  pipelineStart: number,
+  baseUrl: string,
+) {
   let sandbox: Awaited<ReturnType<typeof Sandbox.create>> | null = null;
 
   try {
@@ -305,7 +325,7 @@ export async function POST(req: NextRequest) {
       text: `Pipeline complete: ${ranked.length} ranked, ${stats.hubspotCreated || 0} added to HubSpot`,
     });
 
-    return NextResponse.json({ ok: true, pipelineId, ...pipelineResults.stats });
+    console.log(`[pipeline] Complete. Stats:`, pipelineResults.stats);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[pipeline] Error: ${errMsg}`);
@@ -317,8 +337,6 @@ export async function POST(req: NextRequest) {
       thread_ts: slackThreadTs,
       text: `Pipeline error: ${errMsg}`,
     });
-
-    return NextResponse.json({ ok: false, error: errMsg }, { status: 500 });
   } finally {
     if (sandbox) {
       await sandbox.stop();
