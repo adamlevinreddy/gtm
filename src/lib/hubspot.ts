@@ -305,23 +305,7 @@ export async function getActiveHubSpotCompanies(companyNames?: string[]): Promis
     }
   } catch { /* continue */ }
 
-  // 3. Pull all HubSpot company records (paginated)
-  try {
-    let after: string | undefined;
-    do {
-      const url = `/crm/v3/objects/companies?limit=100&properties=name${after ? `&after=${after}` : ""}`;
-      const res = await hubspotFetch(url);
-      if (!res.ok) break;
-      const data = await res.json();
-      for (const co of data.results || []) {
-        const name = co.properties?.name;
-        if (name) hubspotCompanies.add(name.toLowerCase());
-      }
-      after = data.paging?.next?.after;
-    } while (after);
-  } catch { /* continue */ }
-
-  console.log(`[hubspot] Loaded ${hubspotCompanies.size} company names from HubSpot`);
+  console.log(`[hubspot] Loaded ${hubspotCompanies.size} active company names from HubSpot (deals + engaged contacts only)`);
 
   // 4. Fuzzy match conference companies against the HubSpot set
   const active = new Set<string>();
