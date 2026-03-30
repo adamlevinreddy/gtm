@@ -144,18 +144,29 @@ export async function POST(req: NextRequest) {
 
           await removeReaction(channel, event.ts, "hourglass_flowing_sand");
 
-          // Fire the pipeline as a background job
+          // Fire the pipeline as a background job.
+          // Use waitUntil pattern: start the fetch, don't await the full response,
+          // but ensure the request body is fully sent before the function exits.
           const baseUrl = "https://gtm-jet.vercel.app";
+          const pipelinePayload = JSON.stringify({
+            rawData,
+            fileName,
+            slackChannel: channel,
+            slackThreadTs: event.ts,
+          });
+          console.log(`[slack] Firing pipeline: ${pipelinePayload.length} bytes to ${baseUrl}/api/pipeline`);
+          // Await just long enough for the request to be accepted (not for pipeline to complete)
           fetch(`${baseUrl}/api/pipeline`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              rawData,
-              fileName,
-              slackChannel: channel,
-              slackThreadTs: event.ts,
-            }),
-          }).catch(() => { /* fire and forget */ });
+            body: pipelinePayload,
+          }).then((res) => {
+            console.log(`[slack] Pipeline response: ${res.status}`);
+          }).catch((err) => {
+            console.error(`[slack] Pipeline fetch error: ${err}`);
+          });
+          // Small delay to ensure the fetch TCP connection is established
+          await new Promise((r) => setTimeout(r, 1000));
 
         } catch (err) {
           await removeReaction(channel, event.ts, "hourglass_flowing_sand");
