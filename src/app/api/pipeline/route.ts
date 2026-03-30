@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
           contact.lastName = person.lastName;
           if (person.linkedinUrl) {
             // Store LinkedIn URL — will be persisted to contact record
-            (contact as Record<string, unknown>).linkedinUrl = person.linkedinUrl;
+            (contact as unknown as Record<string, unknown>).linkedinUrl = person.linkedinUrl;
           }
           namesResolved++;
         }
