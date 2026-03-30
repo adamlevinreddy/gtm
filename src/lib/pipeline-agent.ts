@@ -78,9 +78,16 @@ const PERSONA_MAP: Record<string, string> = {
 
 /**
  * Build all files needed for the pipeline sandbox.
- * Returns file paths + content buffers to write via sandbox.writeFiles().
+ * The sandbox handles EVERYTHING: extraction, agent pipeline, KV storage, Slack report.
+ * The serverless function just creates the sandbox and walks away.
  */
-export function buildPipelineFiles(rawData: RawUploadData): {
+export function buildPipelineFiles(rawData: RawUploadData, meta: {
+  pipelineId: string;
+  fileName: string;
+  slackChannel: string;
+  slackThreadTs: string;
+  baseUrl: string;
+}): {
   path: string;
   content: Buffer;
 }[] {
@@ -104,12 +111,45 @@ const client = new Anthropic({
 const HUBSPOT_KEY = process.env.HUBSPOT_API_KEY;
 const ENRICHLAYER_KEY = process.env.ENRICHLAYER_API_KEY;
 const APOLLO_KEY = process.env.APOLLO_API_KEY;
+const SLACK_TOKEN = process.env.SLACK_BOT_TOKEN;
+const KV_REST_API_URL = process.env.KV_REST_API_URL;
+const KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN;
+const PIPELINE_ID = ${JSON.stringify(meta.pipelineId)};
+const FILE_NAME = ${JSON.stringify(meta.fileName)};
+const SLACK_CHANNEL = ${JSON.stringify(meta.slackChannel)};
+const SLACK_THREAD_TS = ${JSON.stringify(meta.slackThreadTs)};
+const BASE_URL = ${JSON.stringify(meta.baseUrl)};
+const PIPELINE_START = Date.now();
 
 function progress(step, msg) {
   process.stderr.write(JSON.stringify({ step, message: msg, ts: Date.now() }) + '\\n');
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Slack helpers (direct API calls, no SDK needed)
+async function slackReaction(action, emoji) {
+  await fetch('https://slack.com/api/reactions.' + action, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: SLACK_CHANNEL, timestamp: SLACK_THREAD_TS, name: emoji }),
+  }).catch(() => {});
+}
+async function slackMessage(blocks, text) {
+  await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: SLACK_CHANNEL, thread_ts: SLACK_THREAD_TS, blocks, text }),
+  }).catch(() => {});
+}
+async function kvSet(key, value, exSeconds) {
+  if (!KV_REST_API_URL) return;
+  await fetch(KV_REST_API_URL, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + KV_REST_API_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify(["SET", key, JSON.stringify(value), "EX", exSeconds]),
+  }).catch(() => {});
+}
 
 // ============================================================================
 // PHASE 1: EXTRACTION (parallel Claude calls, batches of ${BATCH_SIZE})
@@ -456,6 +496,7 @@ async function handleTool(name, input) {
     }
 
     case "submit_results": {
+      await reportResults(input);
       process.stdout.write(JSON.stringify(input));
       process.exit(0);
     }
@@ -580,26 +621,96 @@ if (response.stop_reason !== "tool_use") {
 
   // Try to find JSON in the final text
   const jsonMatch = finalText.match(/\\{[\\s\\S]*\\}/);
+  let fallbackResults;
   if (jsonMatch) {
     try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      process.stdout.write(JSON.stringify(parsed));
+      fallbackResults = JSON.parse(jsonMatch[0]);
     } catch {
-      process.stdout.write(JSON.stringify({
+      fallbackResults = {
         error: "Agent finished without submitting results",
-        agentText: finalText.slice(0, 1000),
         ranked: [], filtered: [], existingActivity: [],
         stats: { totalRows: ${rawData.rows.length}, extracted: extracted.length, agentTurns: turns }
-      }));
+      };
     }
   } else {
-    process.stdout.write(JSON.stringify({
+    fallbackResults = {
       error: "Agent finished without submitting structured results",
-      agentText: finalText.slice(0, 1000),
       ranked: [], filtered: [], existingActivity: [],
       stats: { totalRows: ${rawData.rows.length}, extracted: extracted.length, agentTurns: turns }
-    }));
+    };
   }
+  await reportResults(fallbackResults);
+  process.stdout.write(JSON.stringify(fallbackResults));
+}
+
+// ============================================================================
+// REPORT RESULTS (Slack + KV) — called by submit_results tool or fallback
+// ============================================================================
+async function reportResults(results) {
+  const ranked = results.ranked || [];
+  const filtered = results.filtered || [];
+  const existingActivity = results.existingActivity || [];
+  const stats = results.stats || {};
+  const durationSec = Math.round((Date.now() - PIPELINE_START) / 1000);
+
+  // Store in KV
+  await kvSet('pipeline:' + PIPELINE_ID, {
+    id: PIPELINE_ID,
+    fileName: FILE_NAME,
+    createdAt: new Date().toISOString(),
+    durationMs: Date.now() - PIPELINE_START,
+    stats,
+    ranked: ranked.map(c => ({ ...c, rawRow: undefined })),
+    filtered: filtered.map(c => ({ ...c, rawRow: undefined })),
+    existingActivity: existingActivity.map(c => ({ ...c, rawRow: undefined })),
+  }, 30 * 24 * 60 * 60);
+
+  // Swap emoji
+  await slackReaction('remove', 'brain');
+  await slackReaction('add', 'white_check_mark');
+
+  // Build Slack blocks
+  const personaLabels = ${JSON.stringify(PERSONA_MAP)};
+  const byPersona = {};
+  for (const c of ranked) {
+    const p = c.persona || 'unknown';
+    if (!byPersona[p]) byPersona[p] = [];
+    byPersona[p].push(c);
+  }
+
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: 'Pipeline complete: ' + FILE_NAME } },
+    { type: 'section', fields: [
+      { type: 'mrkdwn', text: '*Extracted:*\\n' + (stats.extracted || 0) },
+      { type: 'mrkdwn', text: '*Ranked:*\\n' + ranked.length },
+      { type: 'mrkdwn', text: '*Filtered:*\\n' + filtered.length },
+      { type: 'mrkdwn', text: '*Existing Activity:*\\n' + existingActivity.length },
+      { type: 'mrkdwn', text: '*Apollo Enriched:*\\n' + (stats.apolloEnriched || 0) },
+      { type: 'mrkdwn', text: '*HubSpot Created:*\\n' + (stats.hubspotCreated || 0) },
+    ]},
+    { type: 'divider' },
+  ];
+
+  const personaOrder = ['cx_leadership', 'ld', 'qa', 'wfm', 'km', 'it', 'sales_marketing', 'unknown'];
+  for (const persona of personaOrder) {
+    const contacts = byPersona[persona];
+    if (!contacts || contacts.length === 0) continue;
+    const top = contacts.slice(0, 5).map(c => {
+      const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || '—';
+      const agents = c.agentCount ? c.agentCount + ' agents' : (c.agentLevelGuess || '—');
+      return '• *' + name + '* (' + (c.score || 0) + ') — ' + (c.title || '—') + ' @ ' + c.company + ' | ' + agents;
+    });
+    if (contacts.length > 5) top.push('_...and ' + (contacts.length - 5) + ' more_');
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '*' + (personaLabels[persona] || persona) + '* (' + contacts.length + ')\\n' + top.join('\\n') } });
+  }
+
+  blocks.push(
+    { type: 'context', elements: [{ type: 'mrkdwn', text: 'Pipeline completed in ' + durationSec + 's' }] },
+    { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'View Full Results' }, url: BASE_URL + '/pipeline/' + PIPELINE_ID, style: 'primary' }] }
+  );
+
+  await slackMessage(blocks, 'Pipeline complete: ' + ranked.length + ' ranked');
+  progress('reported', 'Slack + KV report sent');
 }
 
 progress('done', 'Pipeline complete after ' + turns + ' agent turns');
