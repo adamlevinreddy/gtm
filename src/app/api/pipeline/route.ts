@@ -136,8 +136,9 @@ export async function POST(req: NextRequest) {
     const existingActivity = results.existingActivity || [];
     const stats = results.stats || {};
 
-    // Persist contacts to Supabase
-    for (const contact of [...ranked, ...existingActivity]) {
+    // Persist contacts to Supabase (limit to top 20 to avoid timeout)
+    const toPersist = [...ranked.slice(0, 20)];
+    for (const contact of toPersist) {
       try {
         await findOrCreateContact({
           firstName: contact.firstName,
