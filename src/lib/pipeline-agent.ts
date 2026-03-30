@@ -101,6 +101,9 @@ export function buildPipelineFiles(rawData: RawUploadData, meta: {
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, writeFileSync } from 'fs';
 
+// Wrap entire script in try/catch so uncaught errors report to Slack
+try {
+
 // ============================================================================
 // CONFIG
 // ============================================================================
@@ -121,34 +124,75 @@ const SLACK_THREAD_TS = ${JSON.stringify(meta.slackThreadTs)};
 const BASE_URL = ${JSON.stringify(meta.baseUrl)};
 const PIPELINE_START = Date.now();
 
+// ============================================================================
+// LOGGING — all output goes to stderr so we can see it in Vercel Sandbox Activity
+// ============================================================================
+function log(tag, msg, data) {
+  const entry = { tag, msg, ts: new Date().toISOString(), ...(data ? { data } : {}) };
+  process.stderr.write(JSON.stringify(entry) + '\\n');
+}
+
 function progress(step, msg) {
-  process.stderr.write(JSON.stringify({ step, message: msg, ts: Date.now() }) + '\\n');
+  log('PROGRESS', step + ': ' + msg);
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// Log all env vars (redacted) to verify they're set
+log('CONFIG', 'Environment check', {
+  ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ? 'set (' + process.env.ANTHROPIC_AUTH_TOKEN.length + ' chars)' : 'MISSING',
+  ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || 'MISSING',
+  HUBSPOT_API_KEY: HUBSPOT_KEY ? 'set' : 'MISSING',
+  ENRICHLAYER_API_KEY: ENRICHLAYER_KEY ? 'set' : 'MISSING',
+  APOLLO_API_KEY: APOLLO_KEY ? 'set' : 'MISSING',
+  SLACK_BOT_TOKEN: SLACK_TOKEN ? 'set' : 'MISSING',
+  KV_REST_API_URL: KV_REST_API_URL ? 'set' : 'MISSING',
+  KV_REST_API_TOKEN: KV_REST_API_TOKEN ? 'set' : 'MISSING',
+  PIPELINE_ID: PIPELINE_ID,
+  SLACK_CHANNEL: SLACK_CHANNEL,
+});
+
 // Slack helpers (direct API calls, no SDK needed)
 async function slackReaction(action, emoji) {
-  await fetch('https://slack.com/api/reactions.' + action, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel: SLACK_CHANNEL, timestamp: SLACK_THREAD_TS, name: emoji }),
-  }).catch(() => {});
+  try {
+    const res = await fetch('https://slack.com/api/reactions.' + action, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: SLACK_CHANNEL, timestamp: SLACK_THREAD_TS, name: emoji }),
+    });
+    const data = await res.json();
+    if (!data.ok) log('SLACK_WARN', 'reactions.' + action + ' ' + emoji + ': ' + data.error);
+  } catch (err) {
+    log('SLACK_ERROR', 'reactions.' + action + ' failed: ' + err.message);
+  }
 }
 async function slackMessage(blocks, text) {
-  await fetch('https://slack.com/api/chat.postMessage', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel: SLACK_CHANNEL, thread_ts: SLACK_THREAD_TS, blocks, text }),
-  }).catch(() => {});
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: SLACK_CHANNEL, thread_ts: SLACK_THREAD_TS, blocks, text }),
+    });
+    const data = await res.json();
+    if (!data.ok) log('SLACK_ERROR', 'postMessage failed: ' + data.error);
+    else log('SLACK', 'Message posted to thread');
+  } catch (err) {
+    log('SLACK_ERROR', 'postMessage threw: ' + err.message);
+  }
 }
 async function kvSet(key, value, exSeconds) {
-  if (!KV_REST_API_URL) return;
-  await fetch(KV_REST_API_URL, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + KV_REST_API_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify(["SET", key, JSON.stringify(value), "EX", exSeconds]),
-  }).catch(() => {});
+  if (!KV_REST_API_URL) { log('KV_WARN', 'KV_REST_API_URL not set, skipping'); return; }
+  try {
+    const res = await fetch(KV_REST_API_URL, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + KV_REST_API_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(["SET", key, JSON.stringify(value), "EX", exSeconds]),
+    });
+    const data = await res.json();
+    log('KV', 'SET ' + key + ': ' + (data.result || JSON.stringify(data).slice(0, 100)));
+  } catch (err) {
+    log('KV_ERROR', 'SET ' + key + ' failed: ' + err.message);
+  }
 }
 
 // ============================================================================
@@ -162,6 +206,7 @@ const BATCH_COUNT = ${batches.length};
 
 async function extractBatch(batchIndex) {
   const batchData = JSON.parse(readFileSync('/vercel/sandbox/data/batch_' + batchIndex + '.json', 'utf-8'));
+  log('EXTRACT', 'Starting batch ' + batchIndex + ' (' + batchData.length + ' rows)');
   const userPrompt = "Column headers: " + JSON.stringify(HEADERS) + "\\n\\nRows (" + batchData.length + "):\\n" + JSON.stringify(batchData);
 
   try {
@@ -176,11 +221,17 @@ async function extractBatch(batchIndex) {
     for (const block of response.content) {
       if (block.type === "text") text += block.text;
     }
+    log('EXTRACT', 'Batch ' + batchIndex + ' response: ' + text.length + ' chars, usage: ' + JSON.stringify(response.usage));
     const match = text.match(/\\[[\\s\\S]*\\]/);
-    if (match) return JSON.parse(match[0]);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      log('EXTRACT', 'Batch ' + batchIndex + ' extracted ' + parsed.length + ' contacts');
+      return parsed;
+    }
+    log('EXTRACT', 'Batch ' + batchIndex + ' NO JSON found in response: ' + text.slice(0, 200));
     return [];
   } catch (err) {
-    process.stderr.write("Extraction batch " + batchIndex + " error: " + err.message + "\\n");
+    log('EXTRACT_ERROR', 'Batch ' + batchIndex + ' failed: ' + err.message);
     return [];
   }
 }
@@ -330,6 +381,22 @@ const TOOLS = [
 let lastEnrichLayerCall = 0;
 
 async function handleTool(name, input) {
+  const toolStart = Date.now();
+  log('TOOL_CALL', name, { input: JSON.stringify(input).slice(0, 300) });
+  let result;
+  try {
+    result = await _handleToolInner(name, input);
+    log('TOOL_RESULT', name + ' completed in ' + (Date.now() - toolStart) + 'ms', {
+      resultPreview: JSON.stringify(result).slice(0, 300)
+    });
+    return result;
+  } catch (err) {
+    log('TOOL_ERROR', name + ' failed: ' + err.message);
+    throw err;
+  }
+}
+
+async function _handleToolInner(name, input) {
   switch (name) {
     case "search_hubspot_contacts": {
       const res = await fetch("https://api.hubapi.com/crm/v3/objects/contacts/search", {
@@ -571,14 +638,35 @@ Work through this systematically. Process all contacts, then submit results.\`;
 // ============================================================================
 const userMessage = "Here are the " + extracted.length + " extracted contacts to process:\\n\\n" + JSON.stringify(extracted, null, 2);
 
+log('AGENT', 'Starting agent loop', { contactCount: extracted.length, userMessageLength: userMessage.length });
+
 let messages = [{ role: "user", content: userMessage }];
-let response = await client.messages.create({
-  model: "anthropic/claude-opus-4.6",
-  max_tokens: 16000,
-  system: SYSTEM_PROMPT,
-  tools: TOOLS,
-  messages,
-});
+
+log('AGENT', 'Sending initial message to Claude...');
+let response;
+try {
+  response = await client.messages.create({
+    model: "anthropic/claude-opus-4.6",
+    max_tokens: 16000,
+    system: SYSTEM_PROMPT,
+    tools: TOOLS,
+    messages,
+  });
+  log('AGENT', 'Initial response received', {
+    stop_reason: response.stop_reason,
+    content_blocks: response.content.length,
+    usage: response.usage,
+    textPreview: response.content.filter(b => b.type === 'text').map(b => b.text.slice(0, 200)).join(''),
+    toolCalls: response.content.filter(b => b.type === 'tool_use').map(b => b.name),
+  });
+} catch (err) {
+  log('AGENT_ERROR', 'Initial Claude call failed: ' + err.message, { stack: err.stack?.slice(0, 500) });
+  // Report error to Slack and exit
+  await slackReaction('remove', 'brain');
+  await slackReaction('add', 'x');
+  await slackMessage([], 'Pipeline error: Claude agent failed to start - ' + err.message);
+  process.exit(1);
+}
 
 let turns = 0;
 const MAX_TURNS = 200;
@@ -588,14 +676,24 @@ while (response.stop_reason === "tool_use" && turns < MAX_TURNS) {
   const assistantContent = response.content;
   messages.push({ role: "assistant", content: assistantContent });
 
+  // Log any text blocks (Claude's reasoning)
+  for (const block of assistantContent) {
+    if (block.type === "text" && block.text.trim()) {
+      log('AGENT_TEXT', 'Turn ' + turns + ': ' + block.text.slice(0, 500));
+    }
+  }
+
+  const toolCalls = assistantContent.filter(b => b.type === "tool_use");
+  log('AGENT', 'Turn ' + turns + ': ' + toolCalls.length + ' tool calls: ' + toolCalls.map(b => b.name).join(', '));
+
   const toolResults = [];
   for (const block of assistantContent) {
     if (block.type === "tool_use") {
-      progress('agent', 'Tool: ' + block.name + (block.input?.company_name ? ' (' + block.input.company_name + ')' : ''));
       try {
         const result = await handleTool(block.name, block.input);
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
       } catch (err) {
+        log('AGENT_TOOL_ERROR', 'Tool ' + block.name + ' threw: ' + err.message);
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify({ error: err.message }), is_error: true });
       }
     }
@@ -603,14 +701,34 @@ while (response.stop_reason === "tool_use" && turns < MAX_TURNS) {
 
   messages.push({ role: "user", content: toolResults });
 
-  response = await client.messages.create({
-    model: "anthropic/claude-opus-4.6",
-    max_tokens: 16000,
-    system: SYSTEM_PROMPT,
-    tools: TOOLS,
-    messages,
-  });
+  // Track message context size
+  const msgSize = JSON.stringify(messages).length;
+  log('AGENT', 'Sending turn ' + (turns + 1) + ' to Claude (message context: ' + Math.round(msgSize / 1024) + 'KB)');
+
+  try {
+    response = await client.messages.create({
+      model: "anthropic/claude-opus-4.6",
+      max_tokens: 16000,
+      system: SYSTEM_PROMPT,
+      tools: TOOLS,
+      messages,
+    });
+    log('AGENT', 'Turn ' + (turns + 1) + ' response', {
+      stop_reason: response.stop_reason,
+      usage: response.usage,
+      toolCalls: response.content.filter(b => b.type === 'tool_use').map(b => b.name),
+    });
+  } catch (err) {
+    log('AGENT_ERROR', 'Claude call failed on turn ' + (turns + 1) + ': ' + err.message);
+    // Report and exit
+    await slackReaction('remove', 'brain');
+    await slackReaction('add', 'x');
+    await slackMessage([], 'Pipeline error on turn ' + (turns + 1) + ': ' + err.message);
+    process.exit(1);
+  }
 }
+
+log('AGENT', 'Loop ended. stop_reason: ' + response.stop_reason + ', turns: ' + turns);
 
 // If Claude stopped without calling submit_results, extract any text and create a fallback result
 if (response.stop_reason !== "tool_use") {
@@ -714,6 +832,21 @@ async function reportResults(results) {
 }
 
 progress('done', 'Pipeline complete after ' + turns + ' agent turns');
+
+} catch (fatalErr) {
+  // Top-level catch — report any uncaught error to Slack
+  const msg = fatalErr instanceof Error ? fatalErr.message : String(fatalErr);
+  const stack = fatalErr instanceof Error ? fatalErr.stack : '';
+  process.stderr.write(JSON.stringify({ tag: 'FATAL', msg, stack: (stack || '').slice(0, 500) }) + '\\n');
+
+  try {
+    await slackReaction('remove', 'brain');
+    await slackReaction('add', 'x');
+    await slackMessage([], 'Pipeline fatal error: ' + msg);
+  } catch { /* can\\'t do anything more */ }
+
+  process.exit(1);
+}
 `;
 
   // Build files array
