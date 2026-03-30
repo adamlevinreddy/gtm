@@ -41,7 +41,9 @@ export async function POST(req: NextRequest) {
       timeout: 1_800_000, // 30 minutes
       runtime: "node22",
     });
-    console.log(`[pipeline] Sandbox created: ${sandbox.sandboxId}`);
+    // Ensure timeout is extended in case create() ignores the param
+    await sandbox.extendTimeout(1_800_000);
+    console.log(`[pipeline] Sandbox created: ${sandbox.sandboxId}, timeout: ${sandbox.timeout}ms`);
 
     // Install deps
     await sandbox.runCommand({ cmd: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"], sudo: true });
