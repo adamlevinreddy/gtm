@@ -43,16 +43,16 @@ For EACH row, extract:
    - "Competitor" = companies that sell competing CC software (QA, training, coaching, speech analytics, WFM, CCaaS platforms)
    - "Press" = media, analysts, journalists, industry publications
 8. **projectPriorities**: What CX/CC projects or priorities they mentioned. May be in columns like "Priorities", "Interests", "Topics", "What are you looking for", "Goals", "Challenges". Preserve the original text.
-9. **persona**: Classify into one of: cx_leadership, ld, qa, wfm, km, sales_marketing, it, excluded, unknown
-   - cx_leadership: CX/CC leadership (VP+, Directors of CX/CC/Customer Service)
-   - ld: L&D, Training, Onboarding, Enablement
-   - qa: QA, Quality, Speech Analytics, Performance Management
-   - wfm: Workforce Management, Scheduling, Forecasting
-   - km: Knowledge Management
+9. **persona**: Classify into one of: ld, qa, wfm, km, sales_marketing, it, excluded, unknown
+   - ld: L&D, Training, Onboarding, Enablement, Agent Development
+   - qa: QA, Quality, Speech Analytics, Performance Management, Compliance
+   - wfm: Workforce Management, Scheduling, Forecasting, Capacity Planning
+   - km: Knowledge Management, Content Strategy, Documentation
    - sales_marketing: Sales/Marketing at prospect companies
-   - it: IT/Technology leaders
-   - excluded: Vendors, SDRs, BDRs, junior non-buyer roles
-   - unknown: can't determine
+   - it: IT/Technology leaders, CTO, Systems
+   - excluded: Vendors, SDRs, BDRs, junior non-buyer roles, competitors
+   - unknown: can't clearly determine the specific function (includes senior CX/CC leaders whose specific function area is unclear)
+   NOTE: Do NOT use "cx_leadership". Senior leaders (VP of CX, Director of Contact Center) should be classified by what they specifically oversee — if a VP oversees training, they are "ld"; if they oversee quality, they are "qa". If unclear, use "unknown".
 10. **background**: Current role/responsibilities summary. May come from a "Background" or "Bio" or "Notes" column, or you can synthesize from title + company + priorities.
 11. **numberOfBpoVendors**: If data mentions BPO partners or outsourcing relationships, count them. Otherwise null.
 
@@ -65,7 +65,6 @@ IMPORTANT:
 Respond with ONLY a valid JSON array of objects. No explanation text.`;
 
 const PERSONA_MAP: Record<string, string> = {
-  cx_leadership: "CX Leadership",
   ld: "L&D / Training",
   qa: "QA / Quality",
   wfm: "WFM",
@@ -635,7 +634,8 @@ Contacts flagged as existing activity should also get an ACTIVITY SCORE separate
 For contacts NOT flagged as existing activity:
 - Agent Size (max 30): 5000+=30, 2000+=27, 1000+=24, 500+=19.5, 250+=15, 100+=9, <100=0, unknown=9
 - Seniority (max 25): C-suite=25, SVP/EVP=23.75, VP=21.25, Director/Head=17.5, Sr Manager=13.75, Manager=10, IC=6.25
-- Persona Fit (max 25): cx_leadership=25, ld=23.75, qa=22.5, km=15, wfm=12.5, it=10, sales_marketing=7.5, excluded=0
+- Persona Fit (max 25): ld=25, qa=23.75, wfm=15, km=15, it=10, sales_marketing=7.5, excluded=0, unknown=5
+  NOTE: Do NOT use "cx_leadership" as a persona. Instead, classify senior CX/CC leaders into the specific function they oversee (ld, qa, wfm, km, it). If their function is unclear, use "unknown".
 - Priority Relevance (max 15): 3+ Reddy keywords=15, 2=12, 1=9, none=4.5
   Reddy keywords: ${JSON.stringify(REDDY_RELEVANT_PRIORITIES)}
   NOT Reddy: ${JSON.stringify(NOT_REDDY_PRIORITIES)}
@@ -709,7 +709,7 @@ let response;
 try {
   response = await client.messages.create({
     model: "anthropic/claude-opus-4.6",
-    max_tokens: 16000,
+    max_tokens: 32000,
     system: SYSTEM_PROMPT,
     tools: TOOLS,
     messages,

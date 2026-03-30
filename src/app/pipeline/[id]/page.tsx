@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 
 const PERSONA_LABELS: Record<string, string> = {
-  cx_leadership: "CX/CC Leadership",
   ld: "L&D / Training",
   qa: "QA / Quality",
   wfm: "WFM",
@@ -16,7 +15,6 @@ const PERSONA_LABELS: Record<string, string> = {
 };
 
 const PERSONA_COLORS: Record<string, string> = {
-  cx_leadership: "bg-blue-100 text-blue-800",
   ld: "bg-emerald-100 text-emerald-800",
   qa: "bg-violet-100 text-violet-800",
   wfm: "bg-amber-100 text-amber-800",
