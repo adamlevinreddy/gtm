@@ -44,15 +44,15 @@ function getApiKey(): string | null {
   return process.env.ENRICHLAYER_API_KEY || null;
 }
 
-async function enrichLayerFetch(path: string, apiKey: string, retries = 2): Promise<Response> {
+async function enrichLayerFetch(path: string, apiKey: string, retries = 3): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await fetch(`https://enrichlayer.com${path}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (res.status === 429 && attempt < retries) {
-      // Rate limited — wait and retry
-      const waitMs = (attempt + 1) * 3000; // 3s, 6s
-      console.log(`[enrichlayer] Rate limited, waiting ${waitMs}ms before retry ${attempt + 1}`);
+      // Rate limited — exponential backoff: 5s, 10s, 20s
+      const waitMs = 5000 * Math.pow(2, attempt);
+      console.log(`[enrichlayer] Rate limited, waiting ${waitMs}ms before retry ${attempt + 1}/${retries}`);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }

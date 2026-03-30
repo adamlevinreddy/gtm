@@ -185,11 +185,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // EnrichLayer for remaining unnamed contacts
+    // EnrichLayer for remaining unnamed contacts (2s delay between to avoid rate limits)
     const stillUnnamed = extracted.filter((c) => !c.firstName && !c.lastName && c.company && c.title);
-    for (const contact of stillUnnamed) {
+    console.log(`[pipeline] EnrichLayer: ${stillUnnamed.length} contacts to resolve`);
+    for (let i = 0; i < stillUnnamed.length; i++) {
+      const contact = stillUnnamed[i];
       try {
-        await new Promise((r) => setTimeout(r, 500));
+        if (i > 0) await new Promise((r) => setTimeout(r, 2000));
         const person = await lookupPersonByRole(contact.company, contact.title!);
         if (person && person.firstName) {
           contact.firstName = person.firstName;
