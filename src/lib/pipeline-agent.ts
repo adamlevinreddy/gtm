@@ -846,6 +846,10 @@ progress('done', 'Pipeline complete after ' + turns + ' agent turns');
   } catch { /* can\\'t do anything more */ }
 
   process.exit(1);
+} finally {
+  // Self-cleanup: stop the sandbox from inside by exiting the process.
+  // The detached command finishing signals the sandbox to stop.
+  log('CLEANUP', 'Script finished, process exiting');
 }
 `;
 

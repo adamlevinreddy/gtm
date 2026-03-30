@@ -77,6 +77,55 @@ export async function POST(req: NextRequest) {
     });
 
     console.log(`[pipeline] Command detached: ${cmd.cmdId}. Sandbox: ${sandbox.sandboxId}. Returning 200.`);
+
+    // Cleanup: wait for the detached command to finish, then stop the sandbox.
+    // This runs in after() so the function returns 200 immediately but the
+    // sandbox gets cleaned up when the script finishes.
+    after(async () => {
+      try {
+        const result = await cmd.wait();
+        console.log(`[pipeline] Command finished. Exit: ${result.exitCode}`);
+        const stderr = await result.stderr();
+        if (stderr) console.log(`[pipeline] stderr (last 2000 chars):\n${stderr.slice(-2000)}`);
+
+        // Persist top contacts to Supabase
+        try {
+          const stdout = await result.stdout();
+          if (stdout) {
+            const results = JSON.parse(stdout);
+            for (const contact of (results.ranked || []).slice(0, 30)) {
+              try {
+                await findOrCreateContact({
+                  firstName: contact.firstName,
+                  lastName: contact.lastName,
+                  email: contact.email,
+                  title: contact.title,
+                  companyName: contact.company,
+                  persona: contact.persona,
+                  leadSource: "conference_pre",
+                  conferenceName: fileName,
+                });
+                if (contact.company) await findOrCreateAccount(contact.company);
+              } catch { /* continue */ }
+            }
+          }
+        } catch { /* sandbox already reported to Slack */ }
+
+        await recordAgentRun({
+          agentType: "pipeline",
+          status: result.exitCode === 0 ? "success" : "failed",
+          model: "anthropic/claude-opus-4.6",
+          inputSummary: { rows: rawData.rows.length },
+          durationMs: Date.now() - Date.now(), // approximate
+        }).catch(() => {});
+      } catch (err) {
+        console.error(`[pipeline] Cleanup error: ${err}`);
+      } finally {
+        await sandbox.stop();
+        console.log(`[pipeline] Sandbox stopped`);
+      }
+    });
+
     return NextResponse.json({ ok: true, pipelineId, sandboxId: sandbox.sandboxId, cmdId: cmd.cmdId });
 
   } catch (err) {
