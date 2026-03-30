@@ -5,6 +5,7 @@ import { WebClient } from "@slack/web-api";
 import { extractContactData } from "@/lib/extract";
 import { scoreContacts, type ScoredContact } from "@/lib/scoring";
 import { enrichContactViaApollo } from "@/lib/enrichment";
+import { lookupPersonByRole } from "@/lib/exa";
 import { findOrCreateContact, findOrCreateAccount } from "@/lib/contacts";
 import { pushContactsToHubSpot, getActiveHubSpotCompanies } from "@/lib/hubspot";
 import { recordAgentRun } from "@/lib/sync";
@@ -90,49 +91,31 @@ export async function POST(req: NextRequest) {
       .sort((a, b) => b.score - a.score);
 
     // =========================================================================
-    // STEP 3: Resolve names from HubSpot + enrich via Apollo
+    // STEP 3: Resolve names via EnrichLayer + enrich via Apollo
     // =========================================================================
     await slack.reactions.add({ channel: slackChannel, name: "mag", timestamp: slackThreadTs }).catch(() => {});
 
-    // For contacts without names, try to find them in HubSpot by company + title
-    const hubspotToken = process.env.HUBSPOT_API_KEY;
-    if (hubspotToken) {
-      for (const contact of ranked) {
-        if (contact.firstName && contact.lastName) continue; // already have name
-        if (!contact.company) continue;
+    // For contacts without names, use EnrichLayer Role Lookup (company + title → person)
+    let namesResolved = 0;
+    for (const contact of ranked) {
+      if (contact.firstName && contact.lastName) continue; // already have name
+      if (!contact.company || !contact.title) continue;
 
-        try {
-          const res = await fetch("https://api.hubapi.com/crm/v3/objects/contacts/search", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${hubspotToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              query: contact.company,
-              properties: ["firstname", "lastname", "email", "jobtitle", "company"],
-              limit: 20,
-            }),
-          });
-          if (!res.ok) continue;
-          const data = await res.json();
-
-          // Find a contact at this company with a matching title
-          const titleLower = (contact.title || "").toLowerCase().trim();
-          for (const hsContact of data.results || []) {
-            const hsTitle = (hsContact.properties.jobtitle || "").toLowerCase().trim();
-            if (hsTitle === titleLower) {
-              contact.firstName = hsContact.properties.firstname || contact.firstName;
-              contact.lastName = hsContact.properties.lastname || contact.lastName;
-              contact.email = hsContact.properties.email || contact.email;
-              break;
-            }
+      try {
+        const person = await lookupPersonByRole(contact.company, contact.title);
+        if (person && person.firstName) {
+          contact.firstName = person.firstName;
+          contact.lastName = person.lastName;
+          if (person.linkedinUrl) {
+            // Store LinkedIn URL — will be persisted to contact record
+            (contact as Record<string, unknown>).linkedinUrl = person.linkedinUrl;
           }
-        } catch { /* continue */ }
-      }
+          namesResolved++;
+        }
+      } catch { /* continue */ }
     }
 
-    // Now enrich via Apollo (top 50 by score, with names where possible)
+    // Now enrich via Apollo (top 50 by score, with names from EnrichLayer)
     let enrichedCount = 0;
     for (const contact of ranked.slice(0, 50)) {
       try {
@@ -247,6 +230,7 @@ export async function POST(req: NextRequest) {
           { type: "mrkdwn", text: `*Ranked:*\n${ranked.length}` },
           { type: "mrkdwn", text: `*Filtered out:*\n${filtered.length}` },
           { type: "mrkdwn", text: `*Existing activity:*\n${existingActivity.length}` },
+          { type: "mrkdwn", text: `*Names resolved:*\n${namesResolved}` },
           { type: "mrkdwn", text: `*Apollo enriched:*\n${enrichedCount}` },
           { type: "mrkdwn", text: `*HubSpot created:*\n${hubspotResult.created}` },
         ],
@@ -322,6 +306,7 @@ export async function POST(req: NextRequest) {
         ranked: ranked.length,
         filtered: filtered.length,
         existingActivity: existingActivity.length,
+        namesResolved: namesResolved,
         enriched: enrichedCount,
         hubspotCreated: hubspotResult.created,
         hubspotSkipped: hubspotResult.skipped,
