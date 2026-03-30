@@ -69,41 +69,28 @@ export async function POST(req: NextRequest) {
     }
 
     // =========================================================================
-    // STEP 2: Score + bucket contacts
-    // =========================================================================
-    await slack.reactions.add({ channel: slackChannel, name: "bar_chart", timestamp: slackThreadTs }).catch(() => {});
-
-    // Get companies with deep HubSpot activity (per-company search, fuzzy matching)
-    const uniqueCompanies = [...new Set(extracted.map((c) => c.company).filter(Boolean))];
-    let activeCompanies = new Set<string>();
-    try {
-      activeCompanies = await getActiveHubSpotCompanies(uniqueCompanies);
-    } catch { /* continue without activity data */ }
-
-    // Get existing HubSpot contact emails (from the HubSpot search during extraction)
-    const activeEmails = new Set<string>();
-
-    const scored = scoreContacts(extracted, activeCompanies, activeEmails);
-
-    const filtered = scored.filter((c) => c.bucket === "filtered");
-    const existingActivity = scored.filter((c) => c.bucket === "existing_activity");
-    const ranked = scored
-      .filter((c) => c.bucket === "ranked")
-      .sort((a, b) => b.score - a.score);
-
-    // =========================================================================
-    // STEP 3: Resolve names (HubSpot first, then EnrichLayer) + enrich via Apollo
+    // STEP 2: HubSpot lookup — find names + check individual activity
     // =========================================================================
     await slack.reactions.add({ channel: slackChannel, name: "mag", timestamp: slackThreadTs }).catch(() => {});
 
     let namesResolved = 0;
+    const activeContactKeys = new Set<string>(); // "company|||title" keys for contacts with real activity
 
-    // Pass A: Try HubSpot first (free — finds contacts we already know)
     const hubspotToken = process.env.HUBSPOT_API_KEY;
     if (hubspotToken) {
-      for (const contact of ranked) {
-        if (contact.firstName && contact.lastName) continue;
+      // Dedupe: search HubSpot once per unique company
+      const companiesSearched = new Set<string>();
+      const hsResultsByCompany = new Map<string, Array<{
+        firstname: string; lastname: string; email: string;
+        jobtitle: string; lifecyclestage: string;
+        notes_last_updated: string; hs_email_last_reply_date: string;
+      }>>();
+
+      for (const contact of extracted) {
         if (!contact.company) continue;
+        const companyKey = contact.company.toLowerCase();
+        if (companiesSearched.has(companyKey)) continue;
+        companiesSearched.add(companyKey);
 
         try {
           const res = await fetch("https://api.hubapi.com/crm/v3/objects/contacts/search", {
@@ -114,42 +101,95 @@ export async function POST(req: NextRequest) {
             },
             body: JSON.stringify({
               query: contact.company,
-              properties: ["firstname", "lastname", "email", "jobtitle", "company"],
-              limit: 20,
+              properties: ["firstname", "lastname", "email", "jobtitle", "company",
+                "lifecyclestage", "notes_last_updated", "hs_email_last_reply_date"],
+              limit: 50,
             }),
           });
-          if (!res.ok) continue;
-          const data = await res.json();
-
-          // Normalize title for fuzzy matching: strip common filler words, punctuation
-          const normTitle = (s: string) => s.toLowerCase().replace(/[,.\-–—]/g, " ").replace(/\b(of|the|and|for|at|in|a)\b/g, "").replace(/\s+/g, " ").trim();
-          const titleNorm = normTitle(contact.title || "");
-          const titleWords = titleNorm.split(" ").filter((w) => w.length > 2);
-          for (const hsContact of data.results || []) {
-            const hsNorm = normTitle(hsContact.properties.jobtitle || "");
-            const hsWords = hsNorm.split(" ").filter((w: string) => w.length > 2);
-            // Match if 60%+ of title words overlap
-            const overlap = titleWords.filter((w) => hsWords.includes(w)).length;
-            const matchRatio = titleWords.length > 0 ? overlap / titleWords.length : 0;
-            if (matchRatio >= 0.6 || hsNorm === titleNorm || hsNorm.includes(titleNorm) || titleNorm.includes(hsNorm)) {
-              contact.firstName = hsContact.properties.firstname || contact.firstName;
-              contact.lastName = hsContact.properties.lastname || contact.lastName;
-              contact.email = hsContact.properties.email || contact.email;
-              if (contact.firstName) namesResolved++;
-              break;
-            }
+          if (res.ok) {
+            const data = await res.json();
+            hsResultsByCompany.set(companyKey, (data.results || []).map((r: { properties: Record<string, string> }) => r.properties));
           }
         } catch { /* continue */ }
       }
+
+      // Now match each extracted contact against HubSpot results
+      const normTitle = (s: string) => s.toLowerCase().replace(/[,.\-–—]/g, " ").replace(/\b(of|the|and|for|at|in|a)\b/g, "").replace(/\s+/g, " ").trim();
+
+      for (const contact of extracted) {
+        if (!contact.company) continue;
+        const hsContacts = hsResultsByCompany.get(contact.company.toLowerCase()) || [];
+        const titleNorm = normTitle(contact.title || "");
+        const titleWords = titleNorm.split(" ").filter((w) => w.length > 2);
+
+        for (const hsc of hsContacts) {
+          const hsNorm = normTitle(hsc.jobtitle || "");
+          const hsWords = hsNorm.split(" ").filter((w) => w.length > 2);
+          const overlap = titleWords.filter((w) => hsWords.includes(w)).length;
+          const matchRatio = titleWords.length > 0 ? overlap / titleWords.length : 0;
+
+          if (matchRatio >= 0.5 || hsNorm === titleNorm || hsNorm.includes(titleNorm) || titleNorm.includes(hsNorm)) {
+            // Found a title match — get name
+            if (!contact.firstName && hsc.firstname) {
+              contact.firstName = hsc.firstname;
+              contact.lastName = hsc.lastname || null;
+              contact.email = hsc.email || contact.email;
+              namesResolved++;
+            }
+
+            // Check if this contact has real activity
+            const lifecycle = hsc.lifecyclestage || "";
+            const hasAdvancedLifecycle = ["opportunity", "customer", "evangelist"].includes(lifecycle);
+            const hasRecentNotes = hsc.notes_last_updated && new Date(hsc.notes_last_updated).getTime() > Date.now() - 90 * 24 * 60 * 60 * 1000;
+            const hasRecentEmail = hsc.hs_email_last_reply_date && new Date(hsc.hs_email_last_reply_date).getTime() > Date.now() - 90 * 24 * 60 * 60 * 1000;
+
+            if (hasAdvancedLifecycle || hasRecentNotes || hasRecentEmail) {
+              activeContactKeys.add(`${(contact.company || "").toLowerCase()}|||${(contact.title || "").toLowerCase()}`);
+            }
+            break;
+          }
+        }
+      }
     }
 
-    // Pass B: EnrichLayer for remaining unnamed contacts (with rate limit handling)
-    const stillUnnamed = ranked.filter((c) => !c.firstName && !c.lastName && c.company && c.title);
+    // Also check deals for company-level activity
+    const dealCompanies = new Set<string>();
+    try {
+      let after: string | undefined;
+      do {
+        const url = `https://api.hubapi.com/crm/v3/objects/deals?limit=100&properties=dealname${after ? `&after=${after}` : ""}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${hubspotToken}` } });
+        if (!res.ok) break;
+        const data = await res.json();
+        for (const deal of data.results || []) {
+          const name = (deal.properties?.dealname || "").split(/\s+[-–—]\s+/)[0].trim().toLowerCase();
+          if (name) dealCompanies.add(name);
+        }
+        after = data.paging?.next?.after;
+      } while (after);
+    } catch { /* continue */ }
+
+    // Mark contacts at deal companies as active too
+    for (const contact of extracted) {
+      if (!contact.company) continue;
+      const companyLower = contact.company.toLowerCase();
+      const key = `${companyLower}|||${(contact.title || "").toLowerCase()}`;
+      if (activeContactKeys.has(key)) continue; // already flagged
+
+      // Fuzzy match against deal companies
+      for (const dealCo of dealCompanies) {
+        if (companyLower.includes(dealCo) || dealCo.includes(companyLower)) {
+          activeContactKeys.add(key);
+          break;
+        }
+      }
+    }
+
+    // EnrichLayer for remaining unnamed contacts
+    const stillUnnamed = extracted.filter((c) => !c.firstName && !c.lastName && c.company && c.title);
     for (const contact of stillUnnamed) {
       try {
-        // Small delay between calls to avoid rate limiting
         await new Promise((r) => setTimeout(r, 500));
-
         const person = await lookupPersonByRole(contact.company, contact.title!);
         if (person && person.firstName) {
           contact.firstName = person.firstName;
@@ -162,7 +202,30 @@ export async function POST(req: NextRequest) {
       } catch { /* continue */ }
     }
 
-    // Now enrich via Apollo (top 50 by score, with names from EnrichLayer)
+    // =========================================================================
+    // STEP 3: Score + bucket contacts
+    // =========================================================================
+    await slack.reactions.add({ channel: slackChannel, name: "bar_chart", timestamp: slackThreadTs }).catch(() => {});
+
+    // Build activity sets for the scoring function
+    const activeCompanies = new Set<string>();
+    const activeEmails = new Set<string>();
+    for (const key of activeContactKeys) {
+      const company = key.split("|||")[0];
+      activeCompanies.add(company);
+    }
+
+    const scored = scoreContacts(extracted, activeCompanies, activeEmails);
+
+    const filtered = scored.filter((c) => c.bucket === "filtered");
+    const existingActivity = scored.filter((c) => c.bucket === "existing_activity");
+    const ranked = scored
+      .filter((c) => c.bucket === "ranked")
+      .sort((a, b) => b.score - a.score);
+
+    // =========================================================================
+    // STEP 4: Enrich via Apollo (top 50 ranked by score)
+    // =========================================================================
     let enrichedCount = 0;
     for (const contact of ranked.slice(0, 50)) {
       try {

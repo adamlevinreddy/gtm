@@ -280,30 +280,33 @@ export async function getActiveHubSpotCompanies(companyNames?: string[]): Promis
     } while (after);
   } catch { /* continue */ }
 
-  // 2. Pull companies from engaged contacts (opportunity/customer lifecycle)
-  try {
-    const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
-      method: "POST",
-      body: JSON.stringify({
-        filterGroups: [{
-          filters: [{
-            propertyName: "lifecyclestage",
-            operator: "IN",
-            values: ["opportunity", "customer", "evangelist"],
-          }],
-        }],
-        properties: ["company"],
-        limit: 100,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      for (const contact of data.results || []) {
-        const company = contact.properties?.company;
-        if (company) hubspotCompanies.add(company.toLowerCase());
+  // 2. Pull companies from engaged contacts (opportunity/customer lifecycle OR recent activity)
+  for (const filterGroup of [
+    // Contacts at advanced lifecycle stages
+    { filters: [{ propertyName: "lifecyclestage", operator: "IN", values: ["opportunity", "customer", "evangelist"] }] },
+    // Contacts with recent notes/meetings (last 90 days)
+    { filters: [{ propertyName: "notes_last_updated", operator: "GTE", value: String(Date.now() - 90 * 24 * 60 * 60 * 1000) }] },
+    // Contacts with recent email activity
+    { filters: [{ propertyName: "hs_email_last_reply_date", operator: "GTE", value: String(Date.now() - 90 * 24 * 60 * 60 * 1000) }] },
+  ]) {
+    try {
+      const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
+        method: "POST",
+        body: JSON.stringify({
+          filterGroups: [filterGroup],
+          properties: ["company"],
+          limit: 100,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        for (const contact of data.results || []) {
+          const company = contact.properties?.company;
+          if (company) hubspotCompanies.add(company.toLowerCase());
+        }
       }
-    }
-  } catch { /* continue */ }
+    } catch { /* continue */ }
+  }
 
   console.log(`[hubspot] Loaded ${hubspotCompanies.size} active company names from HubSpot (deals + engaged contacts only)`);
 
