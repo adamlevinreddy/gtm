@@ -73,10 +73,11 @@ export async function POST(req: NextRequest) {
     // =========================================================================
     await slack.reactions.add({ channel: slackChannel, name: "bar_chart", timestamp: slackThreadTs }).catch(() => {});
 
-    // Get companies with deep HubSpot activity
+    // Get companies with deep HubSpot activity (per-company search, fuzzy matching)
+    const uniqueCompanies = [...new Set(extracted.map((c) => c.company).filter(Boolean))];
     let activeCompanies = new Set<string>();
     try {
-      activeCompanies = await getActiveHubSpotCompanies();
+      activeCompanies = await getActiveHubSpotCompanies(uniqueCompanies);
     } catch { /* continue without activity data */ }
 
     // Get existing HubSpot contact emails (from the HubSpot search during extraction)
