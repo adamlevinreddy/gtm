@@ -272,7 +272,8 @@ export async function getActiveHubSpotCompanies(): Promise<Set<string>> {
       for (const deal of data.results || []) {
         const dealName = deal.properties?.dealname || "";
         // Deal names follow pattern "Company Name - Product" or just "Company Name"
-        const companyPart = dealName.split(/\s*[-–—]\s*/)[0].trim();
+        // Split on " - " (space-dash-space) to avoid breaking names like "1-800-Flowers"
+        const companyPart = dealName.split(/\s+[-–—]\s+/)[0].trim();
         if (companyPart) active.add(companyPart.toLowerCase());
       }
       after = data.paging?.next?.after;

@@ -91,23 +91,69 @@ export async function POST(req: NextRequest) {
       .sort((a, b) => b.score - a.score);
 
     // =========================================================================
-    // STEP 3: Resolve names via EnrichLayer + enrich via Apollo
+    // STEP 3: Resolve names (HubSpot first, then EnrichLayer) + enrich via Apollo
     // =========================================================================
     await slack.reactions.add({ channel: slackChannel, name: "mag", timestamp: slackThreadTs }).catch(() => {});
 
-    // For contacts without names, use EnrichLayer Role Lookup (company + title → person)
     let namesResolved = 0;
-    for (const contact of ranked) {
-      if (contact.firstName && contact.lastName) continue; // already have name
-      if (!contact.company || !contact.title) continue;
 
+    // Pass A: Try HubSpot first (free — finds contacts we already know)
+    const hubspotToken = process.env.HUBSPOT_API_KEY;
+    if (hubspotToken) {
+      for (const contact of ranked) {
+        if (contact.firstName && contact.lastName) continue;
+        if (!contact.company) continue;
+
+        try {
+          const res = await fetch("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${hubspotToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: contact.company,
+              properties: ["firstname", "lastname", "email", "jobtitle", "company"],
+              limit: 20,
+            }),
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+
+          // Normalize title for fuzzy matching: strip common filler words, punctuation
+          const normTitle = (s: string) => s.toLowerCase().replace(/[,.\-–—]/g, " ").replace(/\b(of|the|and|for|at|in|a)\b/g, "").replace(/\s+/g, " ").trim();
+          const titleNorm = normTitle(contact.title || "");
+          const titleWords = titleNorm.split(" ").filter((w) => w.length > 2);
+          for (const hsContact of data.results || []) {
+            const hsNorm = normTitle(hsContact.properties.jobtitle || "");
+            const hsWords = hsNorm.split(" ").filter((w: string) => w.length > 2);
+            // Match if 60%+ of title words overlap
+            const overlap = titleWords.filter((w) => hsWords.includes(w)).length;
+            const matchRatio = titleWords.length > 0 ? overlap / titleWords.length : 0;
+            if (matchRatio >= 0.6 || hsNorm === titleNorm || hsNorm.includes(titleNorm) || titleNorm.includes(hsNorm)) {
+              contact.firstName = hsContact.properties.firstname || contact.firstName;
+              contact.lastName = hsContact.properties.lastname || contact.lastName;
+              contact.email = hsContact.properties.email || contact.email;
+              if (contact.firstName) namesResolved++;
+              break;
+            }
+          }
+        } catch { /* continue */ }
+      }
+    }
+
+    // Pass B: EnrichLayer for remaining unnamed contacts (with rate limit handling)
+    const stillUnnamed = ranked.filter((c) => !c.firstName && !c.lastName && c.company && c.title);
+    for (const contact of stillUnnamed) {
       try {
-        const person = await lookupPersonByRole(contact.company, contact.title);
+        // Small delay between calls to avoid rate limiting
+        await new Promise((r) => setTimeout(r, 500));
+
+        const person = await lookupPersonByRole(contact.company, contact.title!);
         if (person && person.firstName) {
           contact.firstName = person.firstName;
           contact.lastName = person.lastName;
           if (person.linkedinUrl) {
-            // Store LinkedIn URL — will be persisted to contact record
             (contact as unknown as Record<string, unknown>).linkedinUrl = person.linkedinUrl;
           }
           namesResolved++;
