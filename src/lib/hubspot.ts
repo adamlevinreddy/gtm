@@ -255,71 +255,101 @@ export async function associateContactToCompany(
 }
 
 /**
- * Check if a specific company has existing activity in HubSpot.
- * Searches deals + contacts directly by company name — HubSpot's search
- * is fuzzy so "1-800-FLOWERS.com" matches "1-800-Flowers - SIMS".
+ * Pull ALL company names from HubSpot (deals + engaged contacts) in bulk,
+ * then fuzzy match against a list of conference companies locally.
+ * Two API calls total instead of N per company.
  */
-export async function checkCompanyActivity(companyName: string): Promise<boolean> {
-  // Search deals by company name
+export async function getActiveHubSpotCompanies(companyNames?: string[]): Promise<Set<string>> {
+  const hubspotCompanies = new Set<string>(); // all known company names from HubSpot
+
+  // 1. Pull all deal names (paginated) — extract company names
   try {
-    const res = await hubspotFetch("/crm/v3/objects/deals/search", {
-      method: "POST",
-      body: JSON.stringify({
-        query: companyName,
-        properties: ["dealname"],
-        limit: 1,
-      }),
-    });
-    if (res.ok) {
+    let after: string | undefined;
+    do {
+      const url = `/crm/v3/objects/deals?limit=100&properties=dealname${after ? `&after=${after}` : ""}`;
+      const res = await hubspotFetch(url);
+      if (!res.ok) break;
       const data = await res.json();
-      if (data.total > 0) return true;
-    }
+      for (const deal of data.results || []) {
+        const name = deal.properties?.dealname || "";
+        // "National Debt Relief - SIMS" → "National Debt Relief"
+        const company = name.split(/\s+[-–—]\s+/)[0].trim();
+        if (company) hubspotCompanies.add(company.toLowerCase());
+      }
+      after = data.paging?.next?.after;
+    } while (after);
   } catch { /* continue */ }
 
-  // Search contacts at this company with engagement
+  // 2. Pull companies from engaged contacts (opportunity/customer lifecycle)
   try {
     const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
       method: "POST",
       body: JSON.stringify({
-        query: companyName,
-        properties: ["company", "lifecyclestage", "notes_last_updated"],
-        limit: 5,
+        filterGroups: [{
+          filters: [{
+            propertyName: "lifecyclestage",
+            operator: "IN",
+            values: ["opportunity", "customer", "evangelist"],
+          }],
+        }],
+        properties: ["company"],
+        limit: 100,
       }),
     });
     if (res.ok) {
       const data = await res.json();
       for (const contact of data.results || []) {
-        const stage = contact.properties?.lifecyclestage;
-        const notes = contact.properties?.notes_last_updated;
-        // Active if lifecycle beyond lead or has recent notes
-        if (stage && ["opportunity", "customer", "evangelist"].includes(stage)) return true;
-        if (notes) {
-          const noteDate = new Date(notes).getTime();
-          if (noteDate > Date.now() - 90 * 24 * 60 * 60 * 1000) return true;
-        }
+        const company = contact.properties?.company;
+        if (company) hubspotCompanies.add(company.toLowerCase());
       }
     }
   } catch { /* continue */ }
 
-  return false;
-}
+  // 3. Pull all HubSpot company records (paginated)
+  try {
+    let after: string | undefined;
+    do {
+      const url = `/crm/v3/objects/companies?limit=100&properties=name${after ? `&after=${after}` : ""}`;
+      const res = await hubspotFetch(url);
+      if (!res.ok) break;
+      const data = await res.json();
+      for (const co of data.results || []) {
+        const name = co.properties?.name;
+        if (name) hubspotCompanies.add(name.toLowerCase());
+      }
+      after = data.paging?.next?.after;
+    } while (after);
+  } catch { /* continue */ }
 
-/**
- * Check which companies from a list have existing activity in HubSpot.
- * Uses per-company search (fuzzy matching, no name parsing).
- */
-export async function getActiveHubSpotCompanies(companyNames?: string[]): Promise<Set<string>> {
+  console.log(`[hubspot] Loaded ${hubspotCompanies.size} company names from HubSpot`);
+
+  // 4. Fuzzy match conference companies against the HubSpot set
   const active = new Set<string>();
+  if (!companyNames) return active;
 
-  if (companyNames && companyNames.length > 0) {
-    // Check each company directly — HubSpot search handles fuzzy matching
-    for (const name of companyNames) {
-      const isActive = await checkCompanyActivity(name);
-      if (isActive) active.add(name.toLowerCase());
+  for (const name of companyNames) {
+    const nameLower = name.toLowerCase();
+    // Exact match
+    if (hubspotCompanies.has(nameLower)) {
+      active.add(nameLower);
+      continue;
+    }
+    // Fuzzy: check if any HubSpot company contains or is contained by this name
+    for (const hsName of hubspotCompanies) {
+      if (hsName.includes(nameLower) || nameLower.includes(hsName)) {
+        active.add(nameLower);
+        break;
+      }
+      // Normalize: strip common suffixes and punctuation
+      const norm = (s: string) => s.replace(/[.,\-']/g, "").replace(/\b(inc|llc|ltd|corp|co|com|group|the)\b/g, "").replace(/\s+/g, " ").trim();
+      if (norm(hsName) === norm(nameLower)) {
+        active.add(nameLower);
+        break;
+      }
     }
   }
 
-  console.log(`[hubspot] Active companies: ${active.size} (${Array.from(active).slice(0, 10).join(", ")}...)`);
+  console.log(`[hubspot] Active companies matched: ${active.size} (${Array.from(active).slice(0, 10).join(", ")}...)`);
   return active;
 }
 
