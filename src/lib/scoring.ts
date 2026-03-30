@@ -185,7 +185,7 @@ export function scoreContacts(
     // Existing activity: deep HubSpot engagement
     else if (
       (contact.email && hubspotActiveEmails.has(contact.email.toLowerCase())) ||
-      hubspotActiveCompanies.has(contact.company.toLowerCase())
+      (contact.company && hubspotActiveCompanies.has(contact.company.toLowerCase()))
     ) {
       bucket = "existing_activity";
     }
