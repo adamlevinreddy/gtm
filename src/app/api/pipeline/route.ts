@@ -8,7 +8,7 @@ import { findOrCreateContact, findOrCreateAccount } from "@/lib/contacts";
 import { recordAgentRun } from "@/lib/sync";
 import type { RawUploadData } from "@/lib/parse-upload";
 
-export const maxDuration = 900;
+export const maxDuration = 800; // Max for Vercel Pro plan
 
 /**
  * GTM pipeline — thin serverless function that fires a sandbox and walks away.
