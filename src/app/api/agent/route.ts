@@ -133,16 +133,34 @@ export async function POST(req: NextRequest) {
       cwd: "/vercel/sandbox",
       detached: true,
       env: {
+        // Anthropic + agent infra
         ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
         ANTHROPIC_AUTH_TOKEN: process.env.AI_GATEWAY_API_KEY ?? "",
+        // Slack thread context
         SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
         SLACK_CHANNEL: slackChannel,
         SLACK_THREAD_TS: slackThreadTs,
+        // KV (for trace + history)
         KV_REST_API_URL: process.env.REDDY_KV_REST_API_URL ?? "",
         KV_REST_API_TOKEN: process.env.REDDY_KV_REST_API_TOKEN ?? "",
+        // Library repo
         PRICING_LIBRARY_GITHUB_PAT: process.env.PRICING_LIBRARY_GITHUB_PAT ?? "",
         AGENT_THREAD_KEY: threadKey,
         AGENT_SESSION_ID: state.sessionId,
+        // GTM data + enrichment APIs (for the gtm-tools skill: enrichment,
+        // check, campaign, hubspot lookup, list processing — agent uses Bash + curl)
+        APOLLO_API_KEY: process.env.APOLLO_API_KEY ?? "",
+        ENRICHLAYER_API_KEY: process.env.ENRICHLAYER_API_KEY ?? "",
+        HUBSPOT_API_KEY: process.env.HUBSPOT_API_KEY ?? "",
+        SUPERMETRICS_API_KEY: process.env.SUPERMETRICS_API_KEY ?? "",
+        EXA_API_KEY: process.env.EXA_API_KEY ?? "",
+        HEYREACH_API_KEY: process.env.HEYREACH_API_KEY ?? "",
+        GRANOLA_API_KEY: process.env.GRANOLA_API_KEY ?? "",
+        // Reddy Postgres (for company-list lookups, contact persistence)
+        POSTGRES_URL: process.env.POSTGRES_URL ?? "",
+        POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
+        // For falling back to legacy /api/* routes if the agent prefers them
+        REDDY_GTM_BASE_URL: "https://gtm-jet.vercel.app",
       },
     });
 
