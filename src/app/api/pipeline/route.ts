@@ -69,8 +69,8 @@ export async function POST(req: NextRequest) {
         ENRICHLAYER_API_KEY: process.env.ENRICHLAYER_API_KEY || "",
         APOLLO_API_KEY: process.env.APOLLO_API_KEY || "",
         SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN || "",
-        KV_REST_API_URL: process.env.KV_REST_API_URL || "",
-        KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN || "",
+        KV_REST_API_URL: process.env.REDDY_KV_REST_API_URL || "",
+        KV_REST_API_TOKEN: process.env.REDDY_KV_REST_API_TOKEN || "",
       },
     });
 

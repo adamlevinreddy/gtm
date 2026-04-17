@@ -5,7 +5,7 @@ import { fetchCompanyLists } from "@/lib/database";
 import { sendQuickClassification } from "@/lib/slack";
 import { parseUploadedFile, parseUploadedFileRaw } from "@/lib/parse-upload";
 import { createReview } from "@/lib/kv";
-import { kv } from "@vercel/kv";
+import { kv } from "@/lib/kv-client";
 import { db } from "@/lib/db";
 import { accounts, contacts, companies, conferenceLists, listContacts } from "@/lib/schema";
 import { eq, ilike } from "drizzle-orm";

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classifyWithAgent } from "@/lib/agent";
 import { getReview } from "@/lib/kv";
-import { kv } from "@vercel/kv";
+import { kv } from "@/lib/kv-client";
 import { markJobComplete } from "@/lib/completion";
 import { recordAgentRun } from "@/lib/sync";
 import type { ReviewItem } from "@/lib/types";

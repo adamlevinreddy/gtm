@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Sandbox } from "@vercel/sandbox";
 import { WebClient } from "@slack/web-api";
-import { kv } from "@vercel/kv";
+import { kv } from "@/lib/kv-client";
 import { buildPricingDriver, type PricingMeta } from "@/lib/pricing-agent";
 
 export const maxDuration = 800;
@@ -155,8 +155,8 @@ export async function POST(req: NextRequest) {
         SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
         SLACK_CHANNEL: slackChannel,
         SLACK_THREAD_TS: slackThreadTs,
-        KV_REST_API_URL: process.env.KV_REST_API_URL ?? "",
-        KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN ?? "",
+        KV_REST_API_URL: process.env.REDDY_KV_REST_API_URL ?? "",
+        KV_REST_API_TOKEN: process.env.REDDY_KV_REST_API_TOKEN ?? "",
         PRICING_LIBRARY_GITHUB_PAT: process.env.PRICING_LIBRARY_GITHUB_PAT ?? "",
         PRICING_THREAD_KEY: threadKey,
       },

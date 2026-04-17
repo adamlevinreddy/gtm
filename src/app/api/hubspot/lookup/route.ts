@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReview } from "@/lib/kv";
-import { kv } from "@vercel/kv";
+import { kv } from "@/lib/kv-client";
 import { markJobComplete } from "@/lib/completion";
 import { classifyPersonas } from "@/lib/persona";
 import { logSync, recordAgentRun } from "@/lib/sync";

@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { kv } from "@/lib/kv-client";
 import { WebClient } from "@slack/web-api";
 import { getReview } from "./kv";
 
