@@ -45,7 +45,12 @@ export async function POST(req: NextRequest) {
 
   try {
     // Load or initialize thread state
-    let state = await kv.get<PricingThreadState>(threadKey);
+    let state: PricingThreadState | null;
+    try {
+      state = await kv.get<PricingThreadState>(threadKey);
+    } catch (kvErr) {
+      throw new Error(`KV get failed: ${kvErr instanceof Error ? kvErr.message : String(kvErr)}`);
+    }
     const isFirstTurn = !state;
     if (!state) {
       state = {
@@ -59,24 +64,47 @@ export async function POST(req: NextRequest) {
     state.turnCount += 1;
     state.lastActivity = new Date().toISOString();
 
-    // Get or create persistent sandbox
+    // Get or create sandbox. Try persistent first; fall back to ephemeral if
+    // persistent sandboxes are not enabled on this Vercel team.
     let sandbox: Sandbox;
+    let persistentEnabled = true;
     try {
       sandbox = await Sandbox.get({ name: sandboxName, resume: true });
       console.log(`[pricing] Resumed sandbox ${sandboxName} (turn ${state.turnCount})`);
-    } catch {
-      sandbox = await Sandbox.create({
-        name: sandboxName,
-        resources: { vcpus: 4 },
-        timeout: SANDBOX_TIMEOUT_MS,
-        runtime: "node22",
-        persistent: true,
-        snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
-      });
-      console.log(`[pricing] Created persistent sandbox ${sandboxName}`);
+    } catch (getErr) {
+      console.log(`[pricing] Sandbox.get miss (${getErr instanceof Error ? getErr.message : String(getErr)}) — creating`);
+      try {
+        sandbox = await Sandbox.create({
+          name: sandboxName,
+          resources: { vcpus: 4 },
+          timeout: SANDBOX_TIMEOUT_MS,
+          runtime: "node22",
+          persistent: true,
+          snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+        });
+        console.log(`[pricing] Created persistent sandbox ${sandbox.name}`);
+      } catch (createPersistentErr) {
+        console.warn(`[pricing] Persistent create failed (${createPersistentErr instanceof Error ? createPersistentErr.message : String(createPersistentErr)}) — falling back to ephemeral`);
+        persistentEnabled = false;
+        try {
+          sandbox = await Sandbox.create({
+            resources: { vcpus: 4 },
+            timeout: SANDBOX_TIMEOUT_MS,
+            runtime: "node22",
+            persistent: false,
+          });
+          console.log(`[pricing] Created ephemeral sandbox ${sandbox.name}`);
+        } catch (createErr) {
+          throw new Error(`Sandbox.create failed (both persistent and ephemeral): ${createErr instanceof Error ? createErr.message : String(createErr)}`);
+        }
+      }
     }
 
-    await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS);
+    try {
+      await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS);
+    } catch (extendErr) {
+      console.warn(`[pricing] extendTimeout failed: ${extendErr instanceof Error ? extendErr.message : String(extendErr)}`);
+    }
 
     // Write the latest user turn into the sandbox inbox
     const meta: PricingMeta = {
@@ -109,7 +137,11 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    await sandbox.writeFiles(files);
+    try {
+      await sandbox.writeFiles(files);
+    } catch (wfErr) {
+      throw new Error(`writeFiles failed: ${wfErr instanceof Error ? wfErr.message : String(wfErr)}`);
+    }
 
     // Detached run — function returns while driver works
     const cmd = await sandbox.runCommand({
@@ -142,7 +174,7 @@ export async function POST(req: NextRequest) {
       cmdId: cmd.cmdId,
     });
   } catch (err) {
-    console.error(`[pricing] Setup error: ${err}`);
+    console.error(`[pricing] Setup error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
     await slack.reactions.remove({
       channel: slackChannel,
       name: "hammer_and_wrench",
