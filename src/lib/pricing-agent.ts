@@ -332,6 +332,8 @@ const TOOLS = [
   },
 ];
 
+const turnState = { pdfUploaded: false, slackResponded: false };
+
 async function runTool(name, args) {
   switch (name) {
     case "list_proposals": {
@@ -382,11 +384,14 @@ async function runTool(name, args) {
       return path.resolve(dir, pdf);
     }
     case "upload_slack_pdf": {
-      const result = await uploadPdfToSlack(args.filePath, args.title);
+      await uploadPdfToSlack(args.filePath, args.title);
+      turnState.pdfUploaded = true;
+      turnState.slackResponded = true;
       return \`uploaded \${args.filePath} as "\${args.title}"\`;
     }
     case "post_slack_message": {
       const result = await postSlackMessage(args.text);
+      turnState.slackResponded = true;
       return result.ok ? "posted" : \`post failed: \${JSON.stringify(result)}\`;
     }
     default:
@@ -481,27 +486,47 @@ async function main() {
   const trimmedHistory = messages.slice(-30);
   await kvSet(HISTORY_KEY, trimmedHistory);
 
-  // Build mode: commit and push any new/changed proposal files back to the library
+  // Build mode: only commit + push if a PDF was actually uploaded this turn.
+  // Otherwise the agent failed mid-build and we don't want partial state in the library.
+  let buildOk = false;
   if (META.mode === "build") {
-    try {
-      const summary = \`Pricing build turn \${TURN_NUMBER} (thread \${META.slackThreadTs})\`;
-      const pushResult = await commitAndPushLibrary(summary);
-      if (pushResult.pushed) {
-        console.log("[pricing-driver] Library changes pushed to main");
-      } else if (pushResult.reason === "push-failed") {
-        await postSlackMessage(\`:warning: Proposal delivered, but couldn't push to the library repo: \\\`\${pushResult.error}\\\`\`).catch(() => {});
+    if (turnState.pdfUploaded) {
+      buildOk = true;
+      try {
+        const summary = \`Pricing build turn \${TURN_NUMBER} (thread \${META.slackThreadTs})\`;
+        const pushResult = await commitAndPushLibrary(summary);
+        if (pushResult.pushed) {
+          console.log("[pricing-driver] Library changes pushed to main");
+        } else if (pushResult.reason === "push-failed") {
+          await postSlackMessage(\`:warning: Proposal delivered, but couldn't push to the library repo: \\\`\${pushResult.error}\\\`\`).catch(() => {});
+        }
+      } catch (err) {
+        console.error("[pricing-driver] Library push error:", err);
+        await postSlackMessage(\`:warning: Proposal delivered, but the library sync failed: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`).catch(() => {});
       }
-    } catch (err) {
-      console.error("[pricing-driver] Library push error:", err);
-      await postSlackMessage(\`:warning: Proposal delivered, but the library sync failed: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`).catch(() => {});
+    } else {
+      // Discard partial work so the next turn starts from a clean tree.
+      try {
+        execFileSync("git", ["-C", "library", "checkout", "--", "."], { stdio: "inherit" });
+        execFileSync("git", ["-C", "library", "clean", "-fd"], { stdio: "inherit" });
+      } catch {}
     }
   }
 
-  // Reaction: complete
-  await removeReaction(META.mode === "build" ? "hammer_and_wrench" : "mag");
-  await setReaction("white_check_mark");
+  // Always make sure Slack got a final message — agent might have stopped without posting one.
+  if (!turnState.slackResponded) {
+    const fallbackText = META.mode === "build"
+      ? \`:x: I couldn't finish that proposal. Reply with corrections (or check the URL of the customer logo).\`
+      : \`:x: I couldn't answer that. Try rephrasing or asking about a specific proposal by name.\`;
+    await postSlackMessage(fallbackText).catch(() => {});
+  }
 
-  console.log(\`[pricing-driver] Turn \${TURN_NUMBER} complete (\${iterations} tool iterations)\`);
+  // Reaction: complete (vs. failure)
+  await removeReaction(META.mode === "build" ? "hammer_and_wrench" : "mag");
+  const ok = META.mode === "build" ? buildOk : turnState.slackResponded;
+  await setReaction(ok ? "white_check_mark" : "x");
+
+  console.log(\`[pricing-driver] Turn \${TURN_NUMBER} complete (\${iterations} tool iterations, ok=\${ok})\`);
 }
 
 main().catch(async (err) => {
