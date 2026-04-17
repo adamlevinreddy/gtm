@@ -36,22 +36,30 @@ async function replyInThread(channel: string, threadTs: string, text: string) {
   await getSlackClient().chat.postMessage({ channel, thread_ts: threadTs, text });
 }
 
-// Slack wraps URLs in <...> and HTML-escapes &/</>. Convert back so downstream
-// processors see the raw text the user typed.
+// Slack delivers app_mention text with two different escaping strategies in
+// the same message:
+//   - <@USER>, <#CHANNEL|name>      → LITERAL angle brackets (Slack control codes)
+//   - &lt;https://example.com&gt;   → HTML-entity-encoded (Slack auto-wraps any
+//                                     URL the user typed, then escapes the < > so
+//                                     they survive Slack's own mrkdwn parser)
+// To recover the raw user text we have to: (1) strip control codes that use
+// LITERAL brackets, (2) decode the three HTML entities, (3) THEN strip the
+// URL wrappers that just became literal brackets in step 2.
 // Docs: https://docs.slack.dev/messaging/formatting-message-text/
 function normalizeSlackText(input: string): string {
   return input
-    // <URL|label> → label, <URL> → URL
-    .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, "$2")
-    .replace(/<((?:https?|mailto):[^>]+)>/g, "$1")
-    // <#C123|name> → #name
+    // 1. Slack control codes (literal brackets)
     .replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1")
-    // <@U123> handled separately upstream; safe to also strip here
     .replace(/<@[A-Z0-9]+>/g, "")
-    // HTML entities Slack always escapes
+    // 2. Decode the three HTML entities Slack escapes
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
+    .replace(/&amp;/g, "&")
+    // 3. Strip the URL angle-bracket wrappers Slack added around user-typed URLs.
+    //    Use [\s\S]*? (lazy, includes newlines) because Slack's URL detector
+    //    sometimes captures past a newline (e.g. when a URL ends with `&s` and
+    //    the next line starts with text).
+    .replace(/<((?:https?|mailto):[\s\S]*?)(?:\|[^>]*)?>/g, "$1");
 }
 
 export async function POST(req: NextRequest) {
