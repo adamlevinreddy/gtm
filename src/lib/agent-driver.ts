@@ -137,14 +137,11 @@ const TRACE = [];
 function trace(kind, payload) { TRACE.push({ ts: new Date().toISOString(), kind, ...payload }); }
 function chunkString(s, n) { const out = []; for (let i = 0; i < s.length; i += n) out.push(s.slice(i, i + n)); return out; }
 async function dumpTraceToSlack(header) {
-  await postSlackMessage(header).catch(() => {});
-  for (const entry of TRACE) {
-    const body = "\\\`\\\`\\\`\\n" + JSON.stringify(entry, null, 2).slice(0, 30000) + "\\n\\\`\\\`\\\`";
-    for (const c of chunkString(body, 3500)) {
-      await postSlackMessage(c).catch(() => {});
-      await new Promise(r => setTimeout(r, 120));
-    }
-  }
+  // Single concise message. Full trace is in KV at TRACE_KEY — pull via
+  // \`node scripts/debug-agent.mjs --threadTs <ts>\` for the firehose.
+  const lastErr = [...TRACE].reverse().find((e) => e.kind === "fatal" || e.kind === "agent_tool_result" && e.is_error);
+  const tail = lastErr ? ("\\n\`\`\`\\n" + JSON.stringify(lastErr, null, 2).slice(0, 2000) + "\\n\`\`\`") : "";
+  await postSlackMessage(header + tail).catch(() => {});
 }
 
 // ────────── Bootstrap ──────────
