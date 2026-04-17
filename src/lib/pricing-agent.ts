@@ -518,6 +518,8 @@ async function main() {
   let response = await claude.messages.stream({
     model: "anthropic/claude-opus-4-7",
     max_tokens: 64000,
+    thinking: { type: "adaptive", display: "summarized" },
+    output_config: { effort: "xhigh" },
     system: SYSTEM_PROMPT,
     tools: TOOLS,
     messages,
@@ -527,6 +529,8 @@ async function main() {
   traceInfo(\`agent initial response stop_reason=\${response.stop_reason}\`, { iteration: 0 });
   const textBlocks0 = (response.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\\n");
   if (textBlocks0) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: 0, name: "assistant_text", output: textBlocks0 });
+  const thinkBlocks0 = (response.content || []).filter((b) => b.type === "thinking").map((b) => b.thinking || "").filter(Boolean).join("\\n");
+  if (thinkBlocks0) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: 0, name: "assistant_thinking", output: thinkBlocks0 });
 
   while (response.stop_reason === "tool_use" && iterations < MAX_ITERATIONS) {
     iterations++;
@@ -563,6 +567,8 @@ async function main() {
     response = await claude.messages.stream({
       model: "anthropic/claude-opus-4-7",
       max_tokens: 64000,
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "xhigh" },
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
@@ -570,6 +576,8 @@ async function main() {
     const textBlocks = (response.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\\n");
     traceInfo(\`agent response stop_reason=\${response.stop_reason} tool_uses=\${(response.content || []).filter((b) => b.type === "tool_use").length}\`, { iteration: iterations });
     if (textBlocks) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: iterations, name: "assistant_text", output: textBlocks });
+    const thinkBlocks = (response.content || []).filter((b) => b.type === "thinking").map((b) => b.thinking || "").filter(Boolean).join("\\n");
+    if (thinkBlocks) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: iterations, name: "assistant_thinking", output: thinkBlocks });
   }
 
   // Persist final assistant response in history (just the text portion to keep it light)
