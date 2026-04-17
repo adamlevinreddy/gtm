@@ -463,6 +463,33 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // --- CAMPAIGN QUESTION (Supermetrics) ---
+      else if (text.startsWith("campaign ") || text.startsWith("campaigns ") || text.startsWith("ads ") || text.startsWith("marketing ")) {
+        const question = rawText.replace(/^(campaign|campaigns|ads|marketing)\s+/i, "").trim();
+        if (!question) {
+          await replyInThread(channel, event.ts, "Ask me a question about your campaigns, e.g. `@GTM Classifier campaign how are our Google Ads performing this week?`");
+          return NextResponse.json({ ok: true });
+        }
+
+        await addReaction(channel, event.ts, "bar_chart");
+        await replyInThread(channel, event.ts, `Querying marketing data for: _${question}_\nThis may take a minute...`);
+
+        // Fire background job — campaign queries involve multiple MCP round-trips
+        const baseUrl = "https://gtm-jet.vercel.app";
+        fetch(`${baseUrl}/api/campaign`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question,
+            slackChannel: channel,
+            slackThreadTs: event.ts,
+          }),
+        }).catch((err) => {
+          console.error(`[slack] Campaign fetch error: ${err}`);
+        });
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
       // --- UNKNOWN COMMAND ---
       else {
         await replyInThread(channel, event.ts,
@@ -472,7 +499,8 @@ export async function POST(req: NextRequest) {
           "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
           "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
           "• `@GTM Classifier status <company>` — show everything we know\n" +
-          "• `@GTM Classifier contacts <conference>` — show contacts from a conference list"
+          "• `@GTM Classifier contacts <conference>` — show contacts from a conference list\n" +
+          "• `@GTM Classifier campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)"
         );
       }
     }
