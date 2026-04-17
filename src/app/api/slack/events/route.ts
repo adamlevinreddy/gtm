@@ -490,6 +490,89 @@ export async function POST(req: NextRequest) {
         await new Promise((r) => setTimeout(r, 500));
       }
 
+      // --- PRICING BUILD / PRICING CHECK ---
+      else if (
+        text === "pricing-build" || text.startsWith("pricing-build ") || text.startsWith("pricing-build\n") ||
+        text === "pricing-check" || text.startsWith("pricing-check ") || text.startsWith("pricing-check\n")
+      ) {
+        const mode: "build" | "check" = text.startsWith("pricing-build") ? "build" : "check";
+        const userText = rawText.replace(/^pricing-(build|check)\s*/i, "").trim();
+        const threadTs: string = event.thread_ts || event.ts;
+
+        if (!userText) {
+          await replyInThread(channel, event.ts,
+            mode === "build"
+              ? "Tell me about the proposal, e.g.:\n```pricing-build\nCompany: Acme Corp\nLogo: https://acme.com/logo.png\nModel: 500 agents, 2-year, BYOT, Tapestry-style layout```"
+              : "Ask me a pricing question, e.g. `pricing-check what's a fair rate for a 1000-agent BYOT contract similar to Tapestry?`"
+          );
+          return NextResponse.json({ ok: true });
+        }
+
+        await addReaction(channel, event.ts, mode === "build" ? "hammer_and_wrench" : "mag");
+        await replyInThread(
+          channel,
+          threadTs,
+          mode === "build"
+            ? "Building your proposal — this may take 3–5 minutes. Reply in this thread to iterate."
+            : "Researching pricing references — back in a minute."
+        );
+
+        const baseUrl = "https://gtm-jet.vercel.app";
+        fetch(`${baseUrl}/api/pricing`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            userText,
+            slackChannel: channel,
+            slackThreadTs: threadTs,
+            slackUser: event.user,
+          }),
+        }).catch((err) => {
+          console.error(`[slack] Pricing fetch error: ${err}`);
+        });
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      // --- THREAD CONTINUATION (in-thread follow-up to an active pricing session) ---
+      else if (event.thread_ts) {
+        const threadTs: string = event.thread_ts;
+        const existing = await kv.get<{ sandboxName: string; mode: "build" | "check" }>(`pricing:thread:${threadTs}`);
+        if (existing) {
+          await addReaction(channel, event.ts, existing.mode === "build" ? "hammer_and_wrench" : "mag");
+
+          const baseUrl = "https://gtm-jet.vercel.app";
+          fetch(`${baseUrl}/api/pricing`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: existing.mode,
+              userText: rawText,
+              slackChannel: channel,
+              slackThreadTs: threadTs,
+              slackUser: event.user,
+            }),
+          }).catch((err) => {
+            console.error(`[slack] Pricing follow-up fetch error: ${err}`);
+          });
+          await new Promise((r) => setTimeout(r, 500));
+          return NextResponse.json({ ok: true });
+        }
+        // Fall through to unknown-command help if no active pricing thread
+        await replyInThread(channel, event.ts,
+          "I can help with:\n" +
+          "• `@GTM Classifier process this` — *full pipeline*: extract → score → enrich → push to HubSpot\n" +
+          "• `@GTM Classifier classify this` — classify companies from a CSV/XLSX\n" +
+          "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
+          "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
+          "• `@GTM Classifier status <company>` — show everything we know\n" +
+          "• `@GTM Classifier contacts <conference>` — show contacts from a conference list\n" +
+          "• `@GTM Classifier campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)\n" +
+          "• `@GTM Classifier pricing-build <details>` — generate a customer pricing proposal PDF\n" +
+          "• `@GTM Classifier pricing-check <question>` — research pricing references"
+        );
+      }
+
       // --- UNKNOWN COMMAND ---
       else {
         await replyInThread(channel, event.ts,
@@ -500,7 +583,9 @@ export async function POST(req: NextRequest) {
           "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
           "• `@GTM Classifier status <company>` — show everything we know\n" +
           "• `@GTM Classifier contacts <conference>` — show contacts from a conference list\n" +
-          "• `@GTM Classifier campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)"
+          "• `@GTM Classifier campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)\n" +
+          "• `@GTM Classifier pricing-build <details>` — generate a customer pricing proposal PDF\n" +
+          "• `@GTM Classifier pricing-check <question>` — research pricing references"
         );
       }
     }

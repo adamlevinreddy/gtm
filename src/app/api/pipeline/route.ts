@@ -37,10 +37,11 @@ export async function POST(req: NextRequest) {
       resources: { vcpus: 4 },
       timeout: 1_800_000, // 30 minutes
       runtime: "node22",
+      persistent: false,
     });
     // Ensure timeout is extended in case create() ignores the param
     await sandbox.extendTimeout(1_800_000);
-    console.log(`[pipeline] Sandbox created: ${sandbox.sandboxId}, timeout: ${sandbox.timeout}ms`);
+    console.log(`[pipeline] Sandbox created: ${sandbox.name}, timeout: ${sandbox.timeout}ms`);
 
     // Install deps
     await sandbox.runCommand({ cmd: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"], sudo: true });
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    console.log(`[pipeline] Command detached: ${cmd.cmdId}. Sandbox: ${sandbox.sandboxId}. Returning 200.`);
+    console.log(`[pipeline] Command detached: ${cmd.cmdId}. Sandbox: ${sandbox.name}. Returning 200.`);
 
     // DO NOT call sandbox.stop() — the sandbox stays alive until:
     // 1. The script calls process.exit() (which it does in submit_results and error handlers)
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
     // The sandbox script handles its own Slack reporting and KV storage.
     // Supabase persistence will be handled by a separate mechanism later.
 
-    return NextResponse.json({ ok: true, pipelineId, sandboxId: sandbox.sandboxId, cmdId: cmd.cmdId });
+    return NextResponse.json({ ok: true, pipelineId, sandboxName: sandbox.name, cmdId: cmd.cmdId });
 
   } catch (err) {
     console.error(`[pipeline] Setup error: ${err}`);

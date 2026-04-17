@@ -41,6 +41,7 @@ export async function classifyPersonas(
     resources: { vcpus: 2 },
     timeout: 120_000,
     runtime: "node22",
+    persistent: false,
   });
 
   try {

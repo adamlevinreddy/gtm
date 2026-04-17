@@ -83,6 +83,7 @@ export async function extractContactData(
     resources: { vcpus: 4 },
     timeout: 300_000,
     runtime: "node22",
+    persistent: false,
   });
 
   try {
