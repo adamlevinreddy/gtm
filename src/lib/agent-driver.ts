@@ -34,11 +34,19 @@ The user is talking to you from Slack. Infer their intent from the message conte
 - Legal requests ("review these redlines vs precedent") → read \`.claude/skills/legal/SKILL.md\`.
 - Ambiguous ("thinking about pricing for Acme") → ask ONE clarifying question via \`post_slack_message\` before committing to a path.
 
-## Conversation style
-- Keep replies concise; use Slack mrkdwn (*bold*, _italic_, \`code\`, > quotes, bullet points). No Markdown headings (\`#\`) — Slack doesn't render them as headings.
-- When you start a multi-step build, post a brief acknowledgment via \`post_slack_message\` ("Reading the Vistra context, picking a reference…") so the user knows you're working. Don't narrate every tool call.
-- When done, post a single concluding \`post_slack_message\` summarizing what you did + what you'd like the user to tell you next.
-- For proposal/deck builds: the PDF is delivered via \`upload_slack_pdf\`; the concluding message invites iteration ("reply to swap colors, adjust rates, etc.").
+## Conversation style — CRITICAL
+
+**Your plain assistant-text responses are invisible to the user. There is no terminal, no web UI — only the Slack thread. The user ONLY sees what you post via \`mcp__reddy-gtm__post_slack_message\` or \`mcp__reddy-gtm__upload_slack_pdf\`.** If you finish your turn without calling one of those tools, the user sees nothing but a ✅ reaction on their original message. That is a bug from their POV.
+
+Every turn MUST end with at least one \`post_slack_message\` or \`upload_slack_pdf\` call. Usually:
+- For Q&A / research: call \`post_slack_message\` with your final answer, in Slack mrkdwn.
+- For a multi-step build: post a brief acknowledgment early ("reading the Vistra context, picking a reference…"), then \`upload_slack_pdf\` for the deliverable, then a concluding \`post_slack_message\` inviting iteration.
+- For clarifying questions: call \`post_slack_message\` with the one question.
+
+Do NOT dump your reasoning as plain text and end — that reasoning goes to /dev/null. Put the final answer in \`post_slack_message\`.
+
+- Use Slack mrkdwn: \`*bold*\`, \`_italic_\`, \`\\\`code\\\`\`, \`> quotes\`, bullet points. No Markdown headings (\`#\` / \`##\`) — Slack renders them as literal hash marks.
+- Keep messages concise (3-10 lines typical).
 - Cite precedent by name when you make pricing decisions ("I priced this at $42/agent BYOT — Vistra 2-yr was $38 at the same scale, Cincinnati 2-yr hosted was $60; $42 lands between them").
 
 ## After a successful build
@@ -180,6 +188,11 @@ async function main() {
   const { query, createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   const { z } = await import("zod");
 
+  // Flipped to true inside the Slack-posting MCP tool handlers (post_slack_message,
+  // upload_slack_pdf). Used at end-of-turn to decide whether to set ✅/❌ reactions
+  // and whether to dump a fallback message if the agent ended without calling them.
+  let slackPosted = false;
+
   const turn = JSON.parse(await readFile(\`inbox/turn-\${TURN_NUMBER}.json\`, "utf-8"));
   trace("info", { output: "turn payload: " + JSON.stringify(turn) });
 
@@ -195,6 +208,7 @@ async function main() {
         async ({ text }) => {
           const r = await postSlackMessage(text);
           trace("tool_call", { name: "post_slack_message", textPreview: text.slice(0, 200), ok: r?.ok });
+          if (r?.ok) slackPosted = true;
           return { content: [{ type: "text", text: r?.ok ? "posted" : "post failed: " + JSON.stringify(r) }] };
         },
       ),
@@ -209,6 +223,7 @@ async function main() {
           const abs = path.isAbsolute(filePath) ? filePath : path.join("/vercel/sandbox", filePath);
           await uploadPdfToSlack(abs, title);
           trace("tool_call", { name: "upload_slack_pdf", filePath: abs, title });
+          slackPosted = true;
           return { content: [{ type: "text", text: "uploaded " + path.basename(abs) + " as '" + title + "'" }] };
         },
       ),
@@ -272,7 +287,8 @@ async function main() {
 
   const q = query({ prompt: userContent, options: queryOptions });
 
-  let postedAnything = false;
+  // Only flip when a *Slack-posting* MCP tool succeeds — not Read/Bash/Skill/etc.
+  // Set inside the tool handlers above; closed over here.
   for await (const message of q) {
     if (message.type === "assistant") {
       for (const block of message.message?.content ?? []) {
@@ -281,7 +297,8 @@ async function main() {
         else if (block.type === "thinking") trace("assistant_thinking", { output: block.thinking || "" });
       }
     } else if (message.type === "user" && message.message?.content) {
-      // tool_result blocks
+      // tool_result blocks — just trace; the slackPosted flag is set inside the
+      // MCP tool handlers themselves, not inferred from tool_result here.
       for (const block of message.message.content) {
         if (block.type === "tool_result") {
           trace("agent_tool_result", {
@@ -289,7 +306,6 @@ async function main() {
             is_error: block.is_error,
             content: typeof block.content === "string" ? block.content.slice(0, 2000) : JSON.stringify(block.content).slice(0, 2000),
           });
-          if (!block.is_error) postedAnything = true;
         }
       }
     } else if (message.type === "result") {
@@ -307,14 +323,21 @@ async function main() {
 
   await kvSet(TRACE_KEY, TRACE).catch(() => {});
 
-  // Reactions: we always react with something after the run.
-  await removeReaction("speech_balloon");
-  await setReaction(postedAnything ? "white_check_mark" : "x");
-
-  if (!postedAnything) {
-    // Agent never posted via MCP — dump the firehose so we can debug.
-    await dumpTraceToSlack(\`:warning: Reddy-GTM finished without replying. Trace key: \\\`\${TRACE_KEY}\\\`. Dumping below.\`).catch(() => {});
+  // Agent never posted anything user-visible? Surface whatever text it emitted
+  // as a fallback so the user sees SOMETHING (better than a silent green check).
+  if (!slackPosted) {
+    const lastText = [...TRACE].reverse().find((e) => e.kind === "assistant_text" && typeof e.output === "string" && e.output.trim().length > 0);
+    if (lastText) {
+      const fallback = "_(auto-posted — I forgot to use the Slack tool)_\\n\\n" + String(lastText.output).slice(0, 3800);
+      await postSlackMessage(fallback).catch(() => {});
+      slackPosted = true;
+    } else {
+      await postSlackMessage(\`:warning: Reddy-GTM finished without a reply. Trace: \\\`\${TRACE_KEY}\\\`.\`).catch(() => {});
+    }
   }
+
+  await removeReaction("speech_balloon");
+  await setReaction(slackPosted ? "white_check_mark" : "x");
 
   console.log(\`[agent-driver] Turn \${TURN_NUMBER} complete\`);
 }
