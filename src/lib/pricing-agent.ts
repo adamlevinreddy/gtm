@@ -491,8 +491,8 @@ async function main() {
   const messages = [...history, { role: "user", content: userContent }];
 
   let response = await claude.messages.create({
-    model: "anthropic/claude-sonnet-4-6",
-    max_tokens: 32000,
+    model: "anthropic/claude-opus-4-7",
+    max_tokens: 64000,
     system: SYSTEM_PROMPT,
     tools: TOOLS,
     messages,
@@ -536,8 +536,8 @@ async function main() {
     messages.push({ role: "user", content: toolResults });
 
     response = await claude.messages.create({
-      model: "anthropic/claude-sonnet-4-6",
-      max_tokens: 32000,
+      model: "anthropic/claude-opus-4-7",
+      max_tokens: 64000,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
