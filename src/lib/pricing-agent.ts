@@ -177,31 +177,87 @@ async function kvSet(key, value, ttlSeconds = 30 * 24 * 60 * 60) {
   });
 }
 
+// ────────── Trace + debug helpers (FIREHOSE — see CLEANUP.md) ──────────
+
+const TRACE = [];
+function traceInfo(msg, extra) {
+  TRACE.push({ ts: new Date().toISOString(), kind: "info", output: msg, ...(extra || {}) });
+  console.log("[info]", msg);
+}
+
+function execAndLog(label, cmd, args, opts = {}) {
+  TRACE.push({ ts: new Date().toISOString(), kind: "exec", name: label, input: { cmd, args, opts: { cwd: opts.cwd, env: opts.env ? Object.keys(opts.env) : undefined } } });
+  try {
+    const out = execFileSync(cmd, args, { ...opts, encoding: "utf-8", stdio: ["inherit", "pipe", "pipe"] });
+    TRACE.push({ ts: new Date().toISOString(), kind: "exec_output", name: label, exitCode: 0, stdout: String(out), stderr: "" });
+    process.stdout.write(String(out));
+    return String(out);
+  } catch (err) {
+    const stdout = err?.stdout ? String(err.stdout) : "";
+    const stderr = err?.stderr ? String(err.stderr) : "";
+    TRACE.push({
+      ts: new Date().toISOString(),
+      kind: "exec_output",
+      name: label,
+      exitCode: err?.status ?? null,
+      stdout,
+      stderr,
+      error: err instanceof Error ? (err.stack || err.message) : String(err),
+    });
+    process.stderr.write(stderr || String(err));
+    throw err;
+  }
+}
+
+function chunkString(str, size) {
+  const out = [];
+  for (let i = 0; i < str.length; i += size) out.push(str.slice(i, i + size));
+  return out;
+}
+
+async function dumpTraceToSlack(header) {
+  await postSlackMessage(header).catch(() => {});
+  for (const entry of TRACE) {
+    const body = "\`\`\`\\n" + JSON.stringify(entry, null, 2) + "\\n\`\`\`";
+    for (const chunk of chunkString(body, 3500)) {
+      await postSlackMessage(chunk).catch(() => {});
+      // tiny pause so Slack preserves ordering
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+}
+
 // ────────── Bootstrap (first turn only) ──────────
 
 async function ensureLibraryCloned() {
   if (existsSync("library/INDEX.md")) {
-    return; // already cloned
+    TRACE.push({ ts: new Date().toISOString(), kind: "bootstrap", output: "library already cloned" });
+    return;
   }
-  console.log("[bootstrap] cloning pricing library");
   if (!PAT) throw new Error("PRICING_LIBRARY_GITHUB_PAT not set");
   const cloneUrl = \`https://x-access-token:\${PAT}@\${META.libraryRepoUrl}\`;
-  execFileSync("git", ["clone", cloneUrl, "library"], {
-    stdio: "inherit",
-  });
-  // Configure identity for any commits pushed back from this sandbox
-  execFileSync("git", ["-C", "library", "config", "user.email", "pricing-bot@reddy.io"], { stdio: "inherit" });
-  execFileSync("git", ["-C", "library", "config", "user.name", "Reddy Pricing Bot"], { stdio: "inherit" });
+  // Run clone directly — don't use execAndLog here because we never want the PAT-bearing URL in TRACE.
+  TRACE.push({ ts: new Date().toISOString(), kind: "bootstrap", name: "git-clone", input: { cmd: "git", args: ["clone", "https://x-access-token:***@" + META.libraryRepoUrl, "library"] } });
+  try {
+    const out = execFileSync("git", ["clone", cloneUrl, "library"], { encoding: "utf-8", stdio: ["inherit", "pipe", "pipe"] });
+    TRACE.push({ ts: new Date().toISOString(), kind: "bootstrap", name: "git-clone", output: String(out || ""), exitCode: 0 });
+    process.stdout.write(String(out || ""));
+  } catch (err) {
+    const stdout = err?.stdout ? String(err.stdout) : "";
+    const stderr = err?.stderr ? String(err.stderr) : "";
+    TRACE.push({ ts: new Date().toISOString(), kind: "bootstrap", name: "git-clone", exitCode: err?.status ?? null, stdout, stderr, error: err instanceof Error ? (err.stack || err.message) : String(err) });
+    throw err;
+  }
+  execAndLog("git-config-email", "git", ["-C", "library", "config", "user.email", "pricing-bot@reddy.io"]);
+  execAndLog("git-config-name", "git", ["-C", "library", "config", "user.name", "Reddy Pricing Bot"]);
 }
 
 async function commitAndPushLibrary(summary) {
-  // Stage all changes under the Brand Pricing tree; anything outside is ignored.
-  execFileSync("git", ["-C", "library", "add", "Brand Pricing"], { stdio: "inherit" });
-
-  // Check if there's actually something to commit
+  execAndLog("git-add", "git", ["-C", "library", "add", "Brand Pricing"]);
   const statusOut = execFileSync("git", ["-C", "library", "status", "--porcelain"], { encoding: "utf-8" }).trim();
+  TRACE.push({ ts: new Date().toISOString(), kind: "exec_output", name: "git-status", stdout: statusOut, exitCode: 0 });
   if (!statusOut) {
-    console.log("[push] no library changes to commit");
+    traceInfo("[push] no library changes to commit");
     return { pushed: false, reason: "no-changes" };
   }
 
@@ -211,30 +267,29 @@ thread: \${META.slackThreadTs}
 turn: \${TURN_NUMBER}
 sandbox: \${META.sandboxName}\`;
 
-  execFileSync("git", ["-C", "library", "commit", "-m", commitMsg], { stdio: "inherit" });
+  execAndLog("git-commit", "git", ["-C", "library", "commit", "-m", commitMsg]);
 
-  // Retry push a few times to handle concurrent thread collisions
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      execFileSync("git", ["-C", "library", "pull", "--rebase", "origin", "main"], { stdio: "inherit" });
-      execFileSync("git", ["-C", "library", "push", "origin", "main"], { stdio: "inherit" });
-      console.log(\`[push] pushed on attempt \${attempt}\`);
+      execAndLog(\`git-pull-rebase-attempt-\${attempt}\`, "git", ["-C", "library", "pull", "--rebase", "origin", "main"]);
+      execAndLog(\`git-push-attempt-\${attempt}\`, "git", ["-C", "library", "push", "origin", "main"]);
+      traceInfo(\`[push] pushed on attempt \${attempt}\`);
       return { pushed: true };
     } catch (err) {
       lastErr = err;
-      console.warn(\`[push] attempt \${attempt} failed:\`, err instanceof Error ? err.message : String(err));
+      traceInfo(\`[push] attempt \${attempt} failed: \${err instanceof Error ? err.message : String(err)}\`);
     }
   }
   return { pushed: false, reason: "push-failed", error: lastErr instanceof Error ? lastErr.message : String(lastErr) };
 }
 
 async function ensureSdkInstalled() {
-  if (existsSync("node_modules/@anthropic-ai/sdk")) return;
-  console.log("[bootstrap] installing @anthropic-ai/sdk");
-  execFileSync("npm", ["install", "--no-audit", "--no-fund", "@anthropic-ai/sdk"], {
-    stdio: "inherit",
-  });
+  if (existsSync("node_modules/@anthropic-ai/sdk")) {
+    TRACE.push({ ts: new Date().toISOString(), kind: "bootstrap", output: "sdk already installed" });
+    return;
+  }
+  execAndLog("npm-install-sdk", "npm", ["install", "--no-audit", "--no-fund", "@anthropic-ai/sdk"]);
 }
 
 // ────────── Tools (executed by Claude) ──────────
@@ -375,9 +430,9 @@ async function runTool(name, args) {
         throw new Error(\`No package.json at \${dir}\`);
       }
       if (!existsSync(path.join(dir, "node_modules"))) {
-        execFileSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: dir, stdio: "inherit" });
+        execAndLog("npm-install-proposal", "npm", ["install", "--no-audit", "--no-fund"], { cwd: dir });
       }
-      execFileSync("npx", ["tsx", "proposal.tsx"], { cwd: dir, stdio: "inherit" });
+      execAndLog("npx-tsx-render", "npx", ["tsx", "proposal.tsx"], { cwd: dir });
       const files = await readdir(dir);
       const pdf = files.find((f) => f.toLowerCase().endsWith(".pdf"));
       if (!pdf) throw new Error("No PDF produced");
@@ -444,6 +499,10 @@ async function main() {
   });
 
   let iterations = 0;
+  traceInfo(\`agent initial response stop_reason=\${response.stop_reason}\`, { iteration: 0 });
+  const textBlocks0 = (response.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\\n");
+  if (textBlocks0) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: 0, name: "assistant_text", output: textBlocks0 });
+
   while (response.stop_reason === "tool_use" && iterations < MAX_ITERATIONS) {
     iterations++;
     messages.push({ role: "assistant", content: response.content });
@@ -451,16 +510,20 @@ async function main() {
     const toolResults = [];
     for (const block of response.content) {
       if (block.type !== "tool_use") continue;
+      TRACE.push({ ts: new Date().toISOString(), kind: "tool_call", iteration: iterations, name: block.name, input: block.input });
       console.log(\`[tool] \${block.name} \${JSON.stringify(block.input).slice(0, 200)}\`);
       try {
         const result = await runTool(block.name, block.input);
+        const contentStr = typeof result === "string" ? result : JSON.stringify(result);
+        TRACE.push({ ts: new Date().toISOString(), kind: "tool_result", iteration: iterations, name: block.name, output: contentStr });
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
-          content: typeof result === "string" ? result : JSON.stringify(result),
+          content: contentStr,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof Error ? (err.stack || err.message) : String(err);
+        TRACE.push({ ts: new Date().toISOString(), kind: "tool_error", iteration: iterations, name: block.name, input: block.input, error: msg });
         console.error(\`[tool error] \${block.name}: \${msg}\`);
         toolResults.push({
           type: "tool_result",
@@ -479,6 +542,9 @@ async function main() {
       tools: TOOLS,
       messages,
     });
+    const textBlocks = (response.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\\n");
+    traceInfo(\`agent response stop_reason=\${response.stop_reason} tool_uses=\${(response.content || []).filter((b) => b.type === "tool_use").length}\`, { iteration: iterations });
+    if (textBlocks) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: iterations, name: "assistant_text", output: textBlocks });
   }
 
   // Persist final assistant response in history (just the text portion to keep it light)
@@ -507,18 +573,27 @@ async function main() {
     } else {
       // Discard partial work so the next turn starts from a clean tree.
       try {
-        execFileSync("git", ["-C", "library", "checkout", "--", "."], { stdio: "inherit" });
-        execFileSync("git", ["-C", "library", "clean", "-fd"], { stdio: "inherit" });
+        execAndLog("git-checkout-reset", "git", ["-C", "library", "checkout", "--", "."]);
+        execAndLog("git-clean-fd", "git", ["-C", "library", "clean", "-fd"]);
       } catch {}
     }
   }
 
+  // Persist FULL trace to KV for post-hoc inspection
+  const TRACE_KEY = THREAD_KEY + \`:trace:\${TURN_NUMBER}\`;
+  await kvSet(TRACE_KEY, TRACE).catch((err) => {
+    console.error("[trace] kvSet failed:", err);
+  });
+
   // Always make sure Slack got a final message — agent might have stopped without posting one.
   if (!turnState.slackResponded) {
-    const fallbackText = META.mode === "build"
-      ? \`:x: I couldn't finish that proposal. Reply with corrections (or check the URL of the customer logo).\`
-      : \`:x: I couldn't answer that. Try rephrasing or asking about a specific proposal by name.\`;
-    await postSlackMessage(fallbackText).catch(() => {});
+    const header = [
+      \`:x: *\${META.mode === "build" ? "Build failed." : "Check failed."}*\`,
+      \`iter=\${iterations}/\${MAX_ITERATIONS} · sandbox=\\\`\${META.sandboxName}\\\` · trace=\\\`\${TRACE_KEY}\\\`\`,
+      \`Dashboard: https://vercel.com/reddyio/gtm/observability/sandboxes\`,
+      \`Trace entries: \${TRACE.length} (dumping below)\`,
+    ].join("\\n");
+    await dumpTraceToSlack(header);
   }
 
   // Reaction: complete (vs. failure)
@@ -531,7 +606,19 @@ async function main() {
 
 main().catch(async (err) => {
   console.error("[pricing-driver] FATAL:", err);
-  await postSlackMessage(\`:x: Pricing driver crashed: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`).catch(() => {});
+  TRACE.push({
+    ts: new Date().toISOString(),
+    kind: "fatal",
+    error: err instanceof Error ? (err.stack || err.message) : String(err),
+  });
+  const TRACE_KEY = THREAD_KEY + \`:trace:\${TURN_NUMBER}\`;
+  await kvSet(TRACE_KEY, TRACE).catch(() => {});
+  const header = [
+    \`:rotating_light: *Pricing driver crashed*\`,
+    \`sandbox=\\\`\${META.sandboxName}\\\` · trace=\\\`\${TRACE_KEY}\\\` · entries=\${TRACE.length}\`,
+    \`Error: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`,
+  ].join("\\n");
+  await dumpTraceToSlack(header).catch(() => {});
   await removeReaction(META.mode === "build" ? "hammer_and_wrench" : "mag").catch(() => {});
   await setReaction("x").catch(() => {});
   process.exit(1);

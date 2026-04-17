@@ -66,6 +66,44 @@ After every successful `pricing-build` turn, the driver runs `git add Brand Pric
 
 This work upgraded `@vercel/sandbox` from `^1.9.0` to `2.0.0-beta.14` (persistent-sandbox beta). Breaking change: `sandbox.sandboxId` → `sandbox.name`. All existing sandbox call sites (`pipeline`, `agent`, `extract`, `persona`) opt out of persistence with `persistent: false`. Only the pricing route uses persistent mode.
 
+## Debugging
+
+The driver runs detached inside a Vercel Sandbox, so its `console.log` output does **not** surface in the `vercel logs` CLI. Three ways to see what's happening:
+
+### 1. Local harness — fastest iteration loop
+```bash
+# one-time: pull dev env vars locally
+vercel env pull .env.local --environment=development
+set -a && source .env.local && set +a
+
+# run a build end-to-end against prod, streaming the driver's live stdout
+node scripts/debug-pricing.mjs --company Vistra \
+  --logo "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9..." \
+  --model "250 agents, 2-year, BYOT, Tapestry-style layout"
+```
+
+The harness POSTs directly to `/api/pricing` with a synthetic `slackThreadTs`, reattaches to the resulting sandbox via `Sandbox.get()` + `sandbox.getCommand(cmdId)`, streams every stdout/stderr chunk of the driver to your terminal via `command.logs()`, then dumps the full KV trace. No Slack involvement.
+
+For a `pricing-check`:
+```bash
+node scripts/debug-pricing.mjs --mode check --text "what rate for 1000 agents BYOT?"
+```
+
+### 2. Vercel Sandbox Observability dashboard
+Live command history for every running sandbox: https://vercel.com/reddyio/gtm/observability/sandboxes
+
+### 3. KV trace (post-hoc)
+Every turn persists a full tool-call trace to KV under `pricing:thread:{thread_ts}:trace:{turn}`. Inspect via the Upstash console → `reddy-gtm-kv-v2` → Data Browser, or with:
+```bash
+curl -H "Authorization: Bearer $REDDY_KV_REST_API_TOKEN" \
+  "$REDDY_KV_REST_API_URL/get/pricing:thread:1776443800.751779:trace:1" | jq -r '.result' | jq .
+```
+
+On failure, the bot currently dumps the **entire trace** into the Slack thread as a sequence of code-block messages (one per entry). This is deliberately verbose while we shake out edge cases — see `CLEANUP.md` at the repo root for the plan to trim it back.
+
+### Slack message mangling
+Slack's app_mention `event.text` arrives with two escaping styles simultaneously: literal angle brackets for control codes (`<@USER>`, `<#CHANNEL|name>`) and HTML-entity-encoded brackets around URLs the user typed (`&lt;https://...&gt;`). `normalizeSlackText` in `src/app/api/slack/events/route.ts` unwraps both, in the correct order (control codes first, then entities, then URL wrappers). Reference: [Slack message formatting docs](https://docs.slack.dev/messaging/formatting-message-text/).
+
 ## Verification checklist
 
 After deploy + env-var setup:
