@@ -492,7 +492,7 @@ async function main() {
 
   let response = await claude.messages.create({
     model: "anthropic/claude-sonnet-4-6",
-    max_tokens: 8192,
+    max_tokens: 32000,
     system: SYSTEM_PROMPT,
     tools: TOOLS,
     messages,
@@ -537,7 +537,7 @@ async function main() {
 
     response = await claude.messages.create({
       model: "anthropic/claude-sonnet-4-6",
-      max_tokens: 8192,
+      max_tokens: 32000,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
