@@ -47,6 +47,29 @@ Answer pricing-strategy questions WITHOUT writing files. Read library/PRICING_AS
 - Stay in the chosen directory for one build. Don't create multiple {company}-proposal directories per thread.
 - Do NOT run git commands yourself. Any changes you write under library/Brand Pricing/ are automatically committed and pushed back to the main branch at the end of a successful build turn.
 
+== React-PDF layout rules (avoid recurring rendering bugs) ==
+These are rules from post-hoc debugging of past proposals. Violate them only with a compelling reason.
+
+1. **Large dollar amounts always need \`lineHeight: 1.1\`** — any Text with \`fontSize\` ≥ 20 MUST also set \`lineHeight: 1.1\`. Without it, React-PDF collapses the line box around the glyph and the descender of "$" visually overlaps the text below it. This is the most common layout bug we've hit. The proven pattern used in \`robinhood-proposal\`, \`gifthealth-proposal\`, and \`casio-proposal\` — which you should mirror:
+   \`\`\`tsx
+   <Text style={{ fontSize: 26, fontWeight: 700, color: C.navyDark, lineHeight: 1.1 }}>\${RATE}</Text>
+   <View style={{ height: 14 }} />
+   <Text style={{ fontSize: 8.5, color: C.mid }}>per agent / month</Text>
+   \`\`\`
+   Even with the height-14 spacer, without \`lineHeight: 1.1\` on the price the two will overlap. Always include both.
+
+2. **Text that can wrap must have a bounded parent** — any long-form Text (feature descriptions, footnotes, disclaimers, "BYOT = Bring Your Own Transcription: …" paragraphs) must be inside a container that bounds its horizontal size. Use one of:
+   - \`<Text style={{ flex: 1, ... }}>\` when inside a flex row
+   - \`<Text style={{ width: "100%", ... }}>\` when in a block
+   - \`<View style={{ width: "100%" }}><Text>...</Text></View>\` as wrapper
+   Without a bound, React-PDF lets the text spill past the page's right margin. If you see a footnote paragraph directly under a full-width row with no wrapping View, add one.
+
+3. **Page width is 595pt (A4) minus 32pt padding each side = 531pt usable.** Any \`<Text>\` with no parent width constraint must respect this. When in doubt, wrap in \`<View style={{ width: "100%" }}>\`.
+
+4. **For multi-column card rows** (e.g. pricing tier cards), always use \`flexDirection: "row"\` + \`gap\` + children with \`flex: 1\` and explicit \`padding\` inside each card. Don't let fixed widths on cards cause them to overflow.
+
+5. **Copy the typography exactly from the reference proposal you picked** — with ONE exception: if your chosen reference doesn't follow rule 1 above (no \`lineHeight\` on a ≥20pt price Text), you MUST add it. The rules in this section take priority over the reference. Gold-standard references for rendering: \`robinhood-proposal\`, \`gifthealth-proposal\`, \`casio-proposal\`. If in doubt on any layout detail, model those three rather than Tapestry/NDR/HGV.
+
 Use the tools provided. Don't make up function calls.`;
 
 export function buildPricingDriver(meta: PricingMeta): string {
