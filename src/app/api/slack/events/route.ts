@@ -36,6 +36,24 @@ async function replyInThread(channel: string, threadTs: string, text: string) {
   await getSlackClient().chat.postMessage({ channel, thread_ts: threadTs, text });
 }
 
+// Slack wraps URLs in <...> and HTML-escapes &/</>. Convert back so downstream
+// processors see the raw text the user typed.
+// Docs: https://docs.slack.dev/messaging/formatting-message-text/
+function normalizeSlackText(input: string): string {
+  return input
+    // <URL|label> → label, <URL> → URL
+    .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, "$2")
+    .replace(/<((?:https?|mailto):[^>]+)>/g, "$1")
+    // <#C123|name> → #name
+    .replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1")
+    // <@U123> handled separately upstream; safe to also strip here
+    .replace(/<@[A-Z0-9]+>/g, "")
+    // HTML entities Slack always escapes
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
@@ -58,7 +76,7 @@ export async function POST(req: NextRequest) {
     console.log(`[slack] Event type: ${event.type}, bot_id: ${event.bot_id || "none"}, text: "${(event.text || "").slice(0, 100)}"`);
 
     if (event.type === "app_mention" && !event.bot_id) {
-      const rawText = (event.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
+      const rawText = normalizeSlackText(event.text || "").trim();
       const text = rawText.toLowerCase();
       const channel = event.channel;
 
