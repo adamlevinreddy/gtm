@@ -1,0 +1,172 @@
+import { NextRequest, NextResponse } from "next/server";
+import { Sandbox } from "@vercel/sandbox";
+import { WebClient } from "@slack/web-api";
+import { kv } from "@/lib/kv-client";
+import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
+import { randomUUID } from "node:crypto";
+
+export const maxDuration = 800;
+
+type AgentThreadState = {
+  sandboxName: string;
+  sessionId: string;       // Agent SDK session UUID
+  turnCount: number;
+  createdAt: string;
+  lastActivity: string;
+};
+
+const THREAD_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000;    // 30 min idle → stop + auto-snapshot
+const SNAPSHOT_EXPIRATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function sandboxNameFor(threadTs: string) {
+  return `reddy-gtm-${threadTs.replace(/\./g, "_")}`;
+}
+
+export function agentThreadKey(threadTs: string) {
+  return `reddy-gtm:thread:${threadTs}`;
+}
+
+export async function POST(req: NextRequest) {
+  const { userText, slackChannel, slackThreadTs, slackUser } =
+    (await req.json()) as {
+      userText: string;
+      slackChannel: string;
+      slackThreadTs: string;
+      slackUser?: string;
+    };
+
+  const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
+  const sandboxName = sandboxNameFor(slackThreadTs);
+  const threadKey = agentThreadKey(slackThreadTs);
+
+  try {
+    // Load or initialize thread state (includes Agent SDK sessionId for resume)
+    let state: AgentThreadState | null = null;
+    try {
+      state = await kv.get<AgentThreadState>(threadKey);
+    } catch (kvErr) {
+      throw new Error(`KV get failed: ${kvErr instanceof Error ? kvErr.message : String(kvErr)}`);
+    }
+    const isFirstTurn = !state;
+    if (!state) {
+      state = {
+        sandboxName,
+        sessionId: randomUUID(),
+        turnCount: 0,
+        createdAt: new Date().toISOString(),
+        lastActivity: new Date().toISOString(),
+      };
+    }
+    state.turnCount += 1;
+    state.lastActivity = new Date().toISOString();
+
+    // Get-or-create the persistent sandbox. Sandbox.get auto-resumes stopped
+    // sandboxes from their last auto-snapshot (filesystem restored); new
+    // sandboxes get created and the library + node_modules bootstrap once.
+    let sandbox: Sandbox;
+    try {
+      sandbox = await Sandbox.get({ name: sandboxName, resume: true });
+      console.log(`[agent] Resumed ${sandboxName} (turn ${state.turnCount})`);
+    } catch (getErr) {
+      console.log(`[agent] Sandbox.get miss (${getErr instanceof Error ? getErr.message : String(getErr)}) — creating`);
+      sandbox = await Sandbox.create({
+        name: sandboxName,
+        resources: { vcpus: 4 },
+        timeout: SANDBOX_TIMEOUT_MS,
+        runtime: "node22",
+        persistent: true,
+        snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+      });
+      console.log(`[agent] Created persistent sandbox ${sandbox.name}`);
+    }
+
+    // Reset the idle timer on every turn — sandbox stays alive as long as
+    // thread activity continues within 30 min.
+    try {
+      await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS);
+    } catch (extendErr) {
+      console.warn(`[agent] extendTimeout failed: ${extendErr instanceof Error ? extendErr.message : String(extendErr)}`);
+    }
+
+    const meta: AgentMeta = {
+      sandboxName,
+      slackChannel,
+      slackThreadTs,
+      slackUser: slackUser ?? null,
+      threadKey,
+      sessionId: state.sessionId,
+      libraryRepoUrl: "github.com/ReddySolutions/pricing.git",
+      isFirstTurn,
+      turnCount: state.turnCount,
+    };
+
+    const turnPayload = {
+      turnNumber: state.turnCount,
+      receivedAt: new Date().toISOString(),
+      userText,
+      slackUser: slackUser ?? null,
+    };
+
+    // Write the latest turn into inbox/ and the generated driver into /vercel/sandbox
+    const files = [
+      {
+        path: `inbox/turn-${state.turnCount}.json`,
+        content: Buffer.from(JSON.stringify(turnPayload, null, 2)),
+      },
+      {
+        path: "agent-driver.mjs",
+        content: Buffer.from(buildAgentDriver(meta)),
+      },
+    ];
+
+    try {
+      await sandbox.writeFiles(files);
+    } catch (wfErr) {
+      throw new Error(`writeFiles failed: ${wfErr instanceof Error ? wfErr.message : String(wfErr)}`);
+    }
+
+    // Fire the driver in detached mode so the serverless function returns fast.
+    const cmd = await sandbox.runCommand({
+      cmd: "node",
+      args: ["agent-driver.mjs", String(state.turnCount)],
+      cwd: "/vercel/sandbox",
+      detached: true,
+      env: {
+        ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh",
+        ANTHROPIC_AUTH_TOKEN: process.env.AI_GATEWAY_API_KEY ?? "",
+        SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
+        SLACK_CHANNEL: slackChannel,
+        SLACK_THREAD_TS: slackThreadTs,
+        KV_REST_API_URL: process.env.REDDY_KV_REST_API_URL ?? "",
+        KV_REST_API_TOKEN: process.env.REDDY_KV_REST_API_TOKEN ?? "",
+        PRICING_LIBRARY_GITHUB_PAT: process.env.PRICING_LIBRARY_GITHUB_PAT ?? "",
+        AGENT_THREAD_KEY: threadKey,
+        AGENT_SESSION_ID: state.sessionId,
+      },
+    });
+
+    // Persist state (increments turnCount, captures sessionId for next resume)
+    await kv.set(threadKey, state, { ex: THREAD_TTL_SECONDS });
+
+    console.log(`[agent] Driver started cmd=${cmd.cmdId} turn=${state.turnCount} session=${state.sessionId}`);
+
+    return NextResponse.json({
+      ok: true,
+      sandboxName,
+      sessionId: state.sessionId,
+      turn: state.turnCount,
+      cmdId: cmd.cmdId,
+    });
+  } catch (err) {
+    console.error(`[agent] Setup error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+    await slack.reactions.remove({ channel: slackChannel, name: "speech_balloon", timestamp: slackThreadTs }).catch(() => {});
+    await slack.reactions.add({ channel: slackChannel, name: "x", timestamp: slackThreadTs }).catch(() => {});
+    await slack.chat.postMessage({
+      channel: slackChannel,
+      thread_ts: slackThreadTs,
+      text: `Reddy-GTM setup error: ${err instanceof Error ? err.message : String(err)}`,
+    }).catch(() => {});
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+  }
+}

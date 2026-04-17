@@ -90,6 +90,30 @@ export async function POST(req: NextRequest) {
 
       console.log(`[slack] Parsed text: "${text}", has files: ${!!event.files}, file count: ${event.files?.length || 0}`);
 
+      // --- REDDY-GTM AGENT (feature-flagged) ---
+      // When REDDY_GTM_ENGINE=agent-sdk is set, ALL app_mention traffic routes
+      // to the Reddy-GTM agent running Claude Code in a Vercel Sandbox.
+      // Keyword handlers below are skipped entirely in this mode. Intent is
+      // inferred by the agent via skills (pricing / decks / legal / etc.).
+      if (process.env.REDDY_GTM_ENGINE === "agent-sdk") {
+        const threadTs: string = event.thread_ts || event.ts;
+        await addReaction(channel, event.ts, "speech_balloon");
+
+        const baseUrl = "https://gtm-jet.vercel.app";
+        fetch(`${baseUrl}/api/agent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userText: rawText,
+            slackChannel: channel,
+            slackThreadTs: threadTs,
+            slackUser: event.user,
+          }),
+        }).catch((err) => console.error(`[slack] Reddy-GTM agent fetch error: ${err}`));
+        await new Promise((r) => setTimeout(r, 500));
+        return NextResponse.json({ ok: true });
+      }
+
       // --- QUICK CHECK ---
       if (text.startsWith("check ")) {
         const companyName = rawText.slice(6).trim();
@@ -128,7 +152,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!files || files.length === 0) {
-          await replyInThread(channel, event.ts, "I don't see a file attached. Upload a CSV or XLSX with `@GTM Classifier process this`.");
+          await replyInThread(channel, event.ts, "I don't see a file attached. Upload a CSV or XLSX with `@Reddy-GTM process this`.");
           return NextResponse.json({ ok: true });
         }
 
@@ -240,7 +264,7 @@ export async function POST(req: NextRequest) {
             const passwordMatch = rawText.match(/password\s+(?:is\s+)?["""']?([^"""'\s,]+)/i);
             const password = passwordMatch ? passwordMatch[1] : undefined;
             if (!password) {
-              await replyInThread(channel, event.ts, "This file is password-protected. Include the password: `@GTM Classifier classify this, the password is MyPassword`");
+              await replyInThread(channel, event.ts, "This file is password-protected. Include the password: `@Reddy-GTM classify this, the password is MyPassword`");
               await removeReaction(channel, event.ts, "hourglass_flowing_sand");
               await addReaction(channel, event.ts, "x");
               return NextResponse.json({ ok: true });
@@ -493,7 +517,7 @@ export async function POST(req: NextRequest) {
       else if (text.startsWith("campaign ") || text.startsWith("campaigns ") || text.startsWith("ads ") || text.startsWith("marketing ")) {
         const question = rawText.replace(/^(campaign|campaigns|ads|marketing)\s+/i, "").trim();
         if (!question) {
-          await replyInThread(channel, event.ts, "Ask me a question about your campaigns, e.g. `@GTM Classifier campaign how are our Google Ads performing this week?`");
+          await replyInThread(channel, event.ts, "Ask me a question about your campaigns, e.g. `@Reddy-GTM campaign how are our Google Ads performing this week?`");
           return NextResponse.json({ ok: true });
         }
 
@@ -587,15 +611,15 @@ export async function POST(req: NextRequest) {
         // Fall through to unknown-command help if no active pricing thread
         await replyInThread(channel, event.ts,
           "I can help with:\n" +
-          "• `@GTM Classifier process this` — *full pipeline*: extract → score → enrich → push to HubSpot\n" +
-          "• `@GTM Classifier classify this` — classify companies from a CSV/XLSX\n" +
-          "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
-          "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
-          "• `@GTM Classifier status <company>` — show everything we know\n" +
-          "• `@GTM Classifier contacts <conference>` — show contacts from a conference list\n" +
-          "• `@GTM Classifier campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)\n" +
-          "• `@GTM Classifier pricing-build <details>` — generate a customer pricing proposal PDF\n" +
-          "• `@GTM Classifier pricing-check <question>` — research pricing references"
+          "• `@Reddy-GTM process this` — *full pipeline*: extract → score → enrich → push to HubSpot\n" +
+          "• `@Reddy-GTM classify this` — classify companies from a CSV/XLSX\n" +
+          "• `@Reddy-GTM check <company>` — check if a company is a vendor/prospect\n" +
+          "• `@Reddy-GTM enrich <company>` — enrich a company via Apollo\n" +
+          "• `@Reddy-GTM status <company>` — show everything we know\n" +
+          "• `@Reddy-GTM contacts <conference>` — show contacts from a conference list\n" +
+          "• `@Reddy-GTM campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)\n" +
+          "• `@Reddy-GTM pricing-build <details>` — generate a customer pricing proposal PDF\n" +
+          "• `@Reddy-GTM pricing-check <question>` — research pricing references"
         );
       }
 
@@ -603,15 +627,15 @@ export async function POST(req: NextRequest) {
       else {
         await replyInThread(channel, event.ts,
           "I can help with:\n" +
-          "• `@GTM Classifier process this` — *full pipeline*: extract → score → enrich → push to HubSpot\n" +
-          "• `@GTM Classifier classify this` — classify companies from a CSV/XLSX\n" +
-          "• `@GTM Classifier check <company>` — check if a company is a vendor/prospect\n" +
-          "• `@GTM Classifier enrich <company>` — enrich a company via Apollo\n" +
-          "• `@GTM Classifier status <company>` — show everything we know\n" +
-          "• `@GTM Classifier contacts <conference>` — show contacts from a conference list\n" +
-          "• `@GTM Classifier campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)\n" +
-          "• `@GTM Classifier pricing-build <details>` — generate a customer pricing proposal PDF\n" +
-          "• `@GTM Classifier pricing-check <question>` — research pricing references"
+          "• `@Reddy-GTM process this` — *full pipeline*: extract → score → enrich → push to HubSpot\n" +
+          "• `@Reddy-GTM classify this` — classify companies from a CSV/XLSX\n" +
+          "• `@Reddy-GTM check <company>` — check if a company is a vendor/prospect\n" +
+          "• `@Reddy-GTM enrich <company>` — enrich a company via Apollo\n" +
+          "• `@Reddy-GTM status <company>` — show everything we know\n" +
+          "• `@Reddy-GTM contacts <conference>` — show contacts from a conference list\n" +
+          "• `@Reddy-GTM campaign <question>` — ask about marketing campaigns (Google Ads, LinkedIn, Meta, GA4)\n" +
+          "• `@Reddy-GTM pricing-build <details>` — generate a customer pricing proposal PDF\n" +
+          "• `@Reddy-GTM pricing-check <question>` — research pricing references"
         );
       }
     }
