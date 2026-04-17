@@ -490,13 +490,13 @@ async function main() {
   const userContent = \`[mode=\${META.mode} turn=\${TURN_NUMBER}] \${turn.userText}\`;
   const messages = [...history, { role: "user", content: userContent }];
 
-  let response = await claude.messages.create({
+  let response = await claude.messages.stream({
     model: "anthropic/claude-opus-4-7",
     max_tokens: 64000,
     system: SYSTEM_PROMPT,
     tools: TOOLS,
     messages,
-  });
+  }).finalMessage();
 
   let iterations = 0;
   traceInfo(\`agent initial response stop_reason=\${response.stop_reason}\`, { iteration: 0 });
@@ -535,13 +535,13 @@ async function main() {
     }
     messages.push({ role: "user", content: toolResults });
 
-    response = await claude.messages.create({
+    response = await claude.messages.stream({
       model: "anthropic/claude-opus-4-7",
       max_tokens: 64000,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
-    });
+    }).finalMessage();
     const textBlocks = (response.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\\n");
     traceInfo(\`agent response stop_reason=\${response.stop_reason} tool_uses=\${(response.content || []).filter((b) => b.type === "tool_use").length}\`, { iteration: iterations });
     if (textBlocks) TRACE.push({ ts: new Date().toISOString(), kind: "info", iteration: iterations, name: "assistant_text", output: textBlocks });
