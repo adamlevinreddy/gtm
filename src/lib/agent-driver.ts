@@ -343,6 +343,23 @@ async function main() {
       ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
       ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
       CLAUDE_AGENT_SDK_CLIENT_APP: "reddy-gtm/0.1",
+      // GTM data + enrichment APIs the agent calls via Bash + curl
+      APOLLO_API_KEY: process.env.APOLLO_API_KEY ?? "",
+      ENRICHLAYER_API_KEY: process.env.ENRICHLAYER_API_KEY ?? "",
+      HUBSPOT_API_KEY: process.env.HUBSPOT_API_KEY ?? "",
+      SUPERMETRICS_API_KEY: process.env.SUPERMETRICS_API_KEY ?? "",
+      EXA_API_KEY: process.env.EXA_API_KEY ?? "",
+      HEYREACH_API_KEY: process.env.HEYREACH_API_KEY ?? "",
+      GRANOLA_API_KEY: process.env.GRANOLA_API_KEY ?? "",
+      // Reddy Postgres
+      POSTGRES_URL: process.env.POSTGRES_URL ?? "",
+      POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
+      // Base URL for legacy /api/* routes the agent can hit
+      REDDY_GTM_BASE_URL: process.env.REDDY_GTM_BASE_URL ?? "https://gtm-jet.vercel.app",
+      // Slack context (so MCP tools inside the SDK can post back)
+      SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
+      SLACK_CHANNEL: process.env.SLACK_CHANNEL ?? "",
+      SLACK_THREAD_TS: process.env.SLACK_THREAD_TS ?? "",
     },
   };
 
