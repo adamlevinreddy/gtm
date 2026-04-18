@@ -13,6 +13,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.113",
     "@anthropic-ai/sdk": "^0.80.0",
+    "@composio/core": "^0.6.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@octokit/rest": "^22.0.1",
     "@slack/bolt": "^4.6.0",

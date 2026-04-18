@@ -3,11 +3,14 @@ export type AgentMeta = {
   slackChannel: string;
   slackThreadTs: string;
   slackUser: string | null;
+  slackUserEmail: string | null;
   threadKey: string;
   sessionId: string;
   libraryRepoUrl: string;
   isFirstTurn: boolean;
   turnCount: number;
+  connectedToolkits: string[];
+  composioMcp: { url: string; headers: Record<string, string> } | null;
 };
 
 const MAX_TURNS = 80;
@@ -28,6 +31,9 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
   - \`post_slack_message(text)\` — reply in the current thread (mrkdwn)
   - \`upload_slack_pdf(filePath, title)\` — attach a file
   - \`fetch_url(url, savePath)\` — download a URL (the built-in WebFetch doesn't save binaries; use this for logos/images)
+- **Per-user external tools (via Composio MCP)**: when the user has connected their accounts (by saying "@Reddy-GTM set me up" or running \`/reddy-connect\`), you'll have access to the \`composio\` MCP server with tools from: Gmail, Google Calendar, Google Drive, Google Sheets, Google Docs, HubSpot, LinkedIn, Apollo, DocuSign. Only toolkits the user has actually connected will work. The turn payload includes a \`connectedToolkits\` array so you know which are live; if it's missing \`gmail\` / \`hubspot\` / etc., tell the user in Slack: "You haven't connected X yet — say '@Reddy-GTM set me up' or run \`/reddy-connect\` and click the link." Don't try disconnected tools; they'll error.
+  - These run AS the Slack user who mentioned you — reading their Gmail, writing their drafts, reading their HubSpot deals, accessing calendars they have permission to see. Everything is scoped to that user's permissions in each service.
+  - Common tool names you'll see on the \`composio\` server: \`GMAIL_FETCH_EMAILS\`, \`GMAIL_CREATE_EMAIL_DRAFT\`, \`GMAIL_SEND_EMAIL\`, \`GOOGLECALENDAR_EVENTS_LIST\`, \`GOOGLECALENDAR_FIND_FREE_SLOTS\`, \`GOOGLECALENDAR_CREATE_EVENT\`, \`GOOGLEDRIVE_FIND_FILE\`, \`GOOGLEDRIVE_DOWNLOAD_FILE\`, \`GOOGLESHEETS_*\`, \`GOOGLEDOCS_*\`, \`HUBSPOT_*\`, \`LINKEDIN_*\`, \`APOLLO_*\`, \`DOCUSIGN_*\`.
 
 ## Turn-start convention
 At the start of every turn, refresh the workspace so you pick up any saves from other threads:
@@ -292,6 +298,19 @@ async function main() {
 
   const userContent = \`[turn \${TURN_NUMBER}] \${turn.userText}\`;
 
+  // If the user has connected Google via Composio, their per-user MCP URL
+  // was generated service-side and passed through META. Register it
+  // alongside the in-process reddy-gtm MCP; Claude Agent SDK handles routing.
+  const mcpServers = { "reddy-gtm": reddyMcp };
+  if (META.composioMcp) {
+    mcpServers["composio"] = {
+      type: "http",
+      url: META.composioMcp.url,
+      headers: META.composioMcp.headers,
+    };
+    trace("info", { output: "Composio MCP registered for " + META.slackUserEmail });
+  }
+
   const queryOptions = {
     model: "claude-opus-4-7",
     systemPrompt: { type: "preset", preset: "claude_code", append: ${JSON.stringify(APPEND_SYSTEM_PROMPT)} },
@@ -304,7 +323,7 @@ async function main() {
       "mcp__reddy-gtm__upload_slack_pdf",
       "mcp__reddy-gtm__fetch_url",
     ],
-    mcpServers: { "reddy-gtm": reddyMcp },
+    mcpServers,
     thinking: { type: "adaptive" },
     effort: "xhigh",
     maxTurns: ${MAX_TURNS},

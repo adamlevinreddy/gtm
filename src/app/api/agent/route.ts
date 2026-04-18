@@ -3,6 +3,7 @@ import { Sandbox } from "@vercel/sandbox";
 import { WebClient } from "@slack/web-api";
 import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
+import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -21,6 +22,22 @@ const SNAPSHOT_EXPIRATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 function sandboxNameFor(threadTs: string) {
   return `reddy-gtm-${threadTs.replace(/\./g, "_")}`;
+}
+
+// Slack user ID → email (Composio user_id). Cached indefinitely — emails don't churn.
+async function resolveSlackEmail(slackUserId: string, slack: WebClient): Promise<string | null> {
+  const key = `slack:user:${slackUserId}:email`;
+  const cached = await kv.get<string>(key).catch(() => null);
+  if (cached) return cached;
+  try {
+    const res = await slack.users.info({ user: slackUserId });
+    const email = res.user?.profile?.email ?? null;
+    if (email) await kv.set(key, email, { ex: 30 * 24 * 60 * 60 }).catch(() => {});
+    return email;
+  } catch (err) {
+    console.warn(`[agent] users.info failed for ${slackUserId}: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
 }
 
 export function agentThreadKey(threadTs: string) {
@@ -89,16 +106,41 @@ export async function POST(req: NextRequest) {
       console.warn(`[agent] extendTimeout failed: ${extendErr instanceof Error ? extendErr.message : String(extendErr)}`);
     }
 
+    // Resolve Slack user → email for Composio (per-user tool auth).
+    // Everything downstream is optional: if any step fails, we still dispatch
+    // the turn without Composio tools so non-integrated asks keep working.
+    let slackUserEmail: string | null = null;
+    let connectedToolkits: ToolkitSlug[] = [];
+    let composioMcp: { url: string; headers: Record<string, string> } | null = null;
+    if (slackUser) {
+      slackUserEmail = await resolveSlackEmail(slackUser, slack);
+      if (slackUserEmail && process.env.COMPOSIO_API_KEY) {
+        const status = await getConnectionStatus(slackUserEmail).catch((err) => {
+          console.warn(`[agent] composio status check failed: ${err instanceof Error ? err.message : err}`);
+          return null;
+        });
+        if (status) {
+          connectedToolkits = TOOLKITS.map((t) => t.slug).filter((s) => status[s]);
+        }
+        if (connectedToolkits.length > 0 && process.env.COMPOSIO_MCP_CONFIG_ID) {
+          composioMcp = await generateMcpUrl(slackUserEmail);
+        }
+      }
+    }
+
     const meta: AgentMeta = {
       sandboxName,
       slackChannel,
       slackThreadTs,
       slackUser: slackUser ?? null,
+      slackUserEmail,
       threadKey,
       sessionId: state.sessionId,
       libraryRepoUrl: "github.com/ReddySolutions/reddy-gtm.git",
       isFirstTurn,
       turnCount: state.turnCount,
+      connectedToolkits,
+      composioMcp,
     };
 
     const turnPayload = {
@@ -106,6 +148,8 @@ export async function POST(req: NextRequest) {
       receivedAt: new Date().toISOString(),
       userText,
       slackUser: slackUser ?? null,
+      slackUserEmail,
+      connectedToolkits,
     };
 
     // Write the latest turn into inbox/ and the generated driver into /vercel/sandbox
