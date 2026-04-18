@@ -11,6 +11,7 @@ export type AgentMeta = {
   turnCount: number;
   connectedToolkits: string[];
   composioMcp: { url: string; headers: Record<string, string> } | null;
+  isSharedChannel: boolean;
 };
 
 const MAX_TURNS = 80;
@@ -392,6 +393,21 @@ async function main() {
   }
 
   await kvSet(TRACE_KEY, TRACE).catch(() => {});
+
+  // Privacy disclosure: if any Composio MCP tool ran this turn AND this thread
+  // is in a shared channel (anything that isn't a 1:1 DM), remind the user
+  // that their authenticated tools are reachable by anyone mentioning
+  // @Reddy-GTM in this thread until they close it.
+  if (META.isSharedChannel) {
+    const composioToolUsed = TRACE.some(
+      (e) => e.kind === "agent_tool_use" && typeof e.name === "string" && e.name.startsWith("mcp__composio__"),
+    );
+    if (composioToolUsed && slackPosted) {
+      await postSlackMessage(
+        "_:lock_with_ink_pen: Heads up: anyone who mentions me in this thread inherits access to *your* authenticated tools (Gmail, Calendar, HubSpot, etc.). React :end: or say \`@Reddy-GTM end thread\` to close the session + stop the sandbox._"
+      ).catch(() => {});
+    }
+  }
 
   // Agent never posted anything user-visible? Surface whatever text it emitted
   // as a fallback so the user sees SOMETHING (better than a silent green check).

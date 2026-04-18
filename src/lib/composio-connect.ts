@@ -75,6 +75,9 @@ export async function buildConnectMessage(userEmail: string): Promise<string> {
     lines.push(`_Already connected: ${alreadyConnected.map((t) => t.label).join(", ")}_`);
   }
 
+  lines.push("");
+  lines.push(":lock_with_ink_pen: *Thread privacy:* once connected, anyone who mentions me in the same thread can use *your* authenticated tools. React :end: or say `@Reddy-GTM end thread` to close the session when you're done.");
+
   return lines.join("\n");
 }
 

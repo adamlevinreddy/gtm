@@ -84,6 +84,45 @@ export async function POST(req: NextRequest) {
 
     console.log(`[slack] Event type: ${event.type}, bot_id: ${event.bot_id || "none"}, text: "${(event.text || "").slice(0, 100)}"`);
 
+    // --- REDDY-GTM END-THREAD SIGNAL (🔚 reaction) ---
+    // Force-close a thread: stop the sandbox + clear KV state so no future
+    // mention inherits this thread's tools/context/session history.
+    if (
+      process.env.REDDY_GTM_ENGINE === "agent-sdk" &&
+      event.type === "reaction_added" &&
+      event.reaction === "end" &&
+      event.item?.type === "message"
+    ) {
+      const channel = event.item.channel;
+      const itemTs = event.item.ts;
+      if (!channel || !itemTs) return NextResponse.json({ ok: true });
+
+      let threadTs: string | undefined;
+      try {
+        const replies = await getSlackClient().conversations.replies({
+          channel, ts: itemTs, limit: 1,
+        });
+        const msg = replies.messages?.[0];
+        threadTs = msg?.thread_ts || msg?.ts;
+      } catch (err) {
+        console.error(`[slack] end-reaction thread lookup failed: ${err}`);
+        return NextResponse.json({ ok: true });
+      }
+      if (!threadTs) return NextResponse.json({ ok: true });
+
+      const state = await kv.get(`reddy-gtm:thread:${threadTs}`).catch(() => null);
+      if (!state) return NextResponse.json({ ok: true });
+
+      const baseUrl = "https://gtm-jet.vercel.app";
+      fetch(`${baseUrl}/api/slack/close-thread`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slackChannel: channel, slackThreadTs: threadTs, slackEventTs: itemTs }),
+      }).catch((err) => console.error(`[slack] close-thread dispatch failed: ${err}`));
+      await new Promise((r) => setTimeout(r, 500));
+      return NextResponse.json({ ok: true });
+    }
+
     // --- REDDY-GTM SAVE SIGNAL (🔒 reaction) ---
     // When a user reacts with the lock emoji to a bot message in a reddy-gtm
     // thread, dispatch a synthetic save-intent message to the agent. The agent
@@ -141,6 +180,20 @@ export async function POST(req: NextRequest) {
       const channel = event.channel;
 
       console.log(`[slack] Parsed text: "${text}", has files: ${!!event.files}, file count: ${event.files?.length || 0}`);
+
+      // --- END-THREAD keyword shortcut ("@Reddy-GTM end thread") ---
+      // Same backend as the :end: reaction: stop sandbox + clear KV.
+      if (process.env.REDDY_GTM_ENGINE === "agent-sdk" && /\bend\s+thread\b/i.test(text)) {
+        const threadTs: string = event.thread_ts || event.ts;
+        const baseUrl = "https://gtm-jet.vercel.app";
+        fetch(`${baseUrl}/api/slack/close-thread`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slackChannel: channel, slackThreadTs: threadTs, slackEventTs: event.ts }),
+        }).catch((err) => console.error(`[slack] close-thread dispatch failed: ${err}`));
+        await new Promise((r) => setTimeout(r, 500));
+        return NextResponse.json({ ok: true });
+      }
 
       // --- SET-ME-UP shortcut ("@Reddy-GTM set me up") ---
       // Detect setup-intent phrases and dispatch to /api/slack/set-me-up which

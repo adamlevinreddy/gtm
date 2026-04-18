@@ -128,6 +128,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Channel ID D... = 1:1 DM (private to the mentioning user only).
+    // C... = public channel, G... = private channel or multi-party DM — both
+    // shared across >1 person, so we need to warn about per-user tool access
+    // being reachable by others who mention in the same thread.
+    const isSharedChannel = !slackChannel.startsWith("D");
+
     const meta: AgentMeta = {
       sandboxName,
       slackChannel,
@@ -141,6 +147,7 @@ export async function POST(req: NextRequest) {
       turnCount: state.turnCount,
       connectedToolkits,
       composioMcp,
+      isSharedChannel,
     };
 
     const turnPayload = {
