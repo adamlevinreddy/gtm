@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import { accounts, contacts, companies, conferenceLists, listContacts } from "@/lib/schema";
 import { eq, ilike } from "drizzle-orm";
 import { enrichContactViaApollo, enrichAccountViaApollo } from "@/lib/enrichment";
-import { buildConnectMessage, resolveSlackEmailForConnect, isSetupIntent } from "@/lib/composio-connect";
+import { isSetupIntent } from "@/lib/composio-connect";
 import type { ClassificationResult } from "@/lib/types";
 
 export const maxDuration = 60; // Known matching is fast — don't need 5 min
@@ -143,31 +143,25 @@ export async function POST(req: NextRequest) {
       console.log(`[slack] Parsed text: "${text}", has files: ${!!event.files}, file count: ${event.files?.length || 0}`);
 
       // --- SET-ME-UP shortcut ("@Reddy-GTM set me up") ---
-      // Detect setup-intent phrases and DM the user the Composio OAuth links
-      // for every configured toolkit they haven't connected yet. Deterministic
-      // short-circuit — doesn't go through the agent. Same backend as the
-      // /reddy-connect slash command.
+      // Detect setup-intent phrases and dispatch to /api/slack/set-me-up which
+      // DMs the user the Composio OAuth links for every configured toolkit
+      // they haven't connected yet. Fire-and-forget to a dedicated endpoint
+      // because the Composio SDK work takes longer than Slack's 3s ack window
+      // and Vercel's lambda runtime freezes post-response async work.
       if (process.env.REDDY_GTM_ENGINE === "agent-sdk" && isSetupIntent(text)) {
         await addReaction(channel, event.ts, "wave");
-        (async () => {
-          try {
-            const slack = getSlackClient();
-            const userEmail = event.user ? await resolveSlackEmailForConnect(event.user, slack) : null;
-            if (!userEmail) {
-              await replyInThread(channel, event.thread_ts || event.ts, "Couldn't find your email on Slack. Make sure your profile has an email and try again.");
-              return;
-            }
-            const body = await buildConnectMessage(userEmail);
-            await replyInThread(channel, event.thread_ts || event.ts, body);
-            await removeReaction(channel, event.ts, "wave");
-            await addReaction(channel, event.ts, "white_check_mark");
-          } catch (err) {
-            console.error(`[slack] set-me-up failed: ${err instanceof Error ? err.message : err}`);
-            await removeReaction(channel, event.ts, "wave");
-            await addReaction(channel, event.ts, "x");
-            await replyInThread(channel, event.thread_ts || event.ts, `Setup hit an error: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        })();
+        const baseUrl = "https://gtm-jet.vercel.app";
+        fetch(`${baseUrl}/api/slack/set-me-up`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            slackUserId: event.user,
+            slackChannel: channel,
+            slackEventTs: event.ts,
+            slackThreadTs: event.thread_ts,
+          }),
+        }).catch((err) => console.error(`[slack] set-me-up dispatch failed: ${err}`));
+        await new Promise((r) => setTimeout(r, 500));
         return NextResponse.json({ ok: true });
       }
 
