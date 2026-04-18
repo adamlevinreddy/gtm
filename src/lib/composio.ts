@@ -100,17 +100,27 @@ export async function getConnectionStatus(
 
 // Generate the per-user MCP URL. Uses Composio's Tool Router session model:
 // create a session scoped to the user + the toolkits they've connected, and
-// pull the MCP URL off it. No pre-created MCP config in the dashboard needed.
-// Toolkits are passed at session-create time.
+// pull the MCP URL off it.
+//
+// Critical: pass authConfigs as a { toolkit: authConfigId } map so the session
+// binds to our pre-created auth configs. Without this, the session uses its
+// own default auth configs and can't see connections that users authorized
+// against OUR configs — every tool call 404s with "No active connection found".
 export async function generateMcpUrl(
   userId: ComposioUserId,
   toolkits: ToolkitSlug[],
 ): Promise<{ url: string; headers: Record<string, string> } | null> {
   if (toolkits.length === 0) return null;
+  const authConfigs: Record<string, string> = {};
+  for (const slug of toolkits) {
+    const id = authConfigIdFor(slug);
+    if (id) authConfigs[slug] = id;
+  }
   try {
     const session = await (composio() as unknown as {
-      create: (u: string, opts: { toolkits: string[] }) => Promise<{ mcp: { url: string; headers?: Record<string, string> } }>;
-    }).create(userId, { toolkits });
+      create: (u: string, opts: { toolkits: string[]; authConfigs?: Record<string, string> }) =>
+        Promise<{ mcp: { url: string; headers?: Record<string, string> } }>;
+    }).create(userId, { toolkits, authConfigs });
     return {
       url: session.mcp.url,
       headers: session.mcp.headers ?? {},
