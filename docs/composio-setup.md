@@ -25,11 +25,9 @@ For each toolkit you want to enable, dashboard → **Auth Configs → Create**. 
 
 Missing env var → that toolkit is silently hidden from the `set me up` menu. You can enable Gmail today and add HubSpot next month without code changes.
 
-## 3. MCP config (bundles the toolkits into one URL)
+## 3. MCP config — not needed
 
-Dashboard → **MCP → Create**. Select all toolkits you want exposed to the agent (check every toolkit you created an auth config for in step 2). Name it `reddy-gtm-mcp`. Save the returned `mcp_config_id` → goes in Vercel env as `COMPOSIO_MCP_CONFIG_ID`.
-
-This MCP config is shared across all users. Composio generates per-user URLs from it at runtime using the user's email as `user_id`.
+Reddy-GTM uses Composio's Tool Router session model, which spins up a per-user session at request time bundling whichever toolkits the user has actually connected. No pre-created MCP config in the dashboard. Skip this.
 
 ## 4. Vercel env vars
 
@@ -37,7 +35,6 @@ In the `gtm` project:
 
 ```
 COMPOSIO_API_KEY=<from step 1>
-COMPOSIO_MCP_CONFIG_ID=<from step 3>
 COMPOSIO_AUTH_CONFIG_GMAIL=<from step 2>
 COMPOSIO_AUTH_CONFIG_GCAL=<from step 2>
 COMPOSIO_AUTH_CONFIG_GDRIVE=<from step 2>
@@ -50,6 +47,8 @@ COMPOSIO_AUTH_CONFIG_DOCUSIGN=<from step 2> # omit if you didn't create
 ```
 
 Pull to local for dev: `vercel env pull .env.local --environment=development`.
+
+Or run the setup script (requires `COMPOSIO_API_KEY` set): `node scripts/composio-setup.mjs` — creates all Composio-managed auth configs + prints an env block.
 
 ## 5. Slack app: slash command (optional)
 

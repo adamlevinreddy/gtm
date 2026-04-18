@@ -122,8 +122,8 @@ export async function POST(req: NextRequest) {
         if (status) {
           connectedToolkits = TOOLKITS.map((t) => t.slug).filter((s) => status[s]);
         }
-        if (connectedToolkits.length > 0 && process.env.COMPOSIO_MCP_CONFIG_ID) {
-          composioMcp = await generateMcpUrl(slackUserEmail);
+        if (connectedToolkits.length > 0) {
+          composioMcp = await generateMcpUrl(slackUserEmail, connectedToolkits);
         }
       }
     }

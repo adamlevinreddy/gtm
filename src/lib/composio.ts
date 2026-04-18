@@ -98,22 +98,25 @@ export async function getConnectionStatus(
   return Object.fromEntries(TOOLKITS.map((t) => [t.slug, active.has(t.slug)])) as Record<ToolkitSlug, boolean>;
 }
 
-// Generate the per-user MCP URL. The MCP config (bundling whichever
-// toolkits we want exposed to the agent) is created once in the Composio
-// dashboard; we store its ID in env.
-export async function generateMcpUrl(userId: ComposioUserId): Promise<{
-  url: string;
-  headers: Record<string, string>;
-} | null> {
-  const mcpConfigId = process.env.COMPOSIO_MCP_CONFIG_ID;
-  if (!mcpConfigId) return null;
+// Generate the per-user MCP URL. Uses Composio's Tool Router session model:
+// create a session scoped to the user + the toolkits they've connected, and
+// pull the MCP URL off it. No pre-created MCP config in the dashboard needed.
+// Toolkits are passed at session-create time.
+export async function generateMcpUrl(
+  userId: ComposioUserId,
+  toolkits: ToolkitSlug[],
+): Promise<{ url: string; headers: Record<string, string> } | null> {
+  if (toolkits.length === 0) return null;
   try {
-    const mcp = await (composio() as unknown as {
-      experimental: { mcp: { generate: (u: string, c: string) => Promise<{ url: string; headers: Record<string, string> }> } };
-    }).experimental.mcp.generate(userId, mcpConfigId);
-    return { url: mcp.url, headers: mcp.headers };
+    const session = await (composio() as unknown as {
+      create: (u: string, opts: { toolkits: string[] }) => Promise<{ mcp: { url: string; headers?: Record<string, string> } }>;
+    }).create(userId, { toolkits });
+    return {
+      url: session.mcp.url,
+      headers: session.mcp.headers ?? {},
+    };
   } catch (err) {
-    console.error(`[composio] mcp.generate failed for ${userId}:`, err instanceof Error ? err.message : err);
+    console.error(`[composio] session.create failed for ${userId}:`, err instanceof Error ? err.message : err);
     return null;
   }
 }
