@@ -296,7 +296,16 @@ async function main() {
     ],
   });
 
-  const userContent = \`[turn \${TURN_NUMBER}] \${turn.userText}\`;
+  // Surface Composio connection state into the prompt so the agent knows
+  // exactly which per-user tools are live. Without this the agent has to
+  // guess from the MCP tool list, and since a registered-but-partial
+  // composio MCP still shows *some* tools, it often says "nothing's
+  // connected" when in fact 6 of 8 are.
+  const connectedBlock =
+    Array.isArray(META.connectedToolkits) && META.connectedToolkits.length > 0
+      ? \`Connected services for this user (\${META.slackUserEmail}): \${META.connectedToolkits.join(", ")}. Tools from these are live on the composio MCP; use them without asking.\`
+      : \`No external services are connected yet for \${META.slackUserEmail || "this user"}. If the user's ask needs Gmail / Calendar / Drive / Sheets / Docs / HubSpot / LinkedIn / Apollo, tell them to \\\`@Reddy-GTM set me up\\\` first.\`;
+  const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}] \${turn.userText}\`;
 
   // If the user has connected Google via Composio, their per-user MCP URL
   // was generated service-side and passed through META. Register it
