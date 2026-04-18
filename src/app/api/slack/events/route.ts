@@ -83,6 +83,57 @@ export async function POST(req: NextRequest) {
 
     console.log(`[slack] Event type: ${event.type}, bot_id: ${event.bot_id || "none"}, text: "${(event.text || "").slice(0, 100)}"`);
 
+    // --- REDDY-GTM SAVE SIGNAL (🔒 reaction) ---
+    // When a user reacts with the lock emoji to a bot message in a reddy-gtm
+    // thread, dispatch a synthetic save-intent message to the agent. The agent
+    // then stages the dirty paths, commits, pushes, and confirms in Slack.
+    if (
+      process.env.REDDY_GTM_ENGINE === "agent-sdk" &&
+      event.type === "reaction_added" &&
+      event.reaction === "lock" &&
+      event.item?.type === "message"
+    ) {
+      const channel = event.item.channel;
+      const itemTs = event.item.ts;
+      if (!channel || !itemTs) return NextResponse.json({ ok: true });
+
+      let threadTs: string | undefined;
+      try {
+        const replies = await getSlackClient().conversations.replies({
+          channel, ts: itemTs, limit: 1,
+        });
+        const msg = replies.messages?.[0];
+        threadTs = msg?.thread_ts || msg?.ts;
+      } catch (err) {
+        console.error(`[slack] lock-reaction thread lookup failed: ${err}`);
+        return NextResponse.json({ ok: true });
+      }
+      if (!threadTs) return NextResponse.json({ ok: true });
+
+      const state = await kv.get(`reddy-gtm:thread:${threadTs}`).catch(() => null);
+      if (!state) {
+        console.log(`[slack] lock reaction on non-reddy-gtm thread ${threadTs} — ignoring`);
+        return NextResponse.json({ ok: true });
+      }
+
+      console.log(`[slack] lock reaction → dispatching save-intent for thread ${threadTs}`);
+      await addReaction(channel, threadTs, "speech_balloon");
+
+      const baseUrl = "https://gtm-jet.vercel.app";
+      fetch(`${baseUrl}/api/agent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userText: "SAVE_INTENT: the user reacted with 🔒 to lock this thread's work into the library. Refresh the workspace (git pull --rebase), inspect git status, stage the relevant dirty paths under corpora/ or decks/ (be explicit — never git add -A), commit with a concise message, pull --rebase, push to main, and confirm in Slack with the final commit path.",
+          slackChannel: channel,
+          slackThreadTs: threadTs,
+          slackUser: event.user,
+        }),
+      }).catch((err) => console.error(`[slack] save-intent dispatch failed: ${err}`));
+      await new Promise((r) => setTimeout(r, 500));
+      return NextResponse.json({ ok: true });
+    }
+
     if (event.type === "app_mention" && !event.bot_id) {
       const rawText = normalizeSlackText(event.text || "").trim();
       const text = rawText.toLowerCase();

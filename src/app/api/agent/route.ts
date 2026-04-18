@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
       slackUser: slackUser ?? null,
       threadKey,
       sessionId: state.sessionId,
-      libraryRepoUrl: "github.com/ReddySolutions/pricing.git",
+      libraryRepoUrl: "github.com/ReddySolutions/reddy-gtm.git",
       isFirstTurn,
       turnCount: state.turnCount,
     };
