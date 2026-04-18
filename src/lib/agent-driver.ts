@@ -194,13 +194,26 @@ function execLog(label, cmd, args, opts) {
 }
 
 async function ensureLibraryCloned() {
-  if (existsSync("workspace/CLAUDE.md")) { trace("bootstrap", { output: "workspace already present" }); return; }
   if (!PAT) throw new Error("PRICING_LIBRARY_GITHUB_PAT not set");
-  trace("bootstrap", { output: "cloning library into workspace/" });
-  const cloneUrl = \`https://x-access-token:\${PAT}@\${META.libraryRepoUrl}\`;
-  execFileSync("git", ["clone", cloneUrl, "workspace"], { stdio: "inherit" });
-  execFileSync("git", ["-C", "workspace", "config", "user.email", "reddy-gtm-bot@reddy.io"], { stdio: "inherit" });
-  execFileSync("git", ["-C", "workspace", "config", "user.name", "Reddy-GTM Bot"], { stdio: "inherit" });
+  if (!existsSync("workspace/CLAUDE.md")) {
+    trace("bootstrap", { output: "cloning library into workspace/" });
+    const cloneUrl = \`https://x-access-token:\${PAT}@\${META.libraryRepoUrl}\`;
+    execFileSync("git", ["clone", cloneUrl, "workspace"], { stdio: "inherit" });
+    execFileSync("git", ["-C", "workspace", "config", "user.email", "reddy-gtm-bot@reddy.io"], { stdio: "inherit" });
+    execFileSync("git", ["-C", "workspace", "config", "user.name", "Reddy-GTM Bot"], { stdio: "inherit" });
+  } else {
+    trace("bootstrap", { output: "workspace already present" });
+  }
+  // Rewrite any https://github.com/ URLs in submodules to go through the PAT,
+  // then initialize + update. Cheap if already up-to-date, so run every time.
+  execFileSync("git", ["-C", "workspace", "config", "--local", \`url.https://x-access-token:\${PAT}@github.com/.insteadOf\`, "https://github.com/"], { stdio: "inherit" });
+  try {
+    execFileSync("git", ["-C", "workspace", "submodule", "update", "--init", "--recursive"], { stdio: "inherit" });
+    trace("bootstrap", { output: "submodules updated" });
+  } catch (err) {
+    // Non-fatal — submodules may be added later. Log and continue.
+    trace("bootstrap", { output: "submodule update failed: " + (err instanceof Error ? err.message : String(err)) });
+  }
 }
 
 async function ensureSdkInstalled() {
