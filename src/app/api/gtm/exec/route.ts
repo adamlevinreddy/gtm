@@ -13,6 +13,7 @@ import {
   listVariablesLive,
   listVersionHeaders,
   getLiveVersion,
+  enableBuiltInVariables,
 } from "@/lib/gtm";
 
 export const maxDuration = 60;
@@ -45,7 +46,8 @@ type Op =
   | { op: "createTrigger"; workspaceId: string; trigger: tagmanager_v2.Schema$Trigger }
   | { op: "updateTrigger"; workspaceId: string; triggerId: string; trigger: tagmanager_v2.Schema$Trigger }
   | { op: "createVersion"; workspaceId: string; name: string; notes?: string }
-  | { op: "publishVersion"; versionId: string };
+  | { op: "publishVersion"; versionId: string }
+  | { op: "enableBuiltInVariables"; workspaceId: string; types: string[] };
 
 export async function POST(req: NextRequest) {
   let body: Op;
@@ -69,6 +71,7 @@ export async function POST(req: NextRequest) {
       case "updateTrigger":     return NextResponse.json({ ok: true, data: await updateTrigger(body.workspaceId, body.triggerId, body.trigger) });
       case "createVersion":     return NextResponse.json({ ok: true, data: await createVersion(body.workspaceId, body.name, body.notes) });
       case "publishVersion":    return NextResponse.json({ ok: true, data: await publishVersion(body.versionId) });
+      case "enableBuiltInVariables": return NextResponse.json({ ok: true, data: await enableBuiltInVariables(body.workspaceId, body.types) });
       default:
         return NextResponse.json({ ok: false, error: `unknown op` }, { status: 400 });
     }

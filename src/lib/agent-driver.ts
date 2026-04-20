@@ -51,6 +51,7 @@ The user is talking to you from Slack. Infer their intent from the message conte
 - Security questionnaires → read \`.claude/skills/security/SKILL.md\`
 - RFPs / RFIs / RFQs → read \`.claude/skills/rfps/SKILL.md\`
 - Marketing (strategy, campaigns, analytics) → read \`.claude/skills/marketing/SKILL.md\`
+- Google Tag Manager (audit + fix tags/triggers/variables on \`GTM-5ZZPN9R2\`) → read \`.claude/skills/gtm/SKILL.md\`. Wraps \`GET /api/gtm/audit\` and \`POST /api/gtm/exec\` via a GCP service account — no per-user Composio auth needed.
 - Ambiguous ("thinking about pricing for Acme") → ask ONE clarifying question via \`post_slack_message\` before committing to a path.
 
 ## Conversation style — CRITICAL

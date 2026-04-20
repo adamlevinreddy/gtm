@@ -218,3 +218,15 @@ export async function publishVersion(versionId: string) {
   });
   return res.data;
 }
+
+// Enable one or more GTM built-in variables in a workspace. Type names
+// follow Google's enum — common ones: "scrollDepthThreshold",
+// "scrollDepthUnits", "scrollDirection", "formClasses", "formElement",
+// "formId", "videoCurrentTime", "videoDuration", etc.
+export async function enableBuiltInVariables(workspaceId: string, types: string[]) {
+  const res = await tm().accounts.containers.workspaces.built_in_variables.create({
+    parent: wsPath(workspaceId),
+    type: types,
+  });
+  return res.data;
+}
