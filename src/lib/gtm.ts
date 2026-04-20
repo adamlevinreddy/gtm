@@ -12,6 +12,7 @@ import { google, tagmanager_v2 } from "googleapis";
 const SCOPES = [
   "https://www.googleapis.com/auth/tagmanager.edit.containers",
   "https://www.googleapis.com/auth/tagmanager.edit.containerversions",
+  "https://www.googleapis.com/auth/tagmanager.delete.containers",
   "https://www.googleapis.com/auth/tagmanager.publish",
 ];
 
