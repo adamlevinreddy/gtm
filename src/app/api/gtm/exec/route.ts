@@ -14,6 +14,8 @@ import {
   listVersionHeaders,
   getLiveVersion,
   enableBuiltInVariables,
+  deleteWorkspace,
+  listWorkspaces,
 } from "@/lib/gtm";
 
 export const maxDuration = 60;
@@ -47,7 +49,9 @@ type Op =
   | { op: "updateTrigger"; workspaceId: string; triggerId: string; trigger: tagmanager_v2.Schema$Trigger }
   | { op: "createVersion"; workspaceId: string; name: string; notes?: string }
   | { op: "publishVersion"; versionId: string }
-  | { op: "enableBuiltInVariables"; workspaceId: string; types: string[] };
+  | { op: "enableBuiltInVariables"; workspaceId: string; types: string[] }
+  | { op: "listWorkspaces" }
+  | { op: "deleteWorkspace"; workspaceId: string };
 
 export async function POST(req: NextRequest) {
   let body: Op;
@@ -72,6 +76,8 @@ export async function POST(req: NextRequest) {
       case "createVersion":     return NextResponse.json({ ok: true, data: await createVersion(body.workspaceId, body.name, body.notes) });
       case "publishVersion":    return NextResponse.json({ ok: true, data: await publishVersion(body.versionId) });
       case "enableBuiltInVariables": return NextResponse.json({ ok: true, data: await enableBuiltInVariables(body.workspaceId, body.types) });
+      case "listWorkspaces":    return NextResponse.json({ ok: true, data: await listWorkspaces() });
+      case "deleteWorkspace":   return NextResponse.json({ ok: true, data: await deleteWorkspace(body.workspaceId) });
       default:
         return NextResponse.json({ ok: false, error: `unknown op` }, { status: 400 });
     }

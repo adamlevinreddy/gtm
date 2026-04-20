@@ -219,6 +219,11 @@ export async function publishVersion(versionId: string) {
   return res.data;
 }
 
+export async function deleteWorkspace(workspaceId: string) {
+  await tm().accounts.containers.workspaces.delete({ path: wsPath(workspaceId) });
+  return { deleted: workspaceId };
+}
+
 // Enable one or more GTM built-in variables in a workspace. Type names
 // follow Google's enum — common ones: "scrollDepthThreshold",
 // "scrollDepthUnits", "scrollDirection", "formClasses", "formElement",
