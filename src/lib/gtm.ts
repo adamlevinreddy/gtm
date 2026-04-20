@@ -11,6 +11,7 @@ import { google, tagmanager_v2 } from "googleapis";
 // guardrails forbid auto-publish without an explicit user signal.
 const SCOPES = [
   "https://www.googleapis.com/auth/tagmanager.edit.containers",
+  "https://www.googleapis.com/auth/tagmanager.edit.containerversions",
   "https://www.googleapis.com/auth/tagmanager.publish",
 ];
 
