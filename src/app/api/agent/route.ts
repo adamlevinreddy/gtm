@@ -212,6 +212,8 @@ export async function POST(req: NextRequest) {
         POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
         // For falling back to legacy /api/* routes if the agent prefers them
         REDDY_GTM_BASE_URL: "https://gtm-jet.vercel.app",
+        // GTM (read + write via /api/gtm/*). Agent curls those endpoints;
+        // service account + IDs live on the API route side, not the sandbox.
       },
     });
 

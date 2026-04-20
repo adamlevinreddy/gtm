@@ -22,6 +22,7 @@
     "@vercel/sandbox": "beta",
     "drizzle-orm": "^0.45.2",
     "fuzzball": "^2.2.3",
+    "googleapis": "^171.4.0",
     "next": "16.2.1",
     "officecrypto-tool": "^0.0.19",
     "postgres": "^3.4.8",
