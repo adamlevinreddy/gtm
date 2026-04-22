@@ -11,6 +11,7 @@ export type AgentMeta = {
   turnCount: number;
   connectedToolkits: string[];
   composioMcp: { url: string; headers: Record<string, string> } | null;
+  granolaMcp: { url: string; headers: Record<string, string> } | null;
   isSharedChannel: boolean;
 };
 
@@ -35,6 +36,7 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
 - **Per-user external tools (via Composio MCP)**: when the user has connected their accounts (by saying "@Reddy-GTM set me up" or running \`/reddy-connect\`), you'll have access to the \`composio\` MCP server with tools from: Gmail, Google Calendar, Google Drive, Google Sheets, Google Docs, HubSpot, LinkedIn, Apollo, DocuSign. Only toolkits the user has actually connected will work. The turn payload includes a \`connectedToolkits\` array so you know which are live; if it's missing \`gmail\` / \`hubspot\` / etc., tell the user in Slack: "You haven't connected X yet — say '@Reddy-GTM set me up' or run \`/reddy-connect\` and click the link." Don't try disconnected tools; they'll error.
   - These run AS the Slack user who mentioned you — reading their Gmail, writing their drafts, reading their HubSpot deals, accessing calendars they have permission to see. Everything is scoped to that user's permissions in each service.
   - Common tool names you'll see on the \`composio\` server: \`GMAIL_FETCH_EMAILS\`, \`GMAIL_CREATE_EMAIL_DRAFT\`, \`GMAIL_SEND_EMAIL\`, \`GOOGLECALENDAR_EVENTS_LIST\`, \`GOOGLECALENDAR_FIND_FREE_SLOTS\`, \`GOOGLECALENDAR_CREATE_EVENT\`, \`GOOGLEDRIVE_FIND_FILE\`, \`GOOGLEDRIVE_DOWNLOAD_FILE\`, \`GOOGLESHEETS_*\`, \`GOOGLEDOCS_*\`, \`HUBSPOT_*\`, \`LINKEDIN_*\`, \`APOLLO_*\`, \`DOCUSIGN_*\`.
+- **Granola MCP (separate from Composio)**: when the user has connected Granola via "set me up", a \`granola\` MCP server is registered with their personal OAuth token. Prefer this over the legacy \`GRANOLA_API_KEY\` curl path — the MCP is per-user (returns only their meetings) and auto-refreshes tokens. Use it for any "what did we discuss", "recent calls", "transcript of X" question. If \`granola\` is NOT in the connected services list, tell the user to run \`@Reddy-GTM set me up\` and click "Connect Granola".
 
 ## Turn-start convention
 At the start of every turn, refresh the workspace so you pick up any saves from other threads:
@@ -298,15 +300,19 @@ async function main() {
     ],
   });
 
-  // Surface Composio connection state into the prompt so the agent knows
-  // exactly which per-user tools are live. Without this the agent has to
-  // guess from the MCP tool list, and since a registered-but-partial
-  // composio MCP still shows *some* tools, it often says "nothing's
-  // connected" when in fact 6 of 8 are.
+  // Surface connection state into the prompt so the agent knows exactly
+  // which per-user tools are live. Without this the agent has to guess
+  // from the MCP tool list, and since a registered-but-partial composio
+  // MCP still shows *some* tools, it often says "nothing's connected"
+  // when in fact 6 of 8 are.
+  const connectedServices = [
+    ...(Array.isArray(META.connectedToolkits) ? META.connectedToolkits : []),
+    ...(META.granolaMcp ? ["granola"] : []),
+  ];
   const connectedBlock =
-    Array.isArray(META.connectedToolkits) && META.connectedToolkits.length > 0
-      ? \`Connected services for this user (\${META.slackUserEmail}): \${META.connectedToolkits.join(", ")}. Tools from these are live on the composio MCP; use them without asking.\`
-      : \`No external services are connected yet for \${META.slackUserEmail || "this user"}. If the user's ask needs Gmail / Calendar / Drive / Sheets / Docs / HubSpot / LinkedIn / Apollo, tell them to \\\`@Reddy-GTM set me up\\\` first.\`;
+    connectedServices.length > 0
+      ? \`Connected services for this user (\${META.slackUserEmail}): \${connectedServices.join(", ")}. Tools from these are live on the corresponding MCP (composio for Gmail/HubSpot/etc., granola for meetings); use them without asking.\`
+      : \`No external services are connected yet for \${META.slackUserEmail || "this user"}. If the user's ask needs Gmail / Calendar / Drive / Sheets / Docs / HubSpot / LinkedIn / Apollo / Granola, tell them to \\\`@Reddy-GTM set me up\\\` first.\`;
   const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}] \${turn.userText}\`;
 
   // If the user has connected Google via Composio, their per-user MCP URL
@@ -320,6 +326,16 @@ async function main() {
       headers: META.composioMcp.headers,
     };
     trace("info", { output: "Composio MCP registered for " + META.slackUserEmail });
+  }
+  // Granola has its own per-user OAuth (no Composio toolkit). The API
+  // route fetched + refreshed tokens and passed the auth header through.
+  if (META.granolaMcp) {
+    mcpServers["granola"] = {
+      type: "http",
+      url: META.granolaMcp.url,
+      headers: META.granolaMcp.headers,
+    };
+    trace("info", { output: "Granola MCP registered for " + META.slackUserEmail });
   }
 
   const queryOptions = {

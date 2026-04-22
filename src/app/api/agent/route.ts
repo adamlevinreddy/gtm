@@ -4,6 +4,7 @@ import { WebClient } from "@slack/web-api";
 import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
+import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
 import { randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
     let slackUserEmail: string | null = null;
     let connectedToolkits: ToolkitSlug[] = [];
     let composioMcp: { url: string; headers: Record<string, string> } | null = null;
+    let granolaMcp: { url: string; headers: Record<string, string> } | null = null;
     if (slackUser) {
       slackUserEmail = await resolveSlackEmail(slackUser, slack);
       if (slackUserEmail && process.env.COMPOSIO_API_KEY) {
@@ -124,6 +126,19 @@ export async function POST(req: NextRequest) {
         }
         if (connectedToolkits.length > 0) {
           composioMcp = await generateMcpUrl(slackUserEmail, connectedToolkits);
+        }
+      }
+      // Granola is a separate per-user MCP (Composio doesn't have the
+      // toolkit). Fetch the user's stored OAuth tokens, refresh if near
+      // expiry, and pass a registration config through to the driver.
+      if (slackUserEmail) {
+        const origin = req.nextUrl.origin;
+        const tokens = await getGranolaTokens(slackUserEmail, origin).catch((err) => {
+          console.warn(`[agent] granola token fetch failed: ${err instanceof Error ? err.message : err}`);
+          return null;
+        });
+        if (tokens) {
+          granolaMcp = granolaMcpConfig(tokens.accessToken);
         }
       }
     }
@@ -147,6 +162,7 @@ export async function POST(req: NextRequest) {
       turnCount: state.turnCount,
       connectedToolkits,
       composioMcp,
+      granolaMcp,
       isSharedChannel,
     };
 
