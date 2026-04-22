@@ -65,6 +65,16 @@ function authConfigIdFor(slug: ToolkitSlug): string | null {
 }
 
 // Kick off the OAuth flow for a user + toolkit. Returns the consent URL.
+//
+// allowMultiple: true — Composio's default behavior throws if any existing
+// connection (even inactive / initiated-but-not-completed) is found for the
+// (user, auth config) pair. In practice we hit this whenever a user has
+// started an OAuth flow and abandoned it. The status check in
+// getConnectionStatus() already hides toolkits that are ACTIVE, so if we
+// reach initiateConnection it means either (a) nothing truly usable exists
+// and we want to start fresh, or (b) there's a pending/abandoned account
+// we'd like to supersede. In both cases, allowing a new connection is
+// correct — Composio deactivates stale ones once the new OAuth completes.
 export async function initiateConnection(
   userId: ComposioUserId,
   slug: ToolkitSlug,
@@ -72,7 +82,11 @@ export async function initiateConnection(
 ): Promise<{ redirectUrl: string; connectedAccountId: string }> {
   const authConfigId = authConfigIdFor(slug);
   if (!authConfigId) throw new Error(`No auth config for ${slug} (env: COMPOSIO_AUTH_CONFIG_${slug.toUpperCase()})`);
-  const req = await composio().connectedAccounts.initiate(userId, authConfigId, callbackUrl ? { callbackUrl } : undefined);
+  const options: { callbackUrl?: string; allowMultiple: boolean } = {
+    allowMultiple: true,
+  };
+  if (callbackUrl) options.callbackUrl = callbackUrl;
+  const req = await composio().connectedAccounts.initiate(userId, authConfigId, options);
   return {
     redirectUrl: (req as { redirectUrl: string }).redirectUrl,
     connectedAccountId: (req as { id: string }).id,
