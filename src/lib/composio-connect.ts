@@ -8,6 +8,12 @@ import {
   availableToolkits,
   type ToolkitSlug,
 } from "@/lib/composio";
+import { isConnected as isGranolaConnected } from "@/lib/granola";
+
+// Public-facing base URL for OAuth redirect links embedded in Slack messages.
+// Must match the host Granola's DCR client was registered against.
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL ?? process.env.REDDY_GTM_BASE_URL ?? "https://gtm-jet.vercel.app";
 
 export async function resolveSlackEmailForConnect(userId: string, slack: WebClient): Promise<string | null> {
   try {
@@ -24,19 +30,29 @@ export async function resolveSlackEmailForConnect(userId: string, slack: WebClie
 // "you're good" confirmation instead.
 export async function buildConnectMessage(userEmail: string): Promise<string> {
   const toolkits = availableToolkits();
-  if (toolkits.length === 0) {
-    return "No services are configured yet. Ask the Reddy-GTM admin to add auth configs in Composio.";
-  }
-
-  const status = await getConnectionStatus(userEmail).catch((err) => {
-    console.error(`[composio-connect] status check failed: ${err instanceof Error ? err.message : err}`);
-    return null;
-  });
+  const [status, granolaConnected] = await Promise.all([
+    getConnectionStatus(userEmail).catch((err) => {
+      console.error(`[composio-connect] status check failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }),
+    isGranolaConnected(userEmail).catch(() => false),
+  ]);
 
   const missing = toolkits.filter((t) => !status || !status[t.slug]);
+  const granolaAuthUrl = `${PUBLIC_BASE_URL}/api/oauth/granola/start?email=${encodeURIComponent(userEmail)}`;
 
-  if (missing.length === 0) {
-    return `*You're all set.* Everything available is connected:\n${toolkits.map((t) => `• ${t.label}`).join("\n")}`;
+  if (toolkits.length === 0 && granolaConnected) {
+    return "*You're all set.* Granola is connected; no other services are configured yet.";
+  }
+  if (toolkits.length === 0 && !granolaConnected) {
+    return [
+      "No Composio toolkits are configured yet. You can still connect Granola directly:",
+      `• <${granolaAuthUrl}|Connect Granola>`,
+    ].join("\n");
+  }
+
+  if (missing.length === 0 && granolaConnected) {
+    return `*You're all set.* Everything available is connected:\n${toolkits.map((t) => `• ${t.label}`).join("\n")}\n• Granola`;
   }
 
   const groups: Partial<Record<"google" | "work" | "company", typeof missing>> = {};
@@ -69,10 +85,20 @@ export async function buildConnectMessage(userEmail: string): Promise<string> {
     lines.push("");
   }
 
+  // Granola lives outside Composio (they don't have a toolkit), but we
+  // surface it in the same message so the onboarding story is one flow.
+  if (!granolaConnected) {
+    lines.push("*Meetings*");
+    lines.push(`• <${granolaAuthUrl}|Connect Granola>`);
+    lines.push("");
+  }
+
   // Surface what's already connected so users don't re-click.
   const alreadyConnected = toolkits.filter((t) => status && status[t.slug]);
-  if (alreadyConnected.length > 0) {
-    lines.push(`_Already connected: ${alreadyConnected.map((t) => t.label).join(", ")}_`);
+  const alreadyLabels = alreadyConnected.map((t) => t.label);
+  if (granolaConnected) alreadyLabels.push("Granola");
+  if (alreadyLabels.length > 0) {
+    lines.push(`_Already connected: ${alreadyLabels.join(", ")}_`);
   }
 
   lines.push("");
