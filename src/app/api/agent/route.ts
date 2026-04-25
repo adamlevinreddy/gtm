@@ -223,6 +223,8 @@ export async function POST(req: NextRequest) {
         EXA_API_KEY: process.env.EXA_API_KEY ?? "",
         HEYREACH_API_KEY: process.env.HEYREACH_API_KEY ?? "",
         GRANOLA_API_KEY: process.env.GRANOLA_API_KEY ?? "",
+        RECALL_API_KEY: process.env.RECALL_API_KEY ?? "",
+        RECALL_REGION: process.env.RECALL_REGION ?? "us-west-2",
         // Reddy Postgres (for company-list lookups, contact persistence)
         POSTGRES_URL: process.env.POSTGRES_URL ?? "",
         POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
