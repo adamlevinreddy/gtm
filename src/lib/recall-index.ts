@@ -3,6 +3,8 @@
 // into the user's MCP message — so the agent can't accidentally route
 // to Granola without acknowledging the kb has data.
 
+import { buildVideoLink } from "./video-link";
+
 const GH_API = "https://api.github.com";
 const REPO = { owner: "ReddySolutions", name: "reddy-gtm" };
 
@@ -26,6 +28,11 @@ export type IndexedMeeting = {
   has_transcript: boolean;
   has_video: boolean;
   platform: string | null;
+  // Pre-minted clickable download URL when the meeting has a video.
+  // Saves the agent a round-trip — for "give me the video for X"
+  // queries, the agent just reads this URL from the prompt and
+  // returns it.
+  video_url?: string | null;
 };
 
 // List recent meeting folders. Returns up to N most-recent meetings
@@ -33,7 +40,16 @@ export type IndexedMeeting = {
 // query the GitHub Trees API once for the whole `corpora/success/
 // customers/` subtree, filter for meta.json paths, then fetch each in
 // parallel.
-export async function recentMeetingIndex(pat: string, sinceDays = 7, limit = 20): Promise<IndexedMeeting[]> {
+//
+// If `videoLinkOpts` is supplied, also pre-mints a clickable video
+// URL for each meeting that has a video — saves the agent from
+// having to curl /api/recall/video-link.
+export async function recentMeetingIndex(
+  pat: string,
+  sinceDays = 7,
+  limit = 20,
+  videoLinkOpts?: { baseUrl: string; secret: string; ttlSeconds?: number },
+): Promise<IndexedMeeting[]> {
   // Get the latest commit's tree SHA on main
   const refRes = await fetch(`${GH_API}/repos/${REPO.owner}/${REPO.name}/git/ref/heads/main`, {
     headers: ghHeaders(pat),
@@ -108,6 +124,21 @@ export async function recentMeetingIndex(pat: string, sinceDays = 7, limit = 20)
     })
     .sort((a, b) => Date.parse(b.started_at as string) - Date.parse(a.started_at as string))
     .slice(0, limit);
+
+  if (videoLinkOpts) {
+    for (const m of filtered) {
+      if (m.has_video && m.bot_id) {
+        m.video_url = buildVideoLink({
+          baseUrl: videoLinkOpts.baseUrl,
+          botId: m.bot_id,
+          customer: m.customer_slug,
+          secret: videoLinkOpts.secret,
+          ttlSeconds: videoLinkOpts.ttlSeconds ?? 3600,
+        });
+      }
+    }
+  }
+
   return filtered;
 }
 
@@ -123,7 +154,11 @@ export function formatMeetingIndex(meetings: IndexedMeeting[]): string {
     const flags: string[] = [];
     if (m.has_transcript) flags.push("transcript");
     if (m.has_video) flags.push("video");
-    return `- ${m.started_at} ${m.platform ?? ""} ${m.customer_slug}/${m.bot_id} [${flags.join("+") || "metadata only"}] attendees: ${attLabel}`;
+    let line = `- ${m.started_at} ${m.platform ?? ""} ${m.customer_slug}/${m.bot_id} [${flags.join("+") || "metadata only"}] attendees: ${attLabel}`;
+    if (m.video_url) {
+      line += `\n  video_url: ${m.video_url}`;
+    }
+    return line;
   });
   return lines.join("\n");
 }
