@@ -4,6 +4,7 @@ import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
+import { recentMeetingIndex, formatMeetingIndex } from "@/lib/recall-index";
 import { randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -74,10 +75,30 @@ export async function POST(req: NextRequest) {
     const granolaTokens = await getGranolaTokens(userEmail, origin).catch(() => null);
     if (granolaTokens) granolaMcp = granolaMcpConfig(granolaTokens.accessToken);
 
-    // Inject a customer hint so the agent doesn't have to guess.
-    const userText = customer
-      ? `[customer scope hint: ${customer}]\n\n${question}`
-      : question;
+    // Pre-fetch the recent meetings index from the kb so the agent
+    // can't accidentally route to Granola for a transcript query —
+    // the data is right here in the user message. Best-effort: if the
+    // fetch fails, the agent still has the kb cloned locally and can
+    // glob for itself.
+    let kbIndex = "(meeting index fetch skipped)";
+    if (process.env.PRICING_LIBRARY_GITHUB_PAT) {
+      try {
+        const meetings = await recentMeetingIndex(process.env.PRICING_LIBRARY_GITHUB_PAT, 7, 25);
+        kbIndex = formatMeetingIndex(meetings);
+      } catch (err) {
+        console.warn(`[agent/oneshot] kb index fetch failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    const userText = [
+      customer ? `[customer scope hint: ${customer}]` : "",
+      `[kb meeting index — last 7 days, customer/bot_id with flags]`,
+      kbIndex,
+      "",
+      question,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const meta: AgentMeta = {
       sandboxName,
