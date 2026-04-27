@@ -13,6 +13,11 @@ export type AgentMeta = {
   composioMcp: { url: string; headers: Record<string, string> } | null;
   granolaMcp: { url: string; headers: Record<string, string> } | null;
   isSharedChannel: boolean;
+  // When set, this run was triggered by /api/agent/oneshot from the MCP
+  // server. post_slack_message goes to a result buffer (not Slack);
+  // upload_slack_pdf is rejected. End-of-run writes the buffered answer
+  // to KV under `mcp:result:{requestId}` instead of posting to Slack.
+  mcpRequestId: string | null;
 };
 
 const MAX_TURNS = 80;
@@ -121,6 +126,18 @@ const PAT = process.env.PRICING_LIBRARY_GITHUB_PAT;
 const THREAD_KEY = process.env.AGENT_THREAD_KEY;
 const SESSION_ID = process.env.AGENT_SESSION_ID;
 const TRACE_KEY = THREAD_KEY + ":trace:" + TURN_NUMBER;
+
+// MCP one-shot mode: when set, post_slack_message goes to a result
+// buffer (not Slack), upload_slack_pdf is rejected, end-of-run writes
+// the buffer to KV under \`mcp:result:\${MCP_REQUEST_ID}\` for the
+// /api/agent/oneshot endpoint to pick up.
+const MCP_REQUEST_ID = META.mcpRequestId;
+const MCP_MODE = !!MCP_REQUEST_ID;
+const mcpBuffer = { answer: [], references: [] };
+function mcpAppendAnswer(text) { mcpBuffer.answer.push(text); }
+function mcpAppendReference(label, url, type) {
+  mcpBuffer.references.push({ label, url, type: type || "link" });
+}
 
 // ────────── Slack helpers ──────────
 async function slackApi(method, body) {
@@ -258,6 +275,12 @@ async function main() {
         "Post a mrkdwn message to the current Slack thread. Use for all user-visible replies.",
         { text: z.string().describe("The message text (Slack mrkdwn).") },
         async ({ text }) => {
+          if (MCP_MODE) {
+            mcpAppendAnswer(text);
+            trace("tool_call", { name: "post_slack_message", mcp: true, textPreview: text.slice(0, 200) });
+            slackPosted = true; // re-purposed in MCP mode: "did the agent reply at all"
+            return { content: [{ type: "text", text: "buffered for MCP response" }] };
+          }
           const r = await postSlackMessage(text);
           trace("tool_call", { name: "post_slack_message", textPreview: text.slice(0, 200), ok: r?.ok });
           if (r?.ok) slackPosted = true;
@@ -272,6 +295,12 @@ async function main() {
           title: z.string().describe("Short title shown above the file in Slack."),
         },
         async ({ filePath, title }) => {
+          if (MCP_MODE) {
+            // Q&A endpoint — file deliverables don't fit a sync MCP response.
+            // Tell the agent to provide a link instead. The PDF builds belong
+            // in Slack where the user can iterate + 🔒 to save.
+            return { content: [{ type: "text", text: "ERROR: upload_slack_pdf is not available in MCP mode. Either (a) post a link to the artifact via post_slack_message + reference URL, or (b) tell the user this is a build task best done by mentioning @Reddy-GTM in Slack." }], isError: true };
+          }
           const abs = path.isAbsolute(filePath) ? filePath : path.join("/vercel/sandbox", filePath);
           await uploadPdfToSlack(abs, title);
           trace("tool_call", { name: "upload_slack_pdf", filePath: abs, title });
@@ -313,7 +342,10 @@ async function main() {
     connectedServices.length > 0
       ? \`Connected services for this user (\${META.slackUserEmail}): \${connectedServices.join(", ")}. Tools from these are live on the corresponding MCP (composio for Gmail/HubSpot/etc., granola for meetings); use them without asking.\`
       : \`No external services are connected yet for \${META.slackUserEmail || "this user"}. If the user's ask needs Gmail / Calendar / Drive / Sheets / Docs / HubSpot / LinkedIn / Apollo / Granola, tell them to \\\`@Reddy-GTM set me up\\\` first.\`;
-  const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}] \${turn.userText}\`;
+  const mcpModeBlock = MCP_MODE
+    ? \` [MODE: MCP one-shot — the user is asking from Claude Desktop/Code via the reddy-gtm MCP server, NOT Slack. Same answer-discipline as Slack: brief synthesized response, cite precedent, link out instead of inlining raw artifacts. \\\`upload_slack_pdf\\\` will error here — if they ask for a build (proposal PDF, deck, etc.), tell them to do it from Slack via @Reddy-GTM. Skip 🔒 / save prompts. End your turn with one \\\`post_slack_message\\\` containing the full answer.]\`
+    : "";
+  const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}]\${mcpModeBlock} \${turn.userText}\`;
 
   // If the user has connected Google via Composio, their per-user MCP URL
   // was generated service-side and passed through META. Register it
@@ -435,6 +467,22 @@ async function main() {
 
   await kvSet(TRACE_KEY, TRACE).catch(() => {});
 
+  // MCP mode: write the buffered answer + references to KV so /api/agent/
+  // oneshot can pick it up. No Slack reactions, no fallbacks.
+  if (MCP_MODE) {
+    const lastText = [...TRACE].reverse().find((e) => e.kind === "assistant_text" && typeof e.output === "string" && e.output.trim().length > 0);
+    const fallbackAnswer = lastText ? String(lastText.output) : "";
+    const finalAnswer = mcpBuffer.answer.length > 0 ? mcpBuffer.answer.join("\\n\\n") : fallbackAnswer;
+    await kvSet("mcp:result:" + MCP_REQUEST_ID, {
+      ok: true,
+      answer: finalAnswer,
+      references: mcpBuffer.references,
+      finishedAt: new Date().toISOString(),
+    }, 60 * 60).catch(() => {});
+    console.log("[agent-driver] MCP run " + MCP_REQUEST_ID + " complete (" + finalAnswer.length + " chars)");
+    return;
+  }
+
   // Privacy disclosure: if any Composio MCP tool ran this turn AND this thread
   // is in a shared channel (anything that isn't a 1:1 DM), remind the user
   // that their authenticated tools are reachable by anyone mentioning
@@ -473,6 +521,14 @@ main().catch(async (err) => {
   console.error("[agent-driver] FATAL:", err);
   trace("fatal", { error: err instanceof Error ? (err.stack || err.message) : String(err) });
   await kvSet(TRACE_KEY, TRACE).catch(() => {});
+  if (MCP_MODE) {
+    await kvSet("mcp:result:" + MCP_REQUEST_ID, {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      finishedAt: new Date().toISOString(),
+    }, 60 * 60).catch(() => {});
+    process.exit(1);
+  }
   const header = \`:rotating_light: *Reddy-GTM driver crashed* · sandbox=\\\`\${META.sandboxName}\\\` · trace=\\\`\${TRACE_KEY}\\\`\\nError: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`;
   await dumpTraceToSlack(header).catch(() => {});
   await removeReaction("speech_balloon").catch(() => {});

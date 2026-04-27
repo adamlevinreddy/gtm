@@ -164,6 +164,7 @@ export async function POST(req: NextRequest) {
       composioMcp,
       granolaMcp,
       isSharedChannel,
+      mcpRequestId: null,
     };
 
     const turnPayload = {
