@@ -1,24 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readKbFile, KB_REPO } from "@/lib/github-kb";
 import { lfsDownloadUrl, parseLfsPointer } from "@/lib/github-lfs";
+import { verifyVideoToken } from "@/lib/video-link";
 
-// Return a fresh, presigned download URL for a meeting's video.
+// Stream a meeting video to the caller with proper mp4 headers, so a
+// click in Slack downloads as `meeting-{prefix}.mp4` rather than a
+// generic blob.
 //
-// 1. Find the meeting folder under any customer's `meetings/{botId}/` (the
-//    customer slug isn't known to the caller — only the bot ID — so we
-//    locate the meta.json by bot ID).
-// 2. Read the LFS pointer file `video.mp4`, parse the OID + size.
-// 3. Hit GitHub's LFS Batch API to get a fresh signed URL (~5 min expiry).
-// 4. Return it. The agent posts the URL to Slack; the user clicks it; the
-//    browser downloads the mp4 directly from GitHub's CDN — no proxy.
+// Auth — TWO accepted modes:
+//   1. `x-reddy-secret` header equal to RECALL_VIDEO_FETCH_SECRET
+//      (used by the agent in the sandbox calling this directly).
+//   2. `?token=<signed>` query param (HMAC of botId + expiry, signed
+//      with the same secret). This is what makes clickable Slack URLs
+//      work — browsers can't send custom headers on a plain link.
 //
-// Auth: x-reddy-secret matching RECALL_VIDEO_FETCH_SECRET (so this stays
-// internal — only the agent in the sandbox should be hitting it).
+// The endpoint then locates the meeting's LFS pointer in the kb, asks
+// GitHub LFS for a fresh signed download URL, fetches the bytes, and
+// proxies them back with `Content-Type: video/mp4` +
+// `Content-Disposition: attachment; filename="..."`. GitHub's LFS
+// storage serves files as `binary/octet-stream` with no filename, which
+// is why we proxy instead of redirect.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: string }> }) {
   const { botId } = await ctx.params;
-  const expected = process.env.RECALL_VIDEO_FETCH_SECRET;
-  const provided = req.headers.get("x-reddy-secret");
-  if (expected && provided !== expected) {
+  const secret = process.env.RECALL_VIDEO_FETCH_SECRET;
+  if (!secret) {
+    return NextResponse.json({ ok: false, error: "server misconfigured" }, { status: 500 });
+  }
+
+  const headerOk = req.headers.get("x-reddy-secret") === secret;
+  const token = req.nextUrl.searchParams.get("token");
+  const tokenOk = token ? verifyVideoToken(token, botId, secret) : false;
+  if (!headerOk && !tokenOk) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   if (!botId) {
@@ -30,9 +42,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
     return NextResponse.json({ ok: false, error: "PAT not set" }, { status: 500 });
   }
 
-  // Caller can pass the customer slug to skip the search — saves a few
-  // GitHub round-trips. Otherwise we use code search to locate the
-  // meta.json. (For volumes <1k meetings the search route is plenty fast.)
+  // Caller can pass the customer slug to skip the search.
   const slugHint = req.nextUrl.searchParams.get("customer");
   const path = await locateVideoPointer(pat, botId, slugHint);
   if (!path) {
@@ -49,22 +59,46 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
     return NextResponse.json({ ok: false, error: "video.mp4 is not an LFS pointer" }, { status: 422 });
   }
 
+  let dl: { url: string; expiresAt: string | null } | null;
   try {
-    const dl = await lfsDownloadUrl(pat, KB_REPO, obj);
-    if (!dl) {
-      return NextResponse.json({ ok: false, error: "LFS object not available" }, { status: 404 });
-    }
-    return NextResponse.json({ ok: true, url: dl.url, expiresAt: dl.expiresAt, oid: obj.oid, size: obj.size });
+    dl = await lfsDownloadUrl(pat, KB_REPO, obj);
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : String(err) },
       { status: 502 },
     );
   }
+  if (!dl) {
+    return NextResponse.json({ ok: false, error: "LFS object not available" }, { status: 404 });
+  }
+
+  // Stream from GitHub's LFS CDN through Vercel with proper headers.
+  const upstream = await fetch(dl.url);
+  if (!upstream.ok || !upstream.body) {
+    return NextResponse.json(
+      { ok: false, error: `LFS upstream ${upstream.status}` },
+      { status: 502 },
+    );
+  }
+
+  // Filename: derive from path so customer + bot prefix appear (so a
+  // user with multiple downloads can tell them apart).
+  const segments = path.split("/");
+  const customerSlug = segments[3] ?? "meeting";
+  const filename = `${customerSlug}-${botId.slice(0, 8)}.mp4`;
+
+  return new NextResponse(upstream.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "video/mp4",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Length": String(obj.size),
+      // Don't have intermediaries cache per-token URLs.
+      "Cache-Control": "private, max-age=0, no-store",
+    },
+  });
 }
 
-// Find the path of `video.mp4` in `corpora/success/customers/*/meetings/{botId}/video.mp4`.
-// Tries the slug hint first, then falls back to GitHub code search.
 async function locateVideoPointer(
   pat: string,
   botId: string,
@@ -75,8 +109,6 @@ async function locateVideoPointer(
     const ok = await readKbFile(pat, candidate);
     if (ok) return candidate;
   }
-
-  // GitHub code search: find any `video.mp4` under a meetings/{botId}/ folder.
   const q = encodeURIComponent(`repo:${KB_REPO.owner}/${KB_REPO.name} path:meetings/${botId} filename:video.mp4`);
   const res = await fetch(`https://api.github.com/search/code?q=${q}`, {
     headers: {
