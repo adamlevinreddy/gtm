@@ -379,6 +379,10 @@ async function main() {
       SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
       SLACK_CHANNEL: process.env.SLACK_CHANNEL ?? "",
       SLACK_THREAD_TS: process.env.SLACK_THREAD_TS ?? "",
+      // Don't pull video.mp4 bytes on git pull — they live in LFS and the
+      // agent only reads small text pointers. Fresh download URLs come
+      // from /api/recall/video/[botId] when needed.
+      GIT_LFS_SKIP_SMUDGE: "1",
     },
   };
 
