@@ -85,13 +85,17 @@ export async function buildConnectMessage(userEmail: string): Promise<string> {
     lines.push("");
   }
 
-  // Granola lives outside Composio (they don't have a toolkit), but we
-  // surface it in the same message so the onboarding story is one flow.
+  // Meeting-side integrations (outside Composio). Recall calendar
+  // doesn't expose a public "is this user connected" check on the
+  // workspace token, so we always show the link — clicking it on an
+  // already-connected calendar is idempotent on Recall's side.
+  const recallAuthUrl = `${PUBLIC_BASE_URL}/api/oauth/recall-calendar/start?email=${encodeURIComponent(userEmail)}`;
+  lines.push("*Meetings*");
   if (!granolaConnected) {
-    lines.push("*Meetings*");
     lines.push(`• <${granolaAuthUrl}|Connect Granola>`);
-    lines.push("");
   }
+  lines.push(`• <${recallAuthUrl}|Connect Recall Calendar> _— Reddy Notetaker auto-joins meetings on your calendar and posts the recording + transcript to the team's KB_`);
+  lines.push("");
 
   // Surface what's already connected so users don't re-click.
   const alreadyConnected = toolkits.filter((t) => status && status[t.slug]);
