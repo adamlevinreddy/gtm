@@ -999,14 +999,6 @@ export const meetings = pgTable(
     hubspotMeetingId: text("hubspot_meeting_id"),
     /** Granola meeting ID for dedup */
     granolaMeetingId: text("granola_meeting_id"),
-    /** Recall.ai bot UUID — primary key for fetching fresh video URLs + transcripts */
-    recallBotId: text("recall_bot_id"),
-    /** "high" / "medium" / "low" / "none" — how confident we are about accountId attribution from attendee email domains */
-    recallAttributionConfidence: text("recall_attribution_confidence"),
-    /** Meeting platform from Recall (zoom / google_meet / microsoft_teams). Useful for filtering. */
-    recallPlatform: text("recall_platform"),
-    /** Public meeting URL Recall bot joined */
-    recallMeetingUrl: text("recall_meeting_url"),
 
     // -- Timestamps --
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -1017,7 +1009,6 @@ export const meetings = pgTable(
     index("idx_meetings_opportunity").on(table.opportunityId),
     index("idx_meetings_date").on(table.meetingDate),
     index("idx_meetings_hubspot").on(table.hubspotMeetingId),
-    index("idx_meetings_recall_bot").on(table.recallBotId),
   ]
 );
 
