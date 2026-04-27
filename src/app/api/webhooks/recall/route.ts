@@ -8,11 +8,8 @@ import {
   type RecallBot,
   type RecallParticipant,
 } from "@/lib/recall";
-import { commitToKb, readKbFile, KB_REPO } from "@/lib/github-kb";
-import {
-  uploadLfsBlob,
-  lfsPointerText,
-} from "@/lib/github-lfs";
+import { commitToKb, readKbFile, KB_REPO, type CommitFile } from "@/lib/github-kb";
+import { uploadLfsBlob, lfsPointerText } from "@/lib/github-lfs";
 
 export const maxDuration = 300;
 
@@ -28,11 +25,13 @@ export const maxDuration = 300;
 //
 // Unattributed meetings land under customer-kebab=`_unsorted`.
 //
-// Required env:
-//   RECALL_WEBHOOK_SECRET       — whsec_... from Recall dashboard
-//   RECALL_API_KEY              — used by lib/recall.ts to fetch bot details
-//   PRICING_LIBRARY_GITHUB_PAT  — write access to ReddySolutions/reddy-gtm + LFS
-//   HUBSPOT_API_KEY             — used by attributeCustomer()
+// Reconciliation model: each event ("bot.done", "recording.done",
+// "transcript.done") triggers a full reconcile() call. We re-fetch the
+// bot from Recall, see which artifacts are now ready vs already in the
+// KB, and commit whatever's new — plus a merged meta.json that
+// preserves existing fields. This is idempotent (safe to re-run) and
+// resilient to events arriving in any order or missing entirely (e.g.,
+// transcript.done not firing for streaming providers).
 
 export async function POST(req: NextRequest) {
   const secret = process.env.RECALL_WEBHOOK_SECRET;
@@ -76,30 +75,125 @@ export async function POST(req: NextRequest) {
     const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
     if (!pat) throw new Error("PRICING_LIBRARY_GITHUB_PAT not set");
 
-    if (eventName === "transcript.done") {
-      await handleTranscriptDone(botId, pat);
-    } else if (eventName === "recording.done") {
-      await handleRecordingDone(botId, pat);
-    } else if (eventName === "bot.done") {
-      // Make sure meta.json exists with whatever metadata we have.
-      // Transcript + video may not be ready yet.
-      await handleMetadataOnly(botId, pat);
-    } else if (eventName === "transcript.failed" || eventName === "recording.failed") {
+    if (eventName === "transcript.failed" || eventName === "recording.failed") {
       console.warn(`[recall webhook] ${eventName} bot=${botId}`);
+      return NextResponse.json({ ok: true });
     }
+    // For bot.done / recording.done / transcript.done — same reconcile.
+    await reconcile(botId, pat, eventName);
   } catch (err) {
     console.error(
       `[recall webhook] handler ${eventName} bot=${botId} failed: ${err instanceof Error ? err.stack || err.message : String(err)}`,
     );
-    // 200 to stop Svix retries on programmer errors; transient errors will
-    // be re-driven by subsequent events for the same bot anyway.
+    // 200 so Svix doesn't keep retrying programmer errors.
     return NextResponse.json({ ok: false, error: String(err) });
   }
 
   return NextResponse.json({ ok: true });
 }
 
+// ────────── Reconcile ──────────
+
+type ExistingMeta = {
+  recall_bot_id?: string;
+  title?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  platform?: string | null;
+  meeting_url?: string | null;
+  attendees?: Array<{ name: string | null; email: string | null; is_host: boolean | null }>;
+  attribution?: {
+    customer_slug?: string;
+    confidence?: string;
+    hubspot_company_id?: string | null;
+    company_name?: string | null;
+    matched_domains?: string[];
+  };
+  video?: { oid: string; size: number } | null;
+  has_transcript?: boolean;
+  schema_version?: number;
+};
+
+async function reconcile(botId: string, pat: string, eventName: string): Promise<void> {
+  const bot = await fetchBot(botId);
+  const { slug, attribution } = await customerSlugForBot(bot);
+  const dir = `corpora/success/customers/${slug}/meetings/${botId}`;
+
+  // Read existing meta (if any) so we can preserve fields populated by
+  // earlier events.
+  const existingMetaText = await readKbFile(pat, `${dir}/meta.json`);
+  const existing: ExistingMeta = existingMetaText ? safeJson(existingMetaText) : {};
+
+  const filesToCommit: CommitFile[] = [];
+  const reasons: string[] = [];
+
+  // Video — commit if Recall has it ready and we haven't already.
+  let videoOid = existing.video?.oid ?? null;
+  let videoSize = existing.video?.size ?? null;
+  const videoStatus = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.status?.code;
+  const videoUrl = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.data?.download_url;
+  if (videoStatus === "done" && videoUrl && !existing.video) {
+    const dl = await fetch(videoUrl);
+    if (!dl.ok) throw new Error(`recall video download ${botId} -> ${dl.status}`);
+    const bytes = Buffer.from(await dl.arrayBuffer());
+    console.log(`[recall webhook] downloaded video bot=${botId} bytes=${bytes.length}`);
+    const { oid, size } = await uploadLfsBlob(pat, KB_REPO, bytes);
+    videoOid = oid;
+    videoSize = size;
+    filesToCommit.push({ path: `${dir}/video.mp4`, utf8: lfsPointerText(oid, size) });
+    reasons.push("video");
+  }
+
+  // Transcript — commit if Recall has it ready and we haven't already.
+  let hasTranscript = !!existing.has_transcript;
+  const transcriptStatus = bot.recordings?.[0]?.media_shortcuts?.transcript?.status?.code;
+  const transcriptUrl = bot.recordings?.[0]?.media_shortcuts?.transcript?.data?.download_url;
+  if (transcriptStatus === "done" && transcriptUrl && !existing.has_transcript) {
+    const { segments } = await fetchTranscript(botId);
+    const transcriptText = transcriptToText(segments);
+    filesToCommit.push({ path: `${dir}/transcript.txt`, utf8: transcriptText });
+    hasTranscript = true;
+    reasons.push(`transcript (${transcriptText.length} chars)`);
+  }
+
+  // Always rewrite meta.json with the merged view (cheap; tree commits
+  // dedupe identical content via blob SHA).
+  const metaText = mergedMetaJson({
+    bot,
+    slug,
+    attribution,
+    videoOid,
+    videoSize,
+    hasTranscript,
+  });
+  if (metaText !== existingMetaText) {
+    filesToCommit.push({ path: `${dir}/meta.json`, utf8: metaText });
+  }
+
+  if (filesToCommit.length === 0) {
+    console.log(`[recall webhook] reconcile ${eventName} bot=${botId} slug=${slug}: nothing to commit`);
+    return;
+  }
+
+  await commitToKb({
+    pat,
+    message: `recall: ${reasons.length ? reasons.join(" + ") : "meta"} ${slug}/${botId}`,
+    files: filesToCommit,
+  });
+  console.log(
+    `[recall webhook] committed bot=${botId} slug=${slug} reasons=[${reasons.join(",")}] confidence=${attribution.confidence}`,
+  );
+}
+
 // ────────── Helpers ──────────
+
+function safeJson(s: string): ExistingMeta {
+  try {
+    return JSON.parse(s) as ExistingMeta;
+  } catch {
+    return {};
+  }
+}
 
 function kebabCase(s: string): string {
   return s
@@ -121,17 +215,13 @@ async function customerSlugForBot(bot: RecallBot): Promise<{
   return { slug: "_unsorted", attribution };
 }
 
-function meetingDir(slug: string, botId: string): string {
-  return `corpora/success/customers/${slug}/meetings/${botId}`;
-}
-
-function metaJson(opts: {
+function mergedMetaJson(opts: {
   bot: RecallBot;
   slug: string;
   attribution: Awaited<ReturnType<typeof attributeCustomer>>;
-  videoOid?: string | null;
-  videoSize?: number | null;
-  hasTranscript?: boolean;
+  videoOid: string | null;
+  videoSize: number | null;
+  hasTranscript: boolean;
 }): string {
   const { bot, slug, attribution, videoOid, videoSize, hasTranscript } = opts;
   const participants: RecallParticipant[] = bot.meeting_metadata?.participants ?? [];
@@ -161,98 +251,10 @@ function metaJson(opts: {
         matched_domains: attribution.matchedDomains,
       },
       video: videoOid && videoSize != null ? { oid: videoOid, size: videoSize } : null,
-      has_transcript: !!hasTranscript,
+      has_transcript: hasTranscript,
       schema_version: 1,
     },
     null,
     2,
   ) + "\n";
-}
-
-async function handleMetadataOnly(botId: string, pat: string) {
-  const bot = await fetchBot(botId);
-  const { slug, attribution } = await customerSlugForBot(bot);
-
-  // If we already wrote meta for this bot, leave it alone (transcript/video
-  // handlers will overwrite with fuller data).
-  const existing = await readKbFile(pat, `${meetingDir(slug, botId)}/meta.json`);
-  if (existing) {
-    console.log(`[recall webhook] bot.done for ${botId}: meta already present`);
-    return;
-  }
-
-  await commitToKb({
-    pat,
-    message: `recall: meta for ${slug}/${botId}`,
-    files: [
-      {
-        path: `${meetingDir(slug, botId)}/meta.json`,
-        utf8: metaJson({ bot, slug, attribution }),
-      },
-    ],
-  });
-}
-
-async function handleTranscriptDone(botId: string, pat: string) {
-  const bot = await fetchBot(botId);
-  const { slug, attribution } = await customerSlugForBot(bot);
-
-  const { segments } = await fetchTranscript(botId);
-  const transcriptText = transcriptToText(segments);
-
-  await commitToKb({
-    pat,
-    message: `recall: transcript ${slug}/${botId}`,
-    files: [
-      {
-        path: `${meetingDir(slug, botId)}/transcript.txt`,
-        utf8: transcriptText,
-      },
-      {
-        path: `${meetingDir(slug, botId)}/meta.json`,
-        utf8: metaJson({ bot, slug, attribution, hasTranscript: true }),
-      },
-    ],
-  });
-  console.log(
-    `[recall webhook] persisted transcript bot=${botId} slug=${slug} chars=${transcriptText.length} confidence=${attribution.confidence}`,
-  );
-}
-
-async function handleRecordingDone(botId: string, pat: string) {
-  const bot = await fetchBot(botId);
-  const { slug, attribution } = await customerSlugForBot(bot);
-
-  const videoUrl = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.data?.download_url;
-  if (!videoUrl) {
-    console.warn(`[recall webhook] recording.done bot=${botId} but no video_mixed download_url`);
-    return;
-  }
-
-  // Pull the video bytes from Recall (signed S3 URL, fast).
-  const dl = await fetch(videoUrl);
-  if (!dl.ok) {
-    throw new Error(`recall video download ${botId} -> ${dl.status}`);
-  }
-  const bytes = Buffer.from(await dl.arrayBuffer());
-  console.log(`[recall webhook] downloaded recall video bot=${botId} bytes=${bytes.length}`);
-
-  // Upload to GitHub LFS first; the pointer file we commit references it.
-  const { oid, size } = await uploadLfsBlob(pat, KB_REPO, bytes);
-
-  await commitToKb({
-    pat,
-    message: `recall: video ${slug}/${botId}`,
-    files: [
-      {
-        path: `${meetingDir(slug, botId)}/video.mp4`,
-        utf8: lfsPointerText(oid, size),
-      },
-      {
-        path: `${meetingDir(slug, botId)}/meta.json`,
-        utf8: metaJson({ bot, slug, attribution, videoOid: oid, videoSize: size }),
-      },
-    ],
-  });
-  console.log(`[recall webhook] persisted video bot=${botId} oid=${oid.slice(0, 12)} size=${size}`);
 }
