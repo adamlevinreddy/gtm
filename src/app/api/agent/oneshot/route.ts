@@ -5,7 +5,7 @@ import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
 import { recentMeetingIndex, formatMeetingIndex } from "@/lib/recall-index";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
 
@@ -15,12 +15,22 @@ export const maxDuration = 800;
 // {answer, references} to `mcp:result:{requestId}`. We poll that key
 // until it's set (or we time out), then return.
 //
+// Sandbox is persistent + per-user (not per-request) so subsequent
+// MCP calls from the same teammate skip the cold-start tax (clone +
+// npm install). First call: ~60-90s. Warm calls: ~10-30s.
+//
 // Auth: requires `x-reddy-internal: $MCP_INTERNAL_SECRET`. Only the
 // /mcp endpoint (running in the same Vercel project) calls this.
 
-const POLL_INTERVAL_MS = 1500;
-const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 min, matches sandbox limits
-const SANDBOX_TIMEOUT_MS = 10 * 60 * 1000;
+const POLL_INTERVAL_MS = 1000;
+const POLL_TIMEOUT_MS = 4 * 60 * 1000; // stay under Claude Desktop's MCP timeout
+const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 min idle → auto-snapshot
+const SNAPSHOT_EXPIRATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function sandboxNameForEmail(email: string): string {
+  const hash = createHash("sha256").update(email.toLowerCase()).digest("hex").slice(0, 12);
+  return `reddy-gtm-mcp-${hash}`;
+}
 
 type OneshotRequest = {
   question: string;
@@ -54,7 +64,7 @@ export async function POST(req: NextRequest) {
   }
 
   const requestId = randomUUID();
-  const sandboxName = `reddy-gtm-mcp-${requestId.slice(0, 8)}`;
+  const sandboxName = sandboxNameForEmail(userEmail);
   const resultKey = `mcp:result:${requestId}`;
 
   try {
@@ -83,7 +93,14 @@ export async function POST(req: NextRequest) {
     let kbIndex = "(meeting index fetch skipped)";
     if (process.env.PRICING_LIBRARY_GITHUB_PAT) {
       try {
-        const meetings = await recentMeetingIndex(process.env.PRICING_LIBRARY_GITHUB_PAT, 7, 25);
+        const videoSecret = process.env.RECALL_VIDEO_FETCH_SECRET;
+        const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+        const meetings = await recentMeetingIndex(
+          process.env.PRICING_LIBRARY_GITHUB_PAT,
+          7,
+          25,
+          videoSecret ? { baseUrl, secret: videoSecret, ttlSeconds: 86400 } : undefined,
+        );
         kbIndex = formatMeetingIndex(meetings);
       } catch (err) {
         console.warn(`[agent/oneshot] kb index fetch failed: ${err instanceof Error ? err.message : err}`);
@@ -120,13 +137,25 @@ export async function POST(req: NextRequest) {
 
     const turnPayload = { turnNumber: 1, receivedAt: new Date().toISOString(), userText, slackUserEmail: userEmail, connectedToolkits };
 
-    const sandbox = await Sandbox.create({
-      name: sandboxName,
-      resources: { vcpus: 4 },
-      timeout: SANDBOX_TIMEOUT_MS,
-      runtime: "node22",
-      persistent: false, // one-shot — no need to keep around
-    });
+    // Reuse this teammate's persistent sandbox if one exists (warm =
+    // ~10-30s per call). Cold start happens once per email per snapshot
+    // expiry window.
+    let sandbox: Sandbox;
+    try {
+      sandbox = await Sandbox.get({ name: sandboxName, resume: true });
+      console.log(`[agent/oneshot] resumed sandbox for ${userEmail}`);
+    } catch {
+      sandbox = await Sandbox.create({
+        name: sandboxName,
+        resources: { vcpus: 4 },
+        timeout: SANDBOX_TIMEOUT_MS,
+        runtime: "node22",
+        persistent: true,
+        snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+      });
+      console.log(`[agent/oneshot] created sandbox for ${userEmail}`);
+    }
+    await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
 
     await sandbox.writeFiles([
       { path: "inbox/turn-1.json", content: Buffer.from(JSON.stringify(turnPayload, null, 2)) },
@@ -174,8 +203,8 @@ export async function POST(req: NextRequest) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
 
-    // Best-effort cleanup: stop the sandbox so we don't leak compute.
-    sandbox.stop().catch(() => {});
+    // No sandbox.stop() — it's persistent + per-user, kept warm for
+    // subsequent MCP calls. Idle 30 min → auto-snapshot.
 
     if (!result) {
       return NextResponse.json(
