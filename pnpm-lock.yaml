@@ -10,16 +10,16 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.113
-        version: 0.2.113(zod@4.3.6)
+        version: 0.2.113(zod@3.24.4)
       '@anthropic-ai/sdk':
         specifier: ^0.80.0
-        version: 0.80.0(zod@4.3.6)
+        version: 0.80.0(zod@3.24.4)
       '@composio/core':
         specifier: ^0.6.10
-        version: 0.6.10(ws@8.20.0)(zod@4.3.6)
+        version: 0.6.10(ws@8.20.0)(zod@3.24.4)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(zod@4.3.6)
+        version: 1.29.0(zod@3.24.4)
       '@octokit/rest':
         specifier: ^22.0.1
         version: 22.0.1
@@ -65,6 +65,9 @@ importers:
       xlsx:
         specifier: ^0.18.5
         version: 0.18.5
+      zod:
+        specifier: ^3.24.4
+        version: 3.24.4
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4
@@ -3690,8 +3693,8 @@ packages:
   zod@3.24.4:
     resolution: {integrity: sha512-OdqJE9UDRPwWsrHjLN2F8bPxvwJBK22EHLWtanu0LSYr5YqzsaaW3RMgmjwr8Rypg5k+meEJdSPXJZXE/yqOMg==}
 
-  zod@4.3.6:
-    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
 
@@ -3721,11 +3724,11 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.2.113':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.2.113(zod@4.3.6)':
+  '@anthropic-ai/claude-agent-sdk@0.2.113(zod@3.24.4)':
     dependencies:
-      '@anthropic-ai/sdk': 0.81.0(zod@4.3.6)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
-      zod: 4.3.6
+      '@anthropic-ai/sdk': 0.81.0(zod@3.24.4)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@3.24.4)
+      zod: 3.24.4
     optionalDependencies:
       '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.2.113
       '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.2.113
@@ -3739,17 +3742,17 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@anthropic-ai/sdk@0.80.0(zod@4.3.6)':
+  '@anthropic-ai/sdk@0.80.0(zod@3.24.4)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 4.3.6
+      zod: 3.24.4
 
-  '@anthropic-ai/sdk@0.81.0(zod@4.3.6)':
+  '@anthropic-ai/sdk@0.81.0(zod@3.24.4)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 4.3.6
+      zod: 3.24.4
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -3855,23 +3858,23 @@ snapshots:
 
   '@composio/client@0.1.0-alpha.66': {}
 
-  '@composio/core@0.6.10(ws@8.20.0)(zod@4.3.6)':
+  '@composio/core@0.6.10(ws@8.20.0)(zod@3.24.4)':
     dependencies:
       '@composio/client': 0.1.0-alpha.66
-      '@composio/json-schema-to-zod': 0.1.20(zod@4.3.6)
+      '@composio/json-schema-to-zod': 0.1.20(zod@3.24.4)
       '@types/json-schema': 7.0.15
       chalk: 4.1.2
-      openai: 6.34.0(ws@8.20.0)(zod@4.3.6)
+      openai: 6.34.0(ws@8.20.0)(zod@3.24.4)
       pusher-js: 8.5.0
       semver: 7.7.4
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.2(zod@4.3.6)
+      zod: 3.24.4
+      zod-to-json-schema: 3.25.2(zod@3.24.4)
     transitivePeerDependencies:
       - ws
 
-  '@composio/json-schema-to-zod@0.1.20(zod@4.3.6)':
+  '@composio/json-schema-to-zod@0.1.20(zod@3.24.4)':
     dependencies:
-      zod: 4.3.6
+      zod: 3.24.4
 
   '@drizzle-team/brocli@0.10.2': {}
 
@@ -4300,7 +4303,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.29.0(zod@3.24.4)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.9)
       ajv: 8.18.0
@@ -4317,8 +4320,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.2(zod@4.3.6)
+      zod: 3.24.4
+      zod-to-json-schema: 3.25.2(zod@3.24.4)
     transitivePeerDependencies:
       - supports-color
 
@@ -5608,8 +5611,8 @@ snapshots:
       '@babel/parser': 7.29.2
       eslint: 9.39.4(jiti@2.6.1)
       hermes-parser: 0.25.1
-      zod: 4.3.6
-      zod-validation-error: 4.0.2(zod@4.3.6)
+      zod: 3.25.76
+      zod-validation-error: 4.0.2(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
 
@@ -6497,10 +6500,10 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.34.0(ws@8.20.0)(zod@4.3.6):
+  openai@6.34.0(ws@8.20.0)(zod@3.24.4):
     optionalDependencies:
       ws: 8.20.0
-      zod: 4.3.6
+      zod: 3.24.4
 
   optionator@0.9.4:
     dependencies:
@@ -7273,14 +7276,14 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@4.3.6):
+  zod-to-json-schema@3.25.2(zod@3.24.4):
     dependencies:
-      zod: 4.3.6
+      zod: 3.24.4
 
-  zod-validation-error@4.0.2(zod@4.3.6):
+  zod-validation-error@4.0.2(zod@3.25.76):
     dependencies:
-      zod: 4.3.6
+      zod: 3.25.76
 
   zod@3.24.4: {}
 
-  zod@4.3.6: {}
+  zod@3.25.76: {}
