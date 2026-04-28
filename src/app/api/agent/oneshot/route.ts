@@ -188,6 +188,8 @@ export async function POST(req: NextRequest) {
         RECALL_API_KEY: process.env.RECALL_API_KEY ?? "",
         RECALL_REGION: process.env.RECALL_REGION ?? "us-west-2",
         RECALL_VIDEO_FETCH_SECRET: process.env.RECALL_VIDEO_FETCH_SECRET ?? "",
+        MUX_TOKEN_ID: process.env.MUX_TOKEN_ID ?? "",
+        MUX_TOKEN_SECRET: process.env.MUX_TOKEN_SECRET ?? "",
         POSTGRES_URL: process.env.POSTGRES_URL ?? "",
         POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
         REDDY_GTM_BASE_URL: process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app",
