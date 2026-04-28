@@ -133,6 +133,7 @@ export async function POST(req: NextRequest) {
       granolaMcp,
       isSharedChannel: false,
       mcpRequestId: requestId,
+      slackFiles: [],
     };
 
     const turnPayload = { turnNumber: 1, receivedAt: new Date().toISOString(), userText, slackUserEmail: userEmail, connectedToolkits };

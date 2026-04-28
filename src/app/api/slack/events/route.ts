@@ -227,6 +227,32 @@ export async function POST(req: NextRequest) {
         const threadTs: string = event.thread_ts || event.ts;
         await addReaction(channel, event.ts, "speech_balloon");
 
+        // Attached files: when a user @-mentions with an attachment Slack
+        // sometimes puts the file on the same message and sometimes on a
+        // sibling message in the same thread. If event.files is empty, fall
+        // back to conversations.history for the most recent message in the
+        // thread.
+        let attachedFiles = event.files;
+        if (!attachedFiles || attachedFiles.length === 0) {
+          try {
+            const msgResult = await getSlackClient().conversations.history({
+              channel, latest: event.ts, inclusive: true, limit: 1,
+            });
+            attachedFiles = msgResult.messages?.[0]?.files;
+          } catch { /* fall through */ }
+        }
+        type SlackFile = { id?: string; name?: string; mimetype?: string; size?: number; url_private?: string; url_private_download?: string };
+        const slackFiles = ((attachedFiles ?? []) as SlackFile[]).map((f) => ({
+          id: f.id,
+          name: f.name,
+          mimetype: f.mimetype,
+          size: f.size,
+          url: f.url_private_download || f.url_private,
+        }));
+        if (slackFiles.length > 0) {
+          console.log(`[slack] forwarding ${slackFiles.length} file(s) to agent: ${slackFiles.map((f) => f.name).join(", ")}`);
+        }
+
         const baseUrl = "https://gtm-jet.vercel.app";
         fetch(`${baseUrl}/api/agent`, {
           method: "POST",
@@ -236,6 +262,7 @@ export async function POST(req: NextRequest) {
             slackChannel: channel,
             slackThreadTs: threadTs,
             slackUser: event.user,
+            slackFiles,
           }),
         }).catch((err) => console.error(`[slack] Reddy-GTM agent fetch error: ${err}`));
         await new Promise((r) => setTimeout(r, 500));

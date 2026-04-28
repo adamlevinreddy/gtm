@@ -18,6 +18,11 @@ export type AgentMeta = {
   // upload_slack_pdf is rejected. End-of-run writes the buffered answer
   // to KV under `mcp:result:{requestId}` instead of posting to Slack.
   mcpRequestId: string | null;
+  // Files attached to the user's Slack message — downloaded into the
+  // sandbox at inbox/files/{name} before the agent runs. The user
+  // message gets a prefix listing the files + their paths so the agent
+  // knows they exist and can Read/Bash on them.
+  slackFiles: Array<{ id: string; name: string; mimetype: string; size: number; url: string }>;
 };
 
 const MAX_TURNS = 80;
@@ -345,7 +350,35 @@ async function main() {
   const mcpModeBlock = MCP_MODE
     ? \` [MODE: MCP one-shot — Claude Desktop/Code via the reddy-gtm MCP server, NOT Slack. Same answer-discipline as Slack (brief, cite precedent, link out instead of inlining raw artifacts). \\\`upload_slack_pdf\\\` errors here; for builds tell them to do it from Slack. Skip 🔒/save prompts. End the turn with one \\\`post_slack_message\\\`. CRITICAL FOR MEETING/TRANSCRIPT/RECORDING QUERIES: a kb meeting index is pre-injected at the top of this user message — it has bot_id, customer_slug, attendees, transcript/video flags, AND pre-minted \\\`video_url\\\` for every meeting that has a video. If the user asks for a video link, JUST RETURN THE \\\`video_url\\\` from the index — no need to curl \\\`/api/recall/video-link\\\`. If you do need to glob the kb for transcript content, use \\\`ls corpora/success/customers/*/meetings/*/transcript.txt\\\` (note the wildcard — \\\`_unsorted/\\\` is a real slug). Do NOT call Granola tools (\\\`mcp__composio__GRANOLA_*\\\`, \\\`list_meetings\\\`, etc.) for transcript queries unless the kb glob returns zero AND the index shows nothing.]\`
     : "";
-  const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}]\${mcpModeBlock} \${turn.userText}\`;
+
+  // Download any Slack-attached files into the sandbox so the agent can
+  // Read / Bash on them. Slack url_private_download requires the bot token
+  // in the Authorization header. Files land at inbox/files/{name}.
+  const downloadedFiles = [];
+  if (Array.isArray(META.slackFiles) && META.slackFiles.length > 0) {
+    mkdirSync("inbox/files", { recursive: true });
+    for (const f of META.slackFiles) {
+      const safeName = String(f.name || "upload").replace(/[\\\\/:*?"<>|]/g, "_").slice(0, 200);
+      const dst = \`inbox/files/\${safeName}\`;
+      const absDst = "/vercel/sandbox/" + dst;
+      try {
+        const res = await fetch(f.url, { headers: { Authorization: "Bearer " + SLACK_TOKEN } });
+        if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        await writeFile(dst, buf);
+        downloadedFiles.push({ ...f, path: absDst, downloaded_bytes: buf.length });
+        trace("file_download", { name: safeName, mimetype: f.mimetype, bytes: buf.length, path: absDst });
+      } catch (err) {
+        downloadedFiles.push({ ...f, path: null, error: err instanceof Error ? err.message : String(err) });
+        trace("file_download_error", { name: safeName, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  const filesBlock = downloadedFiles.length > 0
+    ? " [Attached files (downloaded from Slack into the sandbox):\\n" + downloadedFiles.map((f) => \`  • \${f.path || "(download failed)"} — \${f.name} (\${f.mimetype}, \${Math.round((f.size || 0)/1024)}KB)\`).join("\\n") + "\\nThe user shared these files with their message — read them to answer. Use \\\`Read\\\` for text/markdown, \\\`Bash\\\` (e.g., pdftotext, csvkit, openpyxl via python) for PDFs/spreadsheets, \\\`Read\\\` directly for images.]"
+    : "";
+
+  const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}]\${mcpModeBlock}\${filesBlock} \${turn.userText}\`;
 
   // If the user has connected Google via Composio, their per-user MCP URL
   // was generated service-side and passed through META. Register it

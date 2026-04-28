@@ -46,12 +46,19 @@ export function agentThreadKey(threadTs: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const { userText, slackChannel, slackThreadTs, slackUser } =
+  const { userText, slackChannel, slackThreadTs, slackUser, slackFiles } =
     (await req.json()) as {
       userText: string;
       slackChannel: string;
       slackThreadTs: string;
       slackUser?: string;
+      slackFiles?: Array<{
+        id?: string;
+        name?: string;
+        mimetype?: string;
+        size?: number;
+        url?: string;
+      }>;
     };
 
   const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -165,6 +172,13 @@ export async function POST(req: NextRequest) {
       granolaMcp,
       isSharedChannel,
       mcpRequestId: null,
+      slackFiles: (slackFiles ?? []).filter((f) => !!f.url).map((f) => ({
+        id: f.id ?? "",
+        name: f.name ?? "upload",
+        mimetype: f.mimetype ?? "application/octet-stream",
+        size: f.size ?? 0,
+        url: f.url ?? "",
+      })),
     };
 
     const turnPayload = {
