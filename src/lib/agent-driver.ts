@@ -37,6 +37,12 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
     -H "x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET" | jq -r '.url'
   \`\`\`
   Post the returned \`url\` to Slack. It carries a 24h–7d signed token; without it the player rejects the request.
+- **Realtime transcripts (in-progress meetings)**: for "what's being said in my call right now" / "summarize what Bob just said" mid-meeting questions, fetch the buffered transcript:
+  \`\`\`bash
+  curl -sS "$REDDY_GTM_BASE_URL/api/recall/realtime/<bot_id>?format=text&limit=200" \\
+    -H "x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET"
+  \`\`\`
+  Returns \`Speaker: line\` form. Empty if the bot hasn't transcribed anything yet (meeting not started, or no speech). Buffer expires 6h after last update. Use this when the meeting hasn't yet hit \`bot.done\` — for completed meetings, prefer the persisted \`transcript.txt\` in the kb.
 - Your working directory \`/vercel/sandbox/workspace\` is a clone of github.com/ReddySolutions/reddy-gtm — the Reddy GTM knowledge base. It contains:
   - \`CLAUDE.md\` — always-loaded orientation (skill menu, API surface, conventions).
   - \`.claude/skills/\` — your domain skills: \`pricing\`, \`decks\`, \`legal\`, \`security\`, \`rfps\`, \`marketing\`, \`react-pdf\`. Read each SKILL.md to decide which applies to the current turn.

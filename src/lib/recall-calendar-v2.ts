@@ -28,30 +28,45 @@ export const GOOGLE_SCOPES = [
 ];
 
 // Bot config applied to every meeting we record — same shape we see on
-// existing V1-scheduled bots (deepgram nova-3, speaker view, etc.).
-const DEFAULT_BOT_CONFIG = {
-  bot_name: "Reddy Notetaker",
-  recording_config: {
-    transcript: {
-      provider: {
-        deepgram_streaming: {
-          model: "nova-3",
-          language: "en",
-          punctuate: true,
-          diarize: true,
-          smart_format: true,
+// existing V1-scheduled bots (deepgram nova-3, speaker view, etc.) plus
+// realtime_endpoints so we get per-utterance webhooks during the call.
+function buildDefaultBotConfig() {
+  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const realtimeToken = process.env.RECALL_REALTIME_WEBHOOK_TOKEN;
+  const realtimeEndpoints = realtimeToken
+    ? [
+        {
+          type: "webhook" as const,
+          url: `${baseUrl}/api/webhooks/recall/realtime?token=${encodeURIComponent(realtimeToken)}`,
+          events: ["transcript.data"],
+        },
+      ]
+    : [];
+  return {
+    bot_name: "Reddy Notetaker",
+    recording_config: {
+      transcript: {
+        provider: {
+          deepgram_streaming: {
+            model: "nova-3",
+            language: "en",
+            punctuate: true,
+            diarize: true,
+            smart_format: true,
+          },
         },
       },
+      video_mixed_layout: "speaker_view",
+      video_mixed_mp4: {},
+      participant_events: {},
+      meeting_metadata: {},
+      video_mixed_participant_video_when_screenshare: "overlap",
+      start_recording_on: "participant_join",
+      retention: { type: "forever" },
+      realtime_endpoints: realtimeEndpoints,
     },
-    video_mixed_layout: "speaker_view",
-    video_mixed_mp4: {},
-    participant_events: {},
-    meeting_metadata: {},
-    video_mixed_participant_video_when_screenshare: "overlap",
-    start_recording_on: "participant_join",
-    retention: { type: "forever" },
-  },
-} as const;
+  };
+}
 
 function authHeader(): string {
   const key = process.env.RECALL_API_KEY?.trim();
@@ -245,7 +260,7 @@ export async function scheduleBotForEvent(opts: {
     },
     body: JSON.stringify({
       deduplication_key: opts.deduplicationKey,
-      bot_config: DEFAULT_BOT_CONFIG,
+      bot_config: buildDefaultBotConfig(),
     }),
   });
   if (!res.ok) {
