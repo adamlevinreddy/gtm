@@ -53,12 +53,32 @@ type RealtimePayload = {
   };
 };
 
+// Catch any unexpected method probes (Recall might HEAD/GET to validate)
+// — log them and reply 200 instead of 405 in case the validator is strict.
+export async function GET(req: NextRequest) {
+  console.log(`[realtime] GET probe path=${req.nextUrl.pathname} qs=${req.nextUrl.search.slice(0, 80)}`);
+  return NextResponse.json({ ok: true, hint: "POST events here" });
+}
+export async function HEAD(req: NextRequest) {
+  console.log(`[realtime] HEAD probe path=${req.nextUrl.pathname}`);
+  return new NextResponse(null, { status: 200 });
+}
+
 export async function POST(req: NextRequest) {
+  // Aggressive entry-point log — we want to confirm Recall is even
+  // hitting us. Logs every inbound request including auth misses.
+  console.log(
+    `[realtime] ENTRY method=POST path=${req.nextUrl.pathname} ` +
+      `qs=${req.nextUrl.search.slice(0, 80)} ` +
+      `ua=${(req.headers.get("user-agent") ?? "").slice(0, 60)} ` +
+      `ct=${req.headers.get("content-type") ?? "?"}`,
+  );
   const token = process.env.RECALL_REALTIME_WEBHOOK_TOKEN;
   if (!token) {
     return NextResponse.json({ ok: false, error: "server misconfigured" }, { status: 500 });
   }
   if (req.nextUrl.searchParams.get("token") !== token) {
+    console.warn(`[realtime] unauthorized request — token mismatch`);
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
