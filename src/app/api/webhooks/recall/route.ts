@@ -10,6 +10,7 @@ import {
 } from "@/lib/recall";
 import { commitToKb, readKbFile, KB_REPO, type CommitFile } from "@/lib/github-kb";
 import { uploadLfsBlob, lfsPointerText } from "@/lib/github-lfs";
+import { assetCreateFromUrl, waitForAssetReady } from "@/lib/mux";
 
 export const maxDuration = 300;
 
@@ -110,6 +111,7 @@ type ExistingMeta = {
     matched_domains?: string[];
   };
   video?: { oid: string; size: number } | null;
+  mux?: { asset_id: string; playback_id: string } | null;
   has_transcript?: boolean;
   schema_version?: number;
 };
@@ -128,20 +130,55 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   const reasons: string[] = [];
 
   // Video — commit if Recall has it ready and we haven't already.
+  // Two destinations: LFS (kept as durable backup) + Mux (the playback
+  // surface we share into Slack as a signed URL). Mux pulls server-side
+  // from the same Recall download URL we already used for LFS — no need
+  // to re-upload bytes. Both writes are idempotent: if either has run
+  // before (existing.video / existing.mux), we skip that side.
   let videoOid = existing.video?.oid ?? null;
   let videoSize = existing.video?.size ?? null;
+  let muxAssetId = existing.mux?.asset_id ?? null;
+  let muxPlaybackId = existing.mux?.playback_id ?? null;
   const videoStatus = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.status?.code;
   const videoUrl = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.data?.download_url;
-  if (videoStatus === "done" && videoUrl && !existing.video) {
-    const dl = await fetch(videoUrl);
-    if (!dl.ok) throw new Error(`recall video download ${botId} -> ${dl.status}`);
-    const bytes = Buffer.from(await dl.arrayBuffer());
-    console.log(`[recall webhook] downloaded video bot=${botId} bytes=${bytes.length}`);
-    const { oid, size } = await uploadLfsBlob(pat, KB_REPO, bytes);
-    videoOid = oid;
-    videoSize = size;
-    filesToCommit.push({ path: `${dir}/video.mp4`, utf8: lfsPointerText(oid, size) });
-    reasons.push("video");
+  if (videoStatus === "done" && videoUrl) {
+    if (!existing.video) {
+      const dl = await fetch(videoUrl);
+      if (!dl.ok) throw new Error(`recall video download ${botId} -> ${dl.status}`);
+      const bytes = Buffer.from(await dl.arrayBuffer());
+      console.log(`[recall webhook] downloaded video bot=${botId} bytes=${bytes.length}`);
+      const { oid, size } = await uploadLfsBlob(pat, KB_REPO, bytes);
+      videoOid = oid;
+      videoSize = size;
+      filesToCommit.push({ path: `${dir}/video.mp4`, utf8: lfsPointerText(oid, size) });
+      reasons.push("video");
+    }
+    if (!existing.mux && process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET) {
+      try {
+        const created = await assetCreateFromUrl({
+          url: videoUrl,
+          passthrough: `${slug}/${botId}`,
+        });
+        const ready = await waitForAssetReady(created.id);
+        const playbackId = ready.playback_ids?.find((p) => p.policy === "signed")?.id
+          ?? ready.playback_ids?.[0]?.id
+          ?? null;
+        if (playbackId) {
+          muxAssetId = ready.id;
+          muxPlaybackId = playbackId;
+          reasons.push("mux");
+          console.log(`[recall webhook] mux ingest bot=${botId} asset=${ready.id} playback=${playbackId}`);
+        } else {
+          console.warn(`[recall webhook] mux ingest bot=${botId} ready but no playback_id`);
+        }
+      } catch (muxErr) {
+        // Don't fail the whole reconcile if Mux ingest is flaky — LFS is
+        // still the source of truth. Backfill can retry.
+        console.warn(
+          `[recall webhook] mux ingest failed bot=${botId}: ${muxErr instanceof Error ? muxErr.message : muxErr}`,
+        );
+      }
+    }
   }
 
   // Transcript — commit if Recall has it ready and we haven't already.
@@ -164,6 +201,8 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
     attribution,
     videoOid,
     videoSize,
+    muxAssetId,
+    muxPlaybackId,
     hasTranscript,
   });
   if (metaText !== existingMetaText) {
@@ -221,9 +260,11 @@ function mergedMetaJson(opts: {
   attribution: Awaited<ReturnType<typeof attributeCustomer>>;
   videoOid: string | null;
   videoSize: number | null;
+  muxAssetId: string | null;
+  muxPlaybackId: string | null;
   hasTranscript: boolean;
 }): string {
-  const { bot, slug, attribution, videoOid, videoSize, hasTranscript } = opts;
+  const { bot, slug, attribution, videoOid, videoSize, muxAssetId, muxPlaybackId, hasTranscript } = opts;
   const participants: RecallParticipant[] = bot.meeting_metadata?.participants ?? [];
   const startedAt = bot.recordings?.[0]?.started_at ?? bot.join_at ?? null;
   const endedAt = bot.recordings?.[0]?.completed_at ?? null;
@@ -251,8 +292,9 @@ function mergedMetaJson(opts: {
         matched_domains: attribution.matchedDomains,
       },
       video: videoOid && videoSize != null ? { oid: videoOid, size: videoSize } : null,
+      mux: muxAssetId && muxPlaybackId ? { asset_id: muxAssetId, playback_id: muxPlaybackId } : null,
       has_transcript: hasTranscript,
-      schema_version: 1,
+      schema_version: 2,
     },
     null,
     2,

@@ -49,8 +49,10 @@ export async function answerCampaignQuestion(question: string): Promise<string> 
 
     const systemPrompt = `You are a marketing analytics assistant for Reddy, a B2B SaaS company. You have access to Supermetrics tools that can query marketing campaign data from connected ad platforms (Google Ads, LinkedIn Ads, Meta Ads, etc.) and analytics (Google Analytics 4).
 
+All Reddy users are on Pacific Time (America/Los_Angeles). When the user says "today", "yesterday", or "this week", interpret those boundaries as PT, not UTC. Pass PT-anchored date ranges to data_query (most ad platforms accept ISO dates and treat them as the platform's own timezone — do not pass raw UTC instants).
+
 When answering questions:
-1. First call get_today to know the current date for date ranges.
+1. First call get_today to know the current date for date ranges. Note the user is on Pacific Time — adjust if get_today returns a UTC date that crosses the PT day boundary.
 2. Use data_source_discovery to find relevant data sources.
 3. Use accounts_discovery to find connected accounts.
 4. Use field_discovery to find the right metrics and dimensions.

@@ -4,6 +4,7 @@
 // to Granola without acknowledging the kb has data.
 
 import { buildVideoLink } from "./video-link";
+import { signedPlayerUrl } from "./mux";
 
 const GH_API = "https://api.github.com";
 const REPO = { owner: "ReddySolutions", name: "reddy-gtm" };
@@ -18,6 +19,7 @@ type MetaJson = {
   attribution?: { customer_slug?: string; confidence?: string };
   has_transcript?: boolean;
   video?: { oid: string; size: number } | null;
+  mux?: { asset_id: string; playback_id: string } | null;
 };
 
 export type IndexedMeeting = {
@@ -27,11 +29,13 @@ export type IndexedMeeting = {
   attendees: Array<{ name: string | null; email: string | null }>;
   has_transcript: boolean;
   has_video: boolean;
+  has_mux: boolean;
   platform: string | null;
-  // Pre-minted clickable download URL when the meeting has a video.
-  // Saves the agent a round-trip — for "give me the video for X"
-  // queries, the agent just reads this URL from the prompt and
-  // returns it.
+  // Pre-minted clickable playback URL when the meeting has a video.
+  // Prefers a Mux signed player URL (no auth required, embeds Mux's
+  // web player) when meta.mux.playback_id is present; falls back to
+  // the LFS proxy URL with HMAC-signed token for legacy meetings.
+  // Saves the agent a round-trip.
   video_url?: string | null;
 };
 
@@ -82,6 +86,8 @@ export async function recentMeetingIndex(
   // us with too few entries).
   const candidates = metaPaths.slice(-Math.max(limit * 2, 30));
 
+  type IndexedRow = IndexedMeeting & { _muxPlaybackId: string | null };
+
   const fetched = await Promise.all(
     candidates.map(async (entry) => {
       const blob = await fetch(`${GH_API}/repos/${REPO.owner}/${REPO.name}/git/blobs/${entry.sha}`, {
@@ -103,21 +109,29 @@ export async function recentMeetingIndex(
       const customer_slug = segs[3] ?? "_unsorted";
       const bot_id = parsed.recall_bot_id ?? segs[5] ?? "";
 
-      return {
+      const row: IndexedRow = {
         customer_slug,
         bot_id,
         started_at: parsed.started_at ?? null,
         attendees: (parsed.attendees ?? []).map((a) => ({ name: a.name ?? null, email: a.email ?? null })),
         has_transcript: !!parsed.has_transcript,
         has_video: !!parsed.video,
+        has_mux: !!parsed.mux?.playback_id,
         platform: parsed.platform ?? null,
-      } as IndexedMeeting;
+        // Stash the Mux playback id on the row so we can mint a signed
+        // URL below without re-reading meta.json.
+        _muxPlaybackId: parsed.mux?.playback_id ?? null,
+      };
+      return row;
     }),
   );
 
-  const cutoff = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+  // Cutoff anchored to PT midnight, sinceDays back. Users are all on
+  // Pacific time — a UTC-anchored cutoff at 11pm PT silently rolls into
+  // the next day and excludes meetings from the start of the user's day.
+  const cutoff = ptMidnightDaysAgo(sinceDays);
   const filtered = fetched
-    .filter((m): m is IndexedMeeting => !!m && !!m.started_at)
+    .filter((m): m is IndexedRow => !!m && !!m.started_at)
     .filter((m) => {
       const t = Date.parse(m.started_at as string);
       return Number.isFinite(t) && t >= cutoff;
@@ -126,20 +140,35 @@ export async function recentMeetingIndex(
     .slice(0, limit);
 
   if (videoLinkOpts) {
+    const ttl = videoLinkOpts.ttlSeconds ?? 7 * 86400;
+    const muxConfigured = !!process.env.MUX_SIGNING_KEY_ID && !!process.env.MUX_SIGNING_KEY_PRIVATE;
     for (const m of filtered) {
-      if (m.has_video && m.bot_id) {
+      if (!m.bot_id) continue;
+      if (m._muxPlaybackId && muxConfigured) {
+        try {
+          m.video_url = signedPlayerUrl(m._muxPlaybackId, ttl);
+        } catch {
+          // Fall through to LFS proxy if signing fails for any reason.
+        }
+      }
+      if (!m.video_url && m.has_video) {
         m.video_url = buildVideoLink({
           baseUrl: videoLinkOpts.baseUrl,
           botId: m.bot_id,
           customer: m.customer_slug,
           secret: videoLinkOpts.secret,
-          ttlSeconds: videoLinkOpts.ttlSeconds ?? 3600,
+          ttlSeconds: ttl,
         });
       }
     }
   }
 
-  return filtered;
+  // Drop the internal _muxPlaybackId stash before returning.
+  return filtered.map((m) => {
+    const { _muxPlaybackId: _drop, ...rest } = m;
+    void _drop;
+    return rest;
+  });
 }
 
 export function formatMeetingIndex(meetings: IndexedMeeting[]): string {
@@ -154,13 +183,75 @@ export function formatMeetingIndex(meetings: IndexedMeeting[]): string {
     const flags: string[] = [];
     if (m.has_transcript) flags.push("transcript");
     if (m.has_video) flags.push("video");
-    let line = `- ${m.started_at} ${m.platform ?? ""} ${m.customer_slug}/${m.bot_id} [${flags.join("+") || "metadata only"}] attendees: ${attLabel}`;
+    const startedPt = m.started_at ? formatPt(m.started_at) : "(no start)";
+    let line = `- ${startedPt} ${m.platform ?? ""} ${m.customer_slug}/${m.bot_id} [${flags.join("+") || "metadata only"}] attendees: ${attLabel}`;
     if (m.video_url) {
       line += `\n  video_url: ${m.video_url}`;
     }
     return line;
   });
   return lines.join("\n");
+}
+
+// Format a UTC ISO timestamp as Pacific local for display. Example:
+// "2026-04-27T17:00:23Z" → "2026-04-27 10:00 PT". The PT label intentionally
+// drops the PST/PDT distinction — agent and user only need the wall-clock
+// time, not the offset.
+function formatPt(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  const date = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+  const time = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+  return `${date} ${time} PT`;
+}
+
+// Returns epoch ms for "midnight PT, N days ago". Used so a "last 7 days"
+// query at 11pm PT still includes meetings from 7 calendar days back rather
+// than rolling forward into UTC tomorrow.
+function ptMidnightDaysAgo(daysAgo: number): number {
+  const now = new Date();
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now); // "YYYY-MM-DD" in PT
+  // Midnight PT = midnight America/Los_Angeles. We can't construct that
+  // directly from a Date, but we can ask Intl what "midnight PT today"
+  // looks like in UTC by computing the offset for the current instant.
+  const ptNow = new Date(`${ymd}T00:00:00Z`); // pretend midnight in UTC for the PT date
+  // Compute UTC offset for America/Los_Angeles right now (handles DST).
+  const offsetMin = ptOffsetMinutes(now);
+  const ptMidnightUtcMs = ptNow.getTime() + offsetMin * 60 * 1000;
+  return ptMidnightUtcMs - daysAgo * 24 * 60 * 60 * 1000;
+}
+
+function ptOffsetMinutes(d: Date): number {
+  // The offset for "America/Los_Angeles" relative to UTC, in minutes.
+  // PDT = +420 (UTC is 7h ahead), PST = +480 (UTC is 8h ahead).
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    timeZoneName: "shortOffset",
+  });
+  const parts = dtf.formatToParts(d);
+  const tzPart = parts.find((p) => p.type === "timeZoneName")?.value ?? "GMT-8";
+  // "GMT-7" / "GMT-8" → 420 / 480 (minutes Eastern of PT, i.e. UTC offset)
+  const m = tzPart.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+  if (!m) return 480;
+  const sign = m[1] === "-" ? 1 : -1;
+  const hours = Number.parseInt(m[2], 10);
+  const mins = Number.parseInt(m[3] ?? "0", 10);
+  return sign * (hours * 60 + mins);
 }
 
 function ghHeaders(pat: string) {

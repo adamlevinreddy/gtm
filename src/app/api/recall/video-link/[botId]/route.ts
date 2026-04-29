@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildVideoLink } from "@/lib/video-link";
+import { signedPlayerUrl } from "@/lib/mux";
+import { readKbFile, KB_REPO } from "@/lib/github-kb";
 
-// Mint a self-authenticating, time-limited download URL for a meeting
-// video. The agent calls this with the `x-reddy-secret` header (since
-// the secret already lives in its sandbox env) and posts the returned
-// `url` directly into Slack. Whoever clicks the link in Slack streams
-// the mp4 from us with proper headers — no auth needed at click time
-// because the URL itself carries an HMAC-signed token.
+// Mint a clickable, time-limited video link for a meeting. Whoever
+// clicks the link in Slack streams the video — no auth needed at click
+// time because the URL itself carries a signed token.
 //
-// Default TTL: 1 hour. Pass ?ttl=86400 for 24h, etc. Capped at 7 days.
+// Resolution order:
+//   1. Look up the meeting's meta.json for a `mux.playback_id`. If
+//      present, return a Mux signed player URL (HLS, adaptive bitrate,
+//      proper player UI). This is the path for all post-migration
+//      meetings.
+//   2. Otherwise (legacy meetings before Mux ingest), fall back to the
+//      LFS proxy URL — `/api/recall/video/{botId}?token=…`. Same TTL
+//      semantics; the proxy streams from GitHub LFS.
+//
+// Default TTL: 7 days. Pass ?ttl=NNN to override. Capped at 7 days.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: string }> }) {
   const { botId } = await ctx.params;
   const secret = process.env.RECALL_VIDEO_FETCH_SECRET;
@@ -25,13 +33,70 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
   const customer = req.nextUrl.searchParams.get("customer");
   const ttlRaw = req.nextUrl.searchParams.get("ttl");
   const ttlSeconds = Math.min(
-    Math.max(60, ttlRaw ? Number.parseInt(ttlRaw, 10) || 3600 : 3600),
+    Math.max(60, ttlRaw ? Number.parseInt(ttlRaw, 10) || 7 * 86400 : 7 * 86400),
     7 * 24 * 60 * 60,
   );
 
+  // Try Mux first.
+  const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
+  if (pat) {
+    const muxPlaybackId = await readMuxPlaybackId(pat, botId, customer);
+    if (muxPlaybackId && process.env.MUX_SIGNING_KEY_ID && process.env.MUX_SIGNING_KEY_PRIVATE) {
+      try {
+        const url = signedPlayerUrl(muxPlaybackId, ttlSeconds);
+        const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+        return NextResponse.json({ ok: true, url, expiresAt, ttlSeconds, source: "mux" });
+      } catch (err) {
+        console.warn(`[video-link] mux sign failed bot=${botId}: ${err instanceof Error ? err.message : err}`);
+        // fall through to LFS proxy
+      }
+    }
+  }
+
+  // Fallback: LFS proxy.
   const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
   const url = buildVideoLink({ baseUrl, botId, customer, secret, ttlSeconds });
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+  return NextResponse.json({ ok: true, url, expiresAt, ttlSeconds, source: "lfs-proxy" });
+}
 
-  return NextResponse.json({ ok: true, url, expiresAt, ttlSeconds });
+// Locate meta.json for a bot and pull the mux.playback_id, if present.
+async function readMuxPlaybackId(
+  pat: string,
+  botId: string,
+  customer: string | null,
+): Promise<string | null> {
+  // Fast path when caller passes the customer slug.
+  if (customer) {
+    const direct = await readKbFile(pat, `corpora/success/customers/${customer}/meetings/${botId}/meta.json`);
+    const id = parseMuxPlaybackId(direct);
+    if (id) return id;
+  }
+  // Search across customer slugs by bot ID.
+  const q = encodeURIComponent(
+    `repo:${KB_REPO.owner}/${KB_REPO.name} path:meetings/${botId} filename:meta.json`,
+  );
+  const res = await fetch(`https://api.github.com/search/code?q=${q}`, {
+    headers: {
+      Authorization: `Bearer ${pat}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { items?: Array<{ path: string }> };
+  const path = body.items?.[0]?.path;
+  if (!path) return null;
+  const text = await readKbFile(pat, path);
+  return parseMuxPlaybackId(text);
+}
+
+function parseMuxPlaybackId(text: string | null): string | null {
+  if (!text) return null;
+  try {
+    const meta = JSON.parse(text) as { mux?: { playback_id?: string } | null };
+    return meta.mux?.playback_id ?? null;
+  } catch {
+    return null;
+  }
 }
