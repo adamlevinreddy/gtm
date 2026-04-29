@@ -122,7 +122,7 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   // Pull participants from the artifact (the inline list is empty on
   // current Recall bots); pull title from the recordings[0] location.
   const liveParticipants = await fetchParticipants(bot);
-  const liveTitle = bot.recordings?.[0]?.meeting_metadata?.data?.title ?? bot.bot_name ?? null;
+  const liveTitle = bot.recordings?.[0]?.media_shortcuts?.meeting_metadata?.data?.title ?? bot.bot_name ?? null;
   const { slug, attribution } = await customerSlugForBot(bot, liveParticipants, liveTitle);
   const dir = `corpora/success/customers/${slug}/meetings/${botId}`;
 

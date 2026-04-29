@@ -50,15 +50,15 @@ export type RecallBot = {
       video_mixed?: RecallMediaShortcut;
       transcript?: RecallMediaShortcut;
       audio_mixed?: RecallMediaShortcut;
-    };
-    meeting_metadata?: {
-      data?: { title?: string };
-    };
-    participant_events?: {
-      data?: {
-        participants_download_url?: string;
-        speaker_timeline_download_url?: string;
-        participant_events_download_url?: string;
+      meeting_metadata?: {
+        data?: { title?: string };
+      };
+      participant_events?: {
+        data?: {
+          participants_download_url?: string;
+          speaker_timeline_download_url?: string;
+          participant_events_download_url?: string;
+        };
       };
     };
   }>;
@@ -177,7 +177,7 @@ export function transcriptToText(segments: RecallTranscriptSegment[]): string {
 // is best-effort and we don't want webhook handling to fail because
 // the artifact is unavailable.
 export async function fetchParticipants(bot: RecallBot): Promise<RecallParticipant[]> {
-  const url = bot.recordings?.[0]?.participant_events?.data?.participants_download_url;
+  const url = bot.recordings?.[0]?.media_shortcuts?.participant_events?.data?.participants_download_url;
   if (!url) return [];
   try {
     const res = await fetch(url, { headers: { Authorization: authHeader() } });
