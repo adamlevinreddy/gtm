@@ -38,6 +38,9 @@ export type RecallBot = {
   meeting_url?: { meeting_id?: string; platform?: string } | string;
   join_at?: string;
   status?: string;
+  // Top-level meeting_metadata is empty on current Recall bots — the
+  // real data lives under recordings[0].meeting_metadata.data.{title,...}
+  // and participants come from a separate artifact via participant_events.
   meeting_metadata?: { title?: string; participants?: RecallParticipant[] };
   recordings?: Array<{
     id?: string;
@@ -47,6 +50,16 @@ export type RecallBot = {
       video_mixed?: RecallMediaShortcut;
       transcript?: RecallMediaShortcut;
       audio_mixed?: RecallMediaShortcut;
+    };
+    meeting_metadata?: {
+      data?: { title?: string };
+    };
+    participant_events?: {
+      data?: {
+        participants_download_url?: string;
+        speaker_timeline_download_url?: string;
+        participant_events_download_url?: string;
+      };
     };
   }>;
 };
@@ -157,6 +170,36 @@ export function transcriptToText(segments: RecallTranscriptSegment[]): string {
     .join("\n");
 }
 
+// Fetch the participants artifact for a bot. Returns the raw list of
+// participants Recall observed during the meeting. Each entry has at
+// least `name` and (for calendar-scheduled bots with email matching
+// enabled) `email`. Returns empty array on any failure — attribution
+// is best-effort and we don't want webhook handling to fail because
+// the artifact is unavailable.
+export async function fetchParticipants(bot: RecallBot): Promise<RecallParticipant[]> {
+  const url = bot.recordings?.[0]?.participant_events?.data?.participants_download_url;
+  if (!url) return [];
+  try {
+    const res = await fetch(url, { headers: { Authorization: authHeader() } });
+    if (!res.ok) return [];
+    const arr = (await res.json()) as Array<{
+      id?: number;
+      name?: string;
+      email?: string | null;
+      is_host?: boolean;
+    }>;
+    if (!Array.isArray(arr)) return [];
+    return arr.map((p) => ({
+      id: p.id,
+      name: p.name ?? undefined,
+      email: p.email ?? undefined,
+      is_host: p.is_host ?? false,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // Fetch a fresh signed video download URL for a completed bot. Recall's
 // download URLs expire (~hours), so we never persist them — agent calls
 // this just-in-time when it needs to share a video.
@@ -239,6 +282,25 @@ function externalDomains(participants: RecallParticipant[]): string[] {
   return [...seen];
 }
 
+// Extract a probable customer name from a meeting title like
+// "Reddy & Luminare Health re-connect" → "Luminare Health".
+// Strips Reddy prefix/suffix, trims meeting-purpose words at the tail.
+// Returns null when the title is generic ("Reddy Notetaker") or empty.
+export function customerNameFromTitle(title: string | null | undefined): string | null {
+  if (!title) return null;
+  let t = title.trim();
+  // Generic Recall titles, no signal.
+  if (/^reddy notetaker$/i.test(t) || /^untitled/i.test(t)) return null;
+  // "Reddy & X" → "X"; "Reddy + X" → "X"; "Reddy <> X" → "X"
+  t = t.replace(/^reddy\s*[&+<>x×|/-]+\s*/i, "");
+  // "X & Reddy" / "X | Reddy" / "X - Reddy" → "X"
+  t = t.replace(/\s*[&+<>x×|/-]+\s*reddy\s*$/i, "");
+  // Drop trailing meeting-purpose words.
+  t = t.replace(/\s+(re-?connect|reconnect|sync|intro|introduction|kickoff|check\s*in|check-in|catchup|catch-up|meeting|chat|call|demo|standup|stand-up|review|discussion|q&a)$/i, "");
+  t = t.trim().replace(/[—–\-:]+$/g, "").trim();
+  return t.length >= 2 ? t : null;
+}
+
 // Resolve attendee email domains to a single HubSpot company. Strategy:
 // gather external domains (skip Reddy + free providers), search HubSpot
 // for each, and pick the company with the most attendee matches.
@@ -247,18 +309,37 @@ function externalDomains(participants: RecallParticipant[]): string[] {
 //   - high: exactly one external domain → exactly one HubSpot match
 //   - medium: one HubSpot company dominates among multiple matches
 //   - low: matches found but tied / weak
+//   - title: domains weren't available, customer name was extracted from
+//            the meeting title and matched a single HubSpot company
 //   - none: no domain matches at all
 //
 // Returns nullable accountId + the HubSpot company ID (caller decides
 // whether to upsert into accounts table).
 export async function attributeCustomer(
   participants: RecallParticipant[],
+  options: { titleHint?: string | null } = {},
 ): Promise<AttributionResult> {
+  const apiKey = process.env.HUBSPOT_API_KEY;
   const domains = externalDomains(participants);
   if (domains.length === 0) {
+    // No emails — try the title fallback before giving up.
+    if (apiKey && options.titleHint) {
+      const guess = customerNameFromTitle(options.titleHint);
+      if (guess) {
+        const byName = await hubspotCompanyByName(guess, apiKey);
+        if (byName) {
+          return {
+            accountId: null,
+            hubspotCompanyId: byName.id,
+            companyName: byName.name,
+            confidence: "low",
+            matchedDomains: [],
+          };
+        }
+      }
+    }
     return { accountId: null, hubspotCompanyId: null, companyName: null, confidence: "none", matchedDomains: [] };
   }
-  const apiKey = process.env.HUBSPOT_API_KEY;
   if (!apiKey) {
     return { accountId: null, hubspotCompanyId: null, companyName: null, confidence: "none", matchedDomains: domains };
   }
@@ -314,4 +395,34 @@ export async function attributeCustomer(
     confidence,
     matchedDomains: matched,
   };
+}
+
+async function hubspotCompanyByName(
+  name: string,
+  apiKey: string,
+): Promise<{ id: string; name: string } | null> {
+  try {
+    const res = await fetch("https://api.hubapi.com/crm/v3/objects/companies/search", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filterGroups: [
+          { filters: [{ propertyName: "name", operator: "CONTAINS_TOKEN", value: name }] },
+        ],
+        properties: ["name", "domain"],
+        limit: 2,
+      }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      results?: Array<{ id: string; properties: { name?: string } }>;
+    };
+    // Only accept when there's a single confident match — otherwise we
+    // risk attributing a meeting to the wrong company on a common name.
+    if (!body.results || body.results.length !== 1) return null;
+    const hit = body.results[0];
+    return { id: hit.id, name: hit.properties.name ?? name };
+  } catch {
+    return null;
+  }
 }

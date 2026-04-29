@@ -61,18 +61,31 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
 }
 
 // Locate meta.json for a bot and pull the mux.playback_id, if present.
+//
+// Resolution order:
+//   1. Customer hint (if caller passed `?customer=`) — direct read.
+//   2. _unsorted/ — most likely landing slug for unattributed meetings.
+//   3. GitHub code search across the kb (subject to indexing latency,
+//      so it may miss commits less than a few minutes old).
+//   4. Tree walk via the Git Trees API — guaranteed to find the file
+//      if it exists, but slower (single recursive list of the kb).
+//
+// The walk is the failsafe: it lets newly-committed meetings work
+// immediately, before code search has indexed them.
 async function readMuxPlaybackId(
   pat: string,
   botId: string,
   customer: string | null,
 ): Promise<string | null> {
-  // Fast path when caller passes the customer slug.
   if (customer) {
     const direct = await readKbFile(pat, `corpora/success/customers/${customer}/meetings/${botId}/meta.json`);
     const id = parseMuxPlaybackId(direct);
     if (id) return id;
   }
-  // Search across customer slugs by bot ID.
+  const unsorted = await readKbFile(pat, `corpora/success/customers/_unsorted/meetings/${botId}/meta.json`);
+  const fromUnsorted = parseMuxPlaybackId(unsorted);
+  if (fromUnsorted) return fromUnsorted;
+  // Code search.
   const q = encodeURIComponent(
     `repo:${KB_REPO.owner}/${KB_REPO.name} path:meetings/${botId} filename:meta.json`,
   );
@@ -83,11 +96,42 @@ async function readMuxPlaybackId(
       "X-GitHub-Api-Version": "2022-11-28",
     },
   });
-  if (!res.ok) return null;
-  const body = (await res.json()) as { items?: Array<{ path: string }> };
-  const path = body.items?.[0]?.path;
-  if (!path) return null;
-  const text = await readKbFile(pat, path);
+  if (res.ok) {
+    const body = (await res.json()) as { items?: Array<{ path: string }> };
+    const path = body.items?.[0]?.path;
+    if (path) {
+      const text = await readKbFile(pat, path);
+      const id = parseMuxPlaybackId(text);
+      if (id) return id;
+    }
+  }
+  // Failsafe: walk the kb tree for any meta.json under meetings/{botId}/
+  return readMuxPlaybackIdViaTreeWalk(pat, botId);
+}
+
+async function readMuxPlaybackIdViaTreeWalk(pat: string, botId: string): Promise<string | null> {
+  const ghHeaders = {
+    Authorization: `Bearer ${pat}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  const refRes = await fetch(`https://api.github.com/repos/${KB_REPO.owner}/${KB_REPO.name}/git/ref/heads/main`, { headers: ghHeaders });
+  if (!refRes.ok) return null;
+  const ref = (await refRes.json()) as { object: { sha: string } };
+  const commitRes = await fetch(`https://api.github.com/repos/${KB_REPO.owner}/${KB_REPO.name}/git/commits/${ref.object.sha}`, { headers: ghHeaders });
+  if (!commitRes.ok) return null;
+  const commit = (await commitRes.json()) as { tree: { sha: string } };
+  const treeRes = await fetch(
+    `https://api.github.com/repos/${KB_REPO.owner}/${KB_REPO.name}/git/trees/${commit.tree.sha}?recursive=1`,
+    { headers: ghHeaders },
+  );
+  if (!treeRes.ok) return null;
+  const tree = (await treeRes.json()) as { tree?: Array<{ path: string; type: string }> };
+  const match = (tree.tree ?? []).find(
+    (e) => e.type === "blob" && e.path.includes(`/meetings/${botId}/meta.json`),
+  );
+  if (!match) return null;
+  const text = await readKbFile(pat, match.path);
   return parseMuxPlaybackId(text);
 }
 

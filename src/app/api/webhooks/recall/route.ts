@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   attributeCustomer,
   fetchBot,
+  fetchParticipants,
   fetchTranscript,
   transcriptToText,
   verifyWebhookSignature,
@@ -118,7 +119,11 @@ type ExistingMeta = {
 
 async function reconcile(botId: string, pat: string, eventName: string): Promise<void> {
   const bot = await fetchBot(botId);
-  const { slug, attribution } = await customerSlugForBot(bot);
+  // Pull participants from the artifact (the inline list is empty on
+  // current Recall bots); pull title from the recordings[0] location.
+  const liveParticipants = await fetchParticipants(bot);
+  const liveTitle = bot.recordings?.[0]?.meeting_metadata?.data?.title ?? bot.bot_name ?? null;
+  const { slug, attribution } = await customerSlugForBot(bot, liveParticipants, liveTitle);
   const dir = `corpora/success/customers/${slug}/meetings/${botId}`;
 
   // Read existing meta (if any) so we can preserve fields populated by
@@ -204,6 +209,8 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
     muxAssetId,
     muxPlaybackId,
     hasTranscript,
+    liveParticipants,
+    liveTitle,
   });
   if (metaText !== existingMetaText) {
     filesToCommit.push({ path: `${dir}/meta.json`, utf8: metaText });
@@ -242,14 +249,27 @@ function kebabCase(s: string): string {
     .slice(0, 64) || "meeting";
 }
 
-async function customerSlugForBot(bot: RecallBot): Promise<{
+async function customerSlugForBot(
+  bot: RecallBot,
+  liveParticipants: RecallParticipant[],
+  liveTitle: string | null,
+): Promise<{
   slug: string;
   attribution: Awaited<ReturnType<typeof attributeCustomer>>;
 }> {
-  const participants = bot.meeting_metadata?.participants ?? [];
-  const attribution = await attributeCustomer(participants);
+  // Prefer the participants artifact (current Recall API path); fall
+  // back to the legacy inline list for any bots that still surface it.
+  const participants = liveParticipants.length > 0
+    ? liveParticipants
+    : (bot.meeting_metadata?.participants ?? []);
+  const attribution = await attributeCustomer(participants, { titleHint: liveTitle });
   if (attribution.confidence === "high" || attribution.confidence === "medium") {
     if (attribution.companyName) return { slug: kebabCase(attribution.companyName), attribution };
+  }
+  // Title-based fallback (confidence "low") still attributes — better
+  // than dumping every meeting into _unsorted/ when emails are missing.
+  if (attribution.confidence === "low" && attribution.companyName) {
+    return { slug: kebabCase(attribution.companyName), attribution };
   }
   return { slug: "_unsorted", attribution };
 }
@@ -263,9 +283,13 @@ function mergedMetaJson(opts: {
   muxAssetId: string | null;
   muxPlaybackId: string | null;
   hasTranscript: boolean;
+  liveParticipants: RecallParticipant[];
+  liveTitle: string | null;
 }): string {
-  const { bot, slug, attribution, videoOid, videoSize, muxAssetId, muxPlaybackId, hasTranscript } = opts;
-  const participants: RecallParticipant[] = bot.meeting_metadata?.participants ?? [];
+  const { bot, slug, attribution, videoOid, videoSize, muxAssetId, muxPlaybackId, hasTranscript, liveParticipants, liveTitle } = opts;
+  const participants = liveParticipants.length > 0
+    ? liveParticipants
+    : (bot.meeting_metadata?.participants ?? []);
   const startedAt = bot.recordings?.[0]?.started_at ?? bot.join_at ?? null;
   const endedAt = bot.recordings?.[0]?.completed_at ?? null;
   const platform = typeof bot.meeting_url === "object" ? bot.meeting_url?.platform ?? null : null;
@@ -274,7 +298,7 @@ function mergedMetaJson(opts: {
   return JSON.stringify(
     {
       recall_bot_id: bot.id,
-      title: bot.meeting_metadata?.title ?? bot.bot_name ?? "Untitled meeting",
+      title: liveTitle ?? bot.meeting_metadata?.title ?? bot.bot_name ?? "Untitled meeting",
       started_at: startedAt,
       ended_at: endedAt,
       platform,

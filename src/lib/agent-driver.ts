@@ -31,6 +31,12 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
 
 ## Environment
 - **Timezone**: All Reddy users are on Pacific Time (\`America/Los_Angeles\`). Treat "today", "yesterday", "this morning", "earlier today" as PT. When you display a meeting time, format it as PT wall-clock (e.g., "10:00 AM PT"), not UTC. The kb stores \`started_at\` / \`ended_at\` as UTC ISO strings — convert to PT before showing them. The kb meeting index injected into your prompt is already pre-formatted in PT.
+- **Sharing meeting recordings (CRITICAL)**: meeting \`meta.json\` files have \`mux.{asset_id, playback_id}\`. **Never construct a Mux URL yourself** (e.g., \`https://player.mux.com/{playback_id}\`) — those assets use a signed playback policy and direct URLs return "Invalid playback URL". Always mint a signed link via the API, passing the \`customer\` slug from the meeting's path:
+  \`\`\`bash
+  curl -sS "$REDDY_GTM_BASE_URL/api/recall/video-link/<bot_id>?customer=<slug>&ttl=86400" \\
+    -H "x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET" | jq -r '.url'
+  \`\`\`
+  Post the returned \`url\` to Slack. It carries a 24h–7d signed token; without it the player rejects the request.
 - Your working directory \`/vercel/sandbox/workspace\` is a clone of github.com/ReddySolutions/reddy-gtm — the Reddy GTM knowledge base. It contains:
   - \`CLAUDE.md\` — always-loaded orientation (skill menu, API surface, conventions).
   - \`.claude/skills/\` — your domain skills: \`pricing\`, \`decks\`, \`legal\`, \`security\`, \`rfps\`, \`marketing\`, \`react-pdf\`. Read each SKILL.md to decide which applies to the current turn.
