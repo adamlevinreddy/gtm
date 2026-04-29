@@ -42,7 +42,7 @@ function buildDefaultBotConfig() {
     ? [
         {
           type: "webhook" as const,
-          url: `${baseUrl}/api/webhooks/recall/realtime?token=${encodeURIComponent(realtimeToken)}`,
+          url: `${baseUrl}/api/recall/rt/ingest?token=${encodeURIComponent(realtimeToken)}`,
           events: ["transcript.data", "transcript.partial_data"],
         },
       ]
