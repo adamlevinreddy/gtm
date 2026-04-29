@@ -145,16 +145,20 @@ export function signedPlaybackUrl(playbackId: string, ttlSeconds?: number): stri
 //
 // IMPORTANT: signed-policy assets need a separate JWT for each resource
 // the player loads (video stream, thumbnail poster, storyboard scrub-
-// bar). If we only pass `token` (video), the player still fetches the
-// thumbnail under aud=t and the storyboard under aud=s; both 403, and
-// the player surfaces this as "Invalid playback URL" instead of just
-// hiding the broken bits. So we mint and pass all three.
+// bar). The query-param names player.mux.com actually forwards into
+// the underlying <mux-player> element are:
+//   - playback-token   (video — aud=v)
+//   - thumbnail-token  (poster + scrub thumbs — aud=t)
+//   - storyboard-token (timeline scrubber — aud=s)
+// A bare `?token=` is silently dropped, leaving the player without
+// auth for the HLS request and surfacing as "Invalid playback URL"
+// even though the JWT itself is valid against stream.mux.com.
 export function signedPlayerUrl(playbackId: string, ttlSeconds?: number): string {
   const videoToken = signPlaybackJwt({ playbackId, ttlSeconds, aud: "v" });
   const thumbnailToken = signPlaybackJwt({ playbackId, ttlSeconds, aud: "t" });
   const storyboardToken = signPlaybackJwt({ playbackId, ttlSeconds, aud: "s" });
   const params = new URLSearchParams({
-    token: videoToken,
+    "playback-token": videoToken,
     "thumbnail-token": thumbnailToken,
     "storyboard-token": storyboardToken,
   });
