@@ -58,6 +58,11 @@ function buildDefaultBotConfig() {
             punctuate: true,
             diarize: true,
             smart_format: true,
+            // Required for transcript.partial_data events to fire.
+            // Without it, Deepgram only emits finals — which for short
+            // utterances often don't land until end of meeting, so the
+            // realtime buffer stays empty during the call.
+            interim_results: true,
           },
         },
       },
