@@ -42,7 +42,12 @@ function buildDefaultBotConfig() {
     ? [
         {
           type: "webhook" as const,
-          url: `${baseUrl}/api/recall/rt/ingest?token=${encodeURIComponent(realtimeToken)}`,
+          // Trailing `/` before `?` is REQUIRED by Recall — otherwise
+          // their delivery layer rejects with 400 and silently disables
+          // the endpoint after 60 retries. Pair with the
+          // skipTrailingSlashRedirect setting in next.config.ts so this
+          // form hits the route handler directly (no 308 redirect).
+          url: `${baseUrl}/api/recall/rt/ingest/?token=${encodeURIComponent(realtimeToken)}`,
           events: ["transcript.data", "transcript.partial_data"],
         },
       ]
