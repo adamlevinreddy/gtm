@@ -5,6 +5,7 @@
 
 import { buildVideoLink } from "./video-link";
 import { signedPlayerUrl } from "./mux";
+import { listActiveBots, type RecallBot } from "./recall";
 
 const GH_API = "https://api.github.com";
 const REPO = { owner: "ReddySolutions", name: "reddy-gtm" };
@@ -260,4 +261,31 @@ function ghHeaders(pat: string) {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
   };
+}
+
+// Pre-formatted "what's live right now" block for the agent prompt.
+// Lets "what's been said in <meeting>" queries skip the bot-discovery
+// step — bot_id is right in the prompt, agent just curls the realtime
+// endpoint with that ID.
+export async function activeMeetingsBlock(): Promise<string> {
+  const bots = await listActiveBots({ limit: 10 }).catch(() => [] as RecallBot[]);
+  if (bots.length === 0) return "";
+  const lines = bots.map((b) => {
+    const title =
+      b.recordings?.[0]?.media_shortcuts?.meeting_metadata?.data?.title ??
+      b.meeting_metadata?.title ??
+      b.bot_name ??
+      "Untitled";
+    const startedRaw = b.recordings?.[0]?.started_at ?? b.join_at ?? null;
+    const started = startedRaw ? formatPt(startedRaw) : "(no start)";
+    return `- "${title}" · started ${started} · bot_id=${b.id}`;
+  });
+  return [
+    "[active recall meetings — speakers may still be talking]",
+    "For \"what's being said now / what did Bob just say\" questions, hit:",
+    "  GET $REDDY_GTM_BASE_URL/api/recall/realtime/<bot_id>?format=text",
+    "  -H \"x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET\"",
+    "Bot ids (use these directly — no need to look up):",
+    ...lines,
+  ].join("\n");
 }

@@ -5,6 +5,7 @@ import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
+import { activeMeetingsBlock } from "@/lib/recall-index";
 import { randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -181,10 +182,18 @@ export async function POST(req: NextRequest) {
       })),
     };
 
+    // Pre-fetch in-progress recall meetings so the agent can answer
+    // "what's being said in my X call" without a discovery round-trip.
+    // Best-effort: if Recall is slow/unavailable, ship without the block.
+    const activeBlock = await activeMeetingsBlock().catch(() => "");
+    const enrichedUserText = activeBlock
+      ? `${activeBlock}\n\n---\n\n${userText}`
+      : userText;
+
     const turnPayload = {
       turnNumber: state.turnCount,
       receivedAt: new Date().toISOString(),
-      userText,
+      userText: enrichedUserText,
       slackUser: slackUser ?? null,
       slackUserEmail,
       connectedToolkits,

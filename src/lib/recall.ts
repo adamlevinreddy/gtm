@@ -120,6 +120,26 @@ export async function listDoneBots(opts: {
   return items.slice(0, opts.limit);
 }
 
+// Bots currently in a meeting — joining_call / in_call_recording /
+// in_call_not_recording. Used to pre-inject "the LevinCo call you're
+// asking about is bot X" into the agent's prompt so it doesn't have
+// to discover the bot ID via search every turn.
+export async function listActiveBots(opts: { limit?: number } = {}): Promise<RecallBot[]> {
+  const params = new URLSearchParams();
+  for (const s of ["joining_call", "in_call_not_recording", "in_call_recording"]) {
+    params.append("status", s);
+  }
+  // Only meetings starting within ±2h of now are realistically "active";
+  // wider windows just waste API budget.
+  const now = Date.now();
+  params.set("join_at_after", new Date(now - 2 * 60 * 60 * 1000).toISOString());
+  params.set("join_at_before", new Date(now + 2 * 60 * 60 * 1000).toISOString());
+  params.set("use_cursor", "true");
+  const res = await recallGet<{ results?: RecallBot[] }>(`/bot/?${params.toString()}`).catch(() => ({ results: [] }));
+  const items = res.results ?? [];
+  return opts.limit ? items.slice(0, opts.limit) : items;
+}
+
 // Pull the transcript artifact for a bot. The transcript download_url points
 // to a JSON document of segments — schema varies by provider, so we return
 // the raw JSON and let the caller normalize.

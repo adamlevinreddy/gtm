@@ -4,7 +4,7 @@ import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
-import { recentMeetingIndex, formatMeetingIndex } from "@/lib/recall-index";
+import { recentMeetingIndex, formatMeetingIndex, activeMeetingsBlock } from "@/lib/recall-index";
 import { createHash, randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -107,15 +107,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const activeBlock = await activeMeetingsBlock().catch(() => "");
+
     const userText = [
-      customer ? `[customer scope hint: ${customer}]` : "",
-      `[kb meeting index — last 7 days, customer/bot_id with flags]`,
-      kbIndex,
-      "",
+      customer ? `[customer scope hint: ${customer}]` : null,
+      activeBlock || null,
+      `[kb meeting index — last 7 days, customer/bot_id with flags]\n${kbIndex}`,
       question,
     ]
-      .filter(Boolean)
-      .join("\n");
+      .filter((s): s is string => !!s)
+      .join("\n\n");
 
     const meta: AgentMeta = {
       sandboxName,
