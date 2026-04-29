@@ -33,12 +33,17 @@ export const GOOGLE_SCOPES = [
 function buildDefaultBotConfig() {
   const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
   const realtimeToken = process.env.RECALL_REALTIME_WEBHOOK_TOKEN;
+  // Subscribe to BOTH the finalized and partial transcript events.
+  // transcript.data fires only when deepgram finalizes a chunk (often
+  // not until a long silence or meeting end), so for live "what was
+  // just said" queries we also need transcript.partial_data, which
+  // streams in-progress words as they arrive.
   const realtimeEndpoints = realtimeToken
     ? [
         {
           type: "webhook" as const,
           url: `${baseUrl}/api/webhooks/recall/realtime?token=${encodeURIComponent(realtimeToken)}`,
-          events: ["transcript.data"],
+          events: ["transcript.data", "transcript.partial_data"],
         },
       ]
     : [];

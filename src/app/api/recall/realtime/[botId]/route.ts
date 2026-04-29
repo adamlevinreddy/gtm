@@ -58,14 +58,34 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
     }
   }
 
+  // Also pull any "live tails" — the latest partial utterance per
+  // participant — so callers can see speech that hasn't yet been
+  // finalized by deepgram. Tail keys: recall:rt:{bot}:tail:{pid}.
+  const tailKeys = await kv.keys(`recall:rt:${botId}:tail:*`).catch(() => [] as string[]);
+  const tails: Line[] = [];
+  if (tailKeys.length > 0) {
+    const tailVals = await Promise.all(
+      tailKeys.map((k) => kv.get<string>(k).catch(() => null)),
+    );
+    for (const v of tailVals) {
+      if (!v) continue;
+      try {
+        tails.push(JSON.parse(v) as Line);
+      } catch {
+        // skip
+      }
+    }
+  }
+
   if (format === "text") {
-    const body = lines
-      .map((l) => `${l.speaker ?? "Unknown"}: ${l.text}`)
-      .join("\n");
+    const body = [
+      ...lines.map((l) => `${l.speaker ?? "Unknown"}: ${l.text}`),
+      ...tails.map((l) => `${l.speaker ?? "Unknown"} (live): ${l.text}`),
+    ].join("\n");
     return new NextResponse(body, {
       status: 200,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }
-  return NextResponse.json({ ok: true, botId, count: lines.length, lines });
+  return NextResponse.json({ ok: true, botId, count: lines.length, lines, tails });
 }

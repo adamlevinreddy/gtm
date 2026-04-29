@@ -1,23 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@/lib/kv-client";
 
-// Realtime transcript receiver. Recall fires this once per finalized
-// utterance (`transcript.data` event) for any bot whose recording_config
-// includes a realtime_endpoint pointing here. We append a compact line
-// into a per-bot KV list so the agent can answer "what's been said in
-// my Acme call so far" mid-meeting.
+// Realtime transcript receiver. Recall fires this for every transcript
+// event from the bot's deepgram pipeline. Two event types matter here:
 //
-// Auth: query-param token (Recall's HMAC option also exists but the
-// token model is simpler and equally secure for our threat model — the
-// token is only known to us and Recall's egress).
+//   transcript.data          — deepgram finalized this chunk; commit
+//                              it to the per-bot lines list.
+//   transcript.partial_data  — in-flight words; overwrite a per-(bot,
+//                              participant) "live tail" so the reader
+//                              can see speech as it's happening, but
+//                              don't append to the lines list yet.
+//
+// Without partials, deepgram_streaming + nova-3 may not fire any
+// transcript.data events for short utterances until the speaker pauses
+// long enough — so live questions during the call would see an empty
+// buffer for ~minutes.
+//
+// Auth: query-param token. KV writes are O(ms); always return 200 fast
+// so Recall doesn't go into 60x retry mode on a transient KV blip.
 //
 // KV schema:
-//   recall:rt:{bot_id}:lines  Redis LIST, head=oldest (rpush)
-//                              entry: JSON {ts, rel, speaker, email, text}
-//                              TTL: 6h refreshed on every push
-//
-// Return 200 fast — Recall retries up to 60x on non-2xx with 1s backoff,
-// so a slow handler can flood us. KV writes are O(ms); we don't fan out.
+//   recall:rt:{bot_id}:lines        Redis LIST, head=oldest (rpush),
+//                                   each entry: JSON {ts, rel, speaker,
+//                                   email, text}. TTL 6h.
+//   recall:rt:{bot_id}:tail:{pid}   STRING (latest partial per
+//                                   participant). TTL 6h.
 
 export const maxDuration = 30;
 
@@ -58,16 +65,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
 
-  // We currently only act on finalized utterances. Partials would double
-  // the volume and the agent doesn't need word-by-word streaming.
-  if (payload.event !== "transcript.data") {
-    return NextResponse.json({ ok: true, ignored: payload.event });
-  }
+  const eventName = payload.event ?? "";
   const botId = payload.data?.bot?.id;
   const inner = payload.data?.data;
   const words = inner?.words ?? [];
-  if (!botId || words.length === 0) {
-    return NextResponse.json({ ok: true, skipped: true });
+  const isFinal = eventName === "transcript.data";
+  const isPartial = eventName === "transcript.partial_data";
+  if (!botId || (!isFinal && !isPartial)) {
+    console.log(`[realtime] ignored event=${eventName} bot=${botId ?? "?"}`);
+    return NextResponse.json({ ok: true, ignored: eventName });
+  }
+  if (words.length === 0) {
+    return NextResponse.json({ ok: true, skipped: "empty words" });
   }
 
   const text = words
@@ -75,27 +84,35 @@ export async function POST(req: NextRequest) {
     .filter(Boolean)
     .join(" ")
     .trim();
-  if (!text) return NextResponse.json({ ok: true, skipped: true });
+  if (!text) return NextResponse.json({ ok: true, skipped: "empty text" });
 
+  const speaker = inner?.participant?.name ?? null;
+  const email = inner?.participant?.email ?? null;
+  const participantId = inner?.participant?.id ?? 0;
   const line = {
     ts: new Date().toISOString(),
     rel: words[0]?.start_timestamp?.relative ?? null,
-    speaker: inner?.participant?.name ?? null,
-    email: inner?.participant?.email ?? null,
+    speaker,
+    email,
     text,
   };
 
-  const key = `recall:rt:${botId}:lines`;
+  const linesKey = `recall:rt:${botId}:lines`;
+  const tailKey = `recall:rt:${botId}:tail:${participantId}`;
   try {
-    await kv.rpush(key, JSON.stringify(line));
-    await kv.expire(key, LIST_TTL_SECONDS);
-    // Cap list size — for a 4-hour meeting at 5 utterances/min you'd
-    // hit ~1200 entries, but a runaway agent shouldn't blow up KV.
-    await kv.ltrim(key, -MAX_LINES_PER_BOT, -1);
+    if (isFinal) {
+      await kv.rpush(linesKey, JSON.stringify(line));
+      await kv.expire(linesKey, LIST_TTL_SECONDS);
+      await kv.ltrim(linesKey, -MAX_LINES_PER_BOT, -1);
+      // The finalized utterance supersedes whatever partial we had.
+      await kv.del(tailKey).catch(() => {});
+    } else {
+      // Partial: overwrite the live tail for this participant.
+      await kv.set(tailKey, JSON.stringify(line), { ex: LIST_TTL_SECONDS });
+    }
+    console.log(`[realtime] ${eventName} bot=${botId} speaker=${speaker} chars=${text.length}`);
   } catch (err) {
     console.error(`[realtime] kv write failed bot=${botId}: ${err instanceof Error ? err.message : err}`);
-    // Still return 200 — retrying won't help for a KV outage and we
-    // don't want Recall to flood us.
   }
   return NextResponse.json({ ok: true });
 }
