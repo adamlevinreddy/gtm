@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mintCalendarAuthToken, buildGoogleOAuthUrl } from "@/lib/recall-calendar";
+import { buildGoogleOAuthUrl } from "@/lib/recall-calendar-v2";
 
-// Entry point for "Connect Recall Calendar" from @Reddy-GTM set me up.
+// Entry point for "Connect Recall Calendar (V2)" from @Reddy-GTM set me up.
 // Query: ?email=<slack-email>
 //
-// We mint a per-user Recall JWT, build the Google OAuth URL with state
-// carrying the JWT + our success/error redirects, and 302 the user to
-// Google.
+// V2 flow: we own Google OAuth end-to-end. State carries the user's
+// email so the callback can stash the resulting calendar_id by email.
 export async function GET(req: NextRequest) {
   const email = req.nextUrl.searchParams.get("email");
   if (!email) {
@@ -14,38 +13,20 @@ export async function GET(req: NextRequest) {
   }
 
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-  if (!clientId) {
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
     return new NextResponse(
-      "GOOGLE_OAUTH_CLIENT_ID not configured. Paste your Google OAuth Client ID into Vercel env.",
+      "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must both be set in Vercel env (V2 calendar requires us to do the token exchange ourselves).",
       { status: 500 },
     );
   }
 
   const baseUrl = process.env.PUBLIC_BASE_URL ?? req.nextUrl.origin;
   const redirectUri = `${baseUrl}/api/oauth/recall-calendar/callback`;
-  const successUrl = `${baseUrl}/api/oauth/recall-calendar/success?email=${encodeURIComponent(email)}`;
-  const errorUrl = `${baseUrl}/api/oauth/recall-calendar/success?email=${encodeURIComponent(email)}&error=1`;
+  // State carries email so the callback can attribute the new calendar.
+  // Plain JSON in state is fine — Google passes it through verbatim.
+  const state = encodeURIComponent(JSON.stringify({ email }));
 
-  try {
-    const jwt = await mintCalendarAuthToken(email);
-    // Pass the JWT to /success via the state-encoded success_url so we can
-    // PUT default preferences after Recall completes the OAuth dance.
-    const successWithJwt = `${successUrl}&jwt=${encodeURIComponent(jwt)}`;
-    const url = buildGoogleOAuthUrl({
-      clientId,
-      redirectUri,
-      jwt,
-      successUrl: successWithJwt,
-      errorUrl,
-    });
-    return NextResponse.redirect(url, 302);
-  } catch (err) {
-    console.error(
-      `[oauth/recall-calendar/start] failed for ${email}: ${err instanceof Error ? err.stack || err.message : String(err)}`,
-    );
-    return new NextResponse(
-      `Failed to start Recall calendar auth: ${err instanceof Error ? err.message : String(err)}`,
-      { status: 500 },
-    );
-  }
+  const url = buildGoogleOAuthUrl({ clientId, redirectUri, state });
+  return NextResponse.redirect(url, 302);
 }

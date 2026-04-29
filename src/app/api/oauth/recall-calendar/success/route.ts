@@ -1,19 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { applyDefaultPreferences } from "@/lib/recall-calendar";
 
-// Final stop after Recall finishes the Google OAuth dance. Two things
-// happen here:
-//   1. Apply our team's default recording preferences to the just-
-//      connected calendar user (using the JWT we threaded through the
-//      success_url).
-//   2. Render a "you're connected" page the user can close.
+// Final stop after the V2 OAuth + calendar registration completes.
+// Renders a "you're connected" page the user can close.
 //
-// On error path (?error=1), just render the failure page.
+// V2 doesn't need a separate "apply preferences" call — recording
+// decisions are made on our side when calendar.sync_events fires
+// (via shouldRecordEvent in recall-calendar-v2.ts).
 export async function GET(req: NextRequest) {
   const url = req.nextUrl;
   const email = url.searchParams.get("email");
+  const calendarId = url.searchParams.get("calendar_id");
   const error = url.searchParams.get("error");
-  const jwt = url.searchParams.get("jwt");
 
   if (error) {
     return htmlPage({
@@ -24,33 +21,18 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (!email || !jwt) {
+  if (!email || !calendarId) {
     return htmlPage({
       ok: false,
       title: "Invalid callback",
-      message: "Missing email or jwt — please restart the connect flow from Slack.",
+      message: "Missing email or calendar_id — please restart the connect flow from Slack.",
     });
-  }
-
-  // Apply team defaults. Failure here doesn't block the user — they're
-  // already calendar-connected; preferences just stay at Recall defaults
-  // until we (or they) update them.
-  let prefsApplied = true;
-  try {
-    await applyDefaultPreferences(jwt, email);
-  } catch (err) {
-    prefsApplied = false;
-    console.warn(
-      `[oauth/recall-calendar/success] applyDefaultPreferences failed for ${email}: ${err instanceof Error ? err.message : String(err)}`,
-    );
   }
 
   return htmlPage({
     ok: true,
     title: "Calendar connected",
-    message: prefsApplied
-      ? `You're all set, ${email}. Reddy Notetaker will join external + internal meetings on your accepted calendar invites and post the recording + transcript to the team's knowledge base.`
-      : `You're connected, ${email}, but I couldn't apply the default recording preferences. Ping Adam — preferences will need to be set manually in the Recall dashboard.`,
+    message: `You're all set, ${email}. Reddy Notetaker will join external meetings on your accepted calendar invites and post the recording + transcript (with attendee emails) to the team's knowledge base.`,
   });
 }
 

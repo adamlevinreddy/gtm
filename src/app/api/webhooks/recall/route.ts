@@ -12,6 +12,14 @@ import {
 import { commitToKb, readKbFile, KB_REPO, type CommitFile } from "@/lib/github-kb";
 import { uploadLfsBlob, lfsPointerText } from "@/lib/github-lfs";
 import { assetCreateFromUrl, waitForAssetReady } from "@/lib/mux";
+import {
+  listCalendarEventsSince,
+  shouldRecordEvent,
+  scheduleBotForEvent,
+  deleteBotForEvent,
+  kvLookupEmailForCalendar,
+} from "@/lib/recall-calendar-v2";
+import { kv } from "@/lib/kv-client";
 
 export const maxDuration = 300;
 
@@ -57,7 +65,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid signature" }, { status: 401 });
   }
 
-  let event: { event?: string; data?: { bot?: { id?: string }; bot_id?: string } };
+  let event: {
+    event?: string;
+    data?: {
+      bot?: { id?: string };
+      bot_id?: string;
+      calendar_id?: string;
+      last_updated_ts?: string;
+    };
+  };
   try {
     event = JSON.parse(rawBody);
   } catch {
@@ -65,6 +81,27 @@ export async function POST(req: NextRequest) {
   }
 
   const eventName = event.event ?? "";
+
+  // Calendar V2 events come without a bot id — branch up front.
+  if (eventName === "calendar.update" || eventName === "calendar.sync_events") {
+    const calendarId = event.data?.calendar_id;
+    const lastUpdatedTs = event.data?.last_updated_ts ?? null;
+    if (!calendarId) {
+      console.warn(`[recall webhook] ${eventName} with no calendar_id; ignoring`);
+      return NextResponse.json({ ok: true });
+    }
+    console.log(`[recall webhook] ${eventName} calendar=${calendarId}`);
+    try {
+      await handleCalendarEvent(eventName, calendarId, lastUpdatedTs);
+    } catch (err) {
+      console.error(
+        `[recall webhook] calendar handler ${eventName} cal=${calendarId} failed: ${err instanceof Error ? err.stack || err.message : String(err)}`,
+      );
+      return NextResponse.json({ ok: false, error: String(err) });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   const botId = event.data?.bot?.id ?? event.data?.bot_id;
   if (!botId) {
     console.warn(`[recall webhook] ${eventName} with no bot id; ignoring`);
@@ -92,6 +129,53 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+// ────────── Calendar V2 handler ──────────
+
+async function handleCalendarEvent(
+  eventName: string,
+  calendarId: string,
+  lastUpdatedTs: string | null,
+): Promise<void> {
+  if (eventName === "calendar.update") {
+    // Calendar metadata changed (rename, disconnect, etc). We don't
+    // mirror calendar state anywhere yet — log + move on.
+    return;
+  }
+  // calendar.sync_events: pull events updated since the cursor and
+  // schedule/reschedule/delete bots accordingly.
+  const cursor = lastUpdatedTs ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const events = await listCalendarEventsSince({ calendarId, updatedAtGte: cursor });
+  const ownerEmail = await kvLookupEmailForCalendar(calendarId);
+  if (!ownerEmail) {
+    console.warn(`[recall webhook] no owner email mapped for calendar ${calendarId}; bots will not be scheduled`);
+    return;
+  }
+  let scheduled = 0;
+  let deleted = 0;
+  for (const e of events) {
+    const dedupKey = `cal_${calendarId}_evt_${e.id}`;
+    if (e.is_deleted || e.raw?.status === "cancelled") {
+      try {
+        await deleteBotForEvent(e.id);
+        deleted += 1;
+      } catch (err) {
+        console.warn(`[recall webhook] delete bot for ${e.id} failed: ${err instanceof Error ? err.message : err}`);
+      }
+      await kv.del(`recall:cal:event:${calendarId}:${e.id}:bot`).catch(() => {});
+      continue;
+    }
+    if (!shouldRecordEvent(e, ownerEmail)) continue;
+    try {
+      const { botId } = await scheduleBotForEvent({ eventId: e.id, deduplicationKey: dedupKey });
+      if (botId) await kv.set(`recall:cal:event:${calendarId}:${e.id}:bot`, botId).catch(() => {});
+      scheduled += 1;
+    } catch (err) {
+      console.warn(`[recall webhook] schedule bot for ${e.id} failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  console.log(`[recall webhook] ${eventName} cal=${calendarId} owner=${ownerEmail} events=${events.length} scheduled=${scheduled} deleted=${deleted}`);
 }
 
 // ────────── Reconcile ──────────
