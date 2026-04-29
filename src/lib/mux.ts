@@ -142,10 +142,23 @@ export function signedPlaybackUrl(playbackId: string, ttlSeconds?: number): stri
 
 // Player page URL — embeds the Mux web player. Better for "click and
 // watch" scenarios because raw .m3u8 doesn't play in most browsers.
-// Uses the same signed token as the HLS URL.
+//
+// IMPORTANT: signed-policy assets need a separate JWT for each resource
+// the player loads (video stream, thumbnail poster, storyboard scrub-
+// bar). If we only pass `token` (video), the player still fetches the
+// thumbnail under aud=t and the storyboard under aud=s; both 403, and
+// the player surfaces this as "Invalid playback URL" instead of just
+// hiding the broken bits. So we mint and pass all three.
 export function signedPlayerUrl(playbackId: string, ttlSeconds?: number): string {
-  const token = signPlaybackJwt({ playbackId, ttlSeconds });
-  return `https://player.mux.com/${playbackId}?token=${token}`;
+  const videoToken = signPlaybackJwt({ playbackId, ttlSeconds, aud: "v" });
+  const thumbnailToken = signPlaybackJwt({ playbackId, ttlSeconds, aud: "t" });
+  const storyboardToken = signPlaybackJwt({ playbackId, ttlSeconds, aud: "s" });
+  const params = new URLSearchParams({
+    token: videoToken,
+    "thumbnail-token": thumbnailToken,
+    "storyboard-token": storyboardToken,
+  });
+  return `https://player.mux.com/${playbackId}?${params.toString()}`;
 }
 
 function base64url(buf: Buffer): string {
