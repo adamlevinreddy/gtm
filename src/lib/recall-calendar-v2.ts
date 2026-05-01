@@ -182,6 +182,28 @@ export async function createRecallCalendar(opts: {
   return { id: json.id };
 }
 
+// Read the calendar object from Recall — used by the webhook handler
+// to recover the connecting user's email when our KV mapping is missing
+// (e.g., the very first calendar.sync_events fired before our OAuth
+// callback finished writing KV).
+export async function getRecallCalendar(calendarId: string): Promise<{
+  id: string;
+  platform: string;
+  platform_email: string | null;
+  status: string;
+} | null> {
+  const res = await fetch(`${RECALL_BASE}/calendars/${calendarId}/`, {
+    headers: { Authorization: authHeader() },
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as {
+    id: string;
+    platform: string;
+    platform_email: string | null;
+    status: string;
+  };
+}
+
 export async function disconnectRecallCalendar(calendarId: string): Promise<void> {
   const res = await fetch(`${RECALL_BASE}/calendars/${calendarId}/`, {
     method: "DELETE",

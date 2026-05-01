@@ -18,6 +18,8 @@ import {
   scheduleBotForEvent,
   deleteBotForEvent,
   kvLookupEmailForCalendar,
+  kvLinkCalendarToEmail,
+  getRecallCalendar,
 } from "@/lib/recall-calendar-v2";
 import { kv } from "@/lib/kv-client";
 
@@ -138,20 +140,37 @@ async function handleCalendarEvent(
   calendarId: string,
   lastUpdatedTs: string | null,
 ): Promise<void> {
+  // Resolve the connecting user's email up front. KV is the fast path;
+  // if it's missing (race: Recall fires webhooks the moment a calendar
+  // is created, often before our OAuth callback finishes writing KV),
+  // fall back to Recall's calendar object — `platform_email` carries
+  // the same info — and back-fill KV so subsequent webhooks short-circuit.
+  let ownerEmail = await kvLookupEmailForCalendar(calendarId);
+  if (!ownerEmail) {
+    const cal = await getRecallCalendar(calendarId).catch(() => null);
+    if (cal?.platform_email) {
+      ownerEmail = cal.platform_email;
+      await kvLinkCalendarToEmail(calendarId, ownerEmail).catch(() => {});
+      console.log(`[recall webhook] back-filled KV mapping ${calendarId} -> ${ownerEmail}`);
+    }
+  }
+
   if (eventName === "calendar.update") {
-    // Calendar metadata changed (rename, disconnect, etc). We don't
-    // mirror calendar state anywhere yet — log + move on.
+    // Calendar metadata changed (rename, disconnect, etc). KV mapping
+    // is now resolved if it was missing — that's the substantive work.
+    // No event scheduling on calendar.update by itself.
     return;
   }
+
+  if (!ownerEmail) {
+    console.warn(`[recall webhook] no owner email for calendar ${calendarId}; bots will not be scheduled`);
+    return;
+  }
+
   // calendar.sync_events: pull events updated since the cursor and
   // schedule/reschedule/delete bots accordingly.
   const cursor = lastUpdatedTs ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const events = await listCalendarEventsSince({ calendarId, updatedAtGte: cursor });
-  const ownerEmail = await kvLookupEmailForCalendar(calendarId);
-  if (!ownerEmail) {
-    console.warn(`[recall webhook] no owner email mapped for calendar ${calendarId}; bots will not be scheduled`);
-    return;
-  }
   let scheduled = 0;
   let deleted = 0;
   for (const e of events) {
