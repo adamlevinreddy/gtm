@@ -30,7 +30,7 @@ export const GOOGLE_SCOPES = [
 // Bot config applied to every meeting we record — same shape we see on
 // existing V1-scheduled bots (deepgram nova-3, speaker view, etc.) plus
 // realtime_endpoints so we get per-utterance webhooks during the call.
-function buildDefaultBotConfig() {
+export function buildDefaultBotConfig() {
   const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
   const realtimeToken = process.env.RECALL_REALTIME_WEBHOOK_TOKEN;
   // Subscribe to BOTH the finalized and partial transcript events.
@@ -261,34 +261,35 @@ export async function listCalendarEventsSince(opts: {
   return events;
 }
 
-// Decide whether we should record this calendar event. Same rules we
-// applied as V1 prefs: external meeting (someone outside Reddy domains),
-// not deleted, has a meeting_url, not declined by the connected user.
-const REDDY_DOMAINS = new Set(["reddy.io", "reddy.ai"]);
-
+// Decide whether we should record this calendar event.
+// Rules: not deleted, has a meeting_url, not cancelled, not declined
+// by the connected user. Internal-only meetings ARE recorded (changed
+// from external-only after operations confirmed they want everything
+// captured for the kb).
 export function shouldRecordEvent(event: CalendarEvent, connectedEmail: string): boolean {
   if (event.is_deleted) return false;
   if (!event.meeting_url) return false;
   const status = event.raw?.status;
   if (status === "cancelled") return false;
   const attendees = event.raw?.attendees ?? [];
-  // The connected user is on the invite — check they didn't decline.
   const me = attendees.find((a) => (a.email ?? "").toLowerCase() === connectedEmail.toLowerCase());
   if (me?.responseStatus === "declined") return false;
-  // External-meeting check: at least one attendee outside Reddy.
-  const hasExternal = attendees.some((a) => {
-    const domain = (a.email ?? "").split("@")[1]?.toLowerCase() ?? "";
-    return domain && !REDDY_DOMAINS.has(domain);
-  });
-  return hasExternal;
+  return true;
 }
 
 // Schedule (or reschedule via dedup key) a bot for a calendar event.
 // Returns the bot ID surfaced in the response, if any.
+//
+// `joinAt` overrides the bot's scheduled join time. We default to
+// `start_time - 2 minutes` so the bot is in the waiting room before
+// participants arrive — avoids the "joined early, no notetaker" surprise.
 export async function scheduleBotForEvent(opts: {
   eventId: string;
   deduplicationKey: string;
+  joinAt?: string;
 }): Promise<{ botId: string | null }> {
+  const config = buildDefaultBotConfig() as ReturnType<typeof buildDefaultBotConfig> & { join_at?: string };
+  if (opts.joinAt) config.join_at = opts.joinAt;
   const res = await fetch(`${RECALL_BASE}/calendar-events/${opts.eventId}/bot/`, {
     method: "POST",
     headers: {
@@ -297,7 +298,7 @@ export async function scheduleBotForEvent(opts: {
     },
     body: JSON.stringify({
       deduplication_key: opts.deduplicationKey,
-      bot_config: buildDefaultBotConfig(),
+      bot_config: config,
     }),
   });
   if (!res.ok) {

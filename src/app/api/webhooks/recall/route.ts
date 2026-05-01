@@ -187,7 +187,16 @@ async function handleCalendarEvent(
     }
     if (!shouldRecordEvent(e, ownerEmail)) continue;
     try {
-      const { botId } = await scheduleBotForEvent({ eventId: e.id, deduplicationKey: dedupKey });
+      // Bot in the waiting room 2 min before start, so it's already there
+      // when participants join early.
+      const joinAt = e.start_time
+        ? new Date(new Date(e.start_time).getTime() - 2 * 60 * 1000).toISOString()
+        : undefined;
+      const { botId } = await scheduleBotForEvent({
+        eventId: e.id,
+        deduplicationKey: dedupKey,
+        joinAt,
+      });
       if (botId) await kv.set(`recall:cal:event:${calendarId}:${e.id}:bot`, botId).catch(() => {});
       scheduled += 1;
     } catch (err) {
