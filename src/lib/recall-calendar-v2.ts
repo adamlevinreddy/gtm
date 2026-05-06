@@ -94,6 +94,48 @@ function authHeader(): string {
 export const kvKeyEmailToCalendar = (email: string) => `recall:cal:user:${email.toLowerCase()}:calendar_id`;
 export const kvKeyCalendarToEmail = (calendarId: string) => `recall:cal:calendar:${calendarId}:user_email`;
 export const kvKeyEventBot = (calendarId: string, eventId: string) => `recall:cal:event:${calendarId}:${eventId}:bot`;
+// Cross-calendar dedup: a single ical_uid may appear on many teammates'
+// connected calendars (any meeting they're all invited to). We use a
+// "first calendar wins" claim so only one bot gets scheduled regardless
+// of how many teammates accept. TTL: 7 days, refreshed on every sync.
+export const kvKeyIcalOwner = (icalUid: string) => `recall:cal:ical:${icalUid}:owner`;
+const ICAL_OWNER_TTL_SEC = 7 * 24 * 60 * 60;
+
+// Atomic claim via Redis SET NX. Returns the calendar_id that owns
+// this ical_uid (the caller's id if claimed, or the existing owner's id).
+export async function kvClaimIcalOwner(
+  icalUid: string,
+  calendarId: string,
+): Promise<{ owner: string; claimed: boolean }> {
+  const key = kvKeyIcalOwner(icalUid);
+  const result = await kv
+    .set(key, calendarId, { nx: true, ex: ICAL_OWNER_TTL_SEC })
+    .catch(() => null);
+  // Upstash returns "OK" on a successful NX set, null when the key
+  // already exists.
+  if (result === "OK") {
+    return { owner: calendarId, claimed: true };
+  }
+  const existing = await kv.get<string>(key).catch(() => null);
+  return { owner: existing ?? calendarId, claimed: false };
+}
+
+// Bump the TTL on an existing claim we own — keeps the lock fresh as
+// long as syncs keep arriving. No-op if a different calendar owns it
+// (lets the original owner naturally expire if it stops syncing).
+export async function kvRefreshIcalOwner(icalUid: string, calendarId: string): Promise<void> {
+  const key = kvKeyIcalOwner(icalUid);
+  const owner = await kv.get<string>(key).catch(() => null);
+  if (owner === calendarId) await kv.expire(key, ICAL_OWNER_TTL_SEC).catch(() => {});
+}
+
+// Release the claim only if we still own it (CAS pattern). Called on
+// event delete/cancel so a fresh re-create can be re-claimed.
+export async function kvReleaseIcalOwner(icalUid: string, calendarId: string): Promise<void> {
+  const key = kvKeyIcalOwner(icalUid);
+  const owner = await kv.get<string>(key).catch(() => null);
+  if (owner === calendarId) await kv.del(key).catch(() => {});
+}
 
 // ────────── Google OAuth ──────────
 

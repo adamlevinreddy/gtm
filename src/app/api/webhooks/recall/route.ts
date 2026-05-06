@@ -20,6 +20,9 @@ import {
   kvLookupEmailForCalendar,
   kvLinkCalendarToEmail,
   getRecallCalendar,
+  kvClaimIcalOwner,
+  kvRefreshIcalOwner,
+  kvReleaseIcalOwner,
 } from "@/lib/recall-calendar-v2";
 import { kv } from "@/lib/kv-client";
 
@@ -173,6 +176,7 @@ async function handleCalendarEvent(
   const events = await listCalendarEventsSince({ calendarId, updatedAtGte: cursor });
   let scheduled = 0;
   let deleted = 0;
+  let skippedDup = 0;
   for (const e of events) {
     const dedupKey = `cal_${calendarId}_evt_${e.id}`;
     if (e.is_deleted || e.raw?.status === "cancelled") {
@@ -183,9 +187,36 @@ async function handleCalendarEvent(
         console.warn(`[recall webhook] delete bot for ${e.id} failed: ${err instanceof Error ? err.message : err}`);
       }
       await kv.del(`recall:cal:event:${calendarId}:${e.id}:bot`).catch(() => {});
+      // Release any cross-calendar claim we held on this ical_uid so a
+      // re-create can be re-claimed (possibly by a different teammate's
+      // calendar firing first next time).
+      if (e.ical_uid) await kvReleaseIcalOwner(e.ical_uid, calendarId);
       continue;
     }
     if (!shouldRecordEvent(e, ownerEmail)) continue;
+
+    // Cross-calendar dedup. Same meeting can land on multiple connected
+    // calendars (any meeting where two teammates accept). First calendar
+    // to fire its sync wins the bot; the others see the claim and skip.
+    if (e.ical_uid) {
+      const claim = await kvClaimIcalOwner(e.ical_uid, calendarId);
+      if (claim.owner !== calendarId) {
+        skippedDup += 1;
+        // If we previously held a bot for this event on a non-owner
+        // calendar (race or owner change), tear it down so we don't
+        // leave a duplicate behind from before this code shipped.
+        try {
+          await deleteBotForEvent(e.id);
+        } catch {
+          // ignore — may not have a bot anyway
+        }
+        await kv.del(`recall:cal:event:${calendarId}:${e.id}:bot`).catch(() => {});
+        continue;
+      }
+      // We own it — bump the TTL so the lock stays fresh.
+      if (!claim.claimed) await kvRefreshIcalOwner(e.ical_uid, calendarId);
+    }
+
     try {
       // Bot in the waiting room 2 min before start, so it's already there
       // when participants join early.
@@ -203,7 +234,9 @@ async function handleCalendarEvent(
       console.warn(`[recall webhook] schedule bot for ${e.id} failed: ${err instanceof Error ? err.message : err}`);
     }
   }
-  console.log(`[recall webhook] ${eventName} cal=${calendarId} owner=${ownerEmail} events=${events.length} scheduled=${scheduled} deleted=${deleted}`);
+  console.log(
+    `[recall webhook] ${eventName} cal=${calendarId} owner=${ownerEmail} events=${events.length} scheduled=${scheduled} deleted=${deleted} skipped_dup=${skippedDup}`,
+  );
 }
 
 // ────────── Reconcile ──────────
