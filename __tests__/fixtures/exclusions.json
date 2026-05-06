@@ -1,0 +1,11 @@
+{
+  "categories": {
+    "ccaas": { "label": "CCaaS / Contact Center Platforms", "action": "exclude" },
+    "ai_voice": { "label": "AI / Conversational AI / Voice AI", "action": "exclude" }
+  },
+  "companies": [
+    { "name": "Five9", "aliases": [], "category": "ccaas", "added": "2026-03-28", "source": "test" },
+    { "name": "NICE", "aliases": ["NICE inContact", "NICE CXone"], "category": "ccaas", "added": "2026-03-28", "source": "test" },
+    { "name": "Observe.AI", "aliases": ["Obsereve.AI"], "category": "ai_voice", "added": "2026-03-28", "source": "test" }
+  ]
+}

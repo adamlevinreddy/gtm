@@ -1,0 +1,49 @@
+{
+  "name": "reddy-gtm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.113",
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@composio/core": "^0.6.10",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@octokit/rest": "^22.0.1",
+    "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.15.0",
+    "@vercel/kv": "^3.0.0",
+    "@vercel/sandbox": "beta",
+    "drizzle-orm": "^0.45.2",
+    "fuzzball": "^2.2.3",
+    "googleapis": "^171.4.0",
+    "next": "16.2.1",
+    "officecrypto-tool": "^0.0.19",
+    "postgres": "^3.4.8",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "uuid": "^13.0.0",
+    "xlsx": "^0.18.5",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/uuid": "^11.0.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.1",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.2"
+  }
+}
