@@ -105,6 +105,16 @@ export async function POST(req: NextRequest) {
         snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
       });
       console.log(`[agent] Created persistent sandbox ${sandbox.name}`);
+
+      // Bootstrap Python packages for document processing (RFP/security
+      // questionnaire fill). Only runs on first creation — subsequent turns
+      // restore from snapshot with packages already installed.
+      await sandbox.runCommand({
+        cmd: "pip3",
+        args: ["install", "--quiet", "openpyxl", "python-docx", "pikepdf"],
+      }).catch((err: unknown) => {
+        console.warn(`[agent] Python package install failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
 
     // Reset the idle timer on every turn — sandbox stays alive as long as

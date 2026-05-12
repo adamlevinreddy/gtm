@@ -156,6 +156,13 @@ export async function POST(req: NextRequest) {
         snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
       });
       console.log(`[agent/oneshot] created sandbox for ${userEmail}`);
+
+      await sandbox.runCommand({
+        cmd: "pip3",
+        args: ["install", "--quiet", "openpyxl", "python-docx", "pikepdf"],
+      }).catch((err: unknown) => {
+        console.warn(`[agent/oneshot] Python package install failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
     await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
 

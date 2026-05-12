@@ -264,7 +264,7 @@ async function ensureLibraryCloned() {
 async function ensureSdkInstalled() {
   if (existsSync("node_modules/@anthropic-ai/claude-agent-sdk")) { trace("bootstrap", { output: "sdk present" }); return; }
   execLog("npm-init", "npm", ["init", "-y"]);
-  execLog("npm-install-sdk", "npm", ["install", "--no-audit", "--no-fund", "@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-code", "zod"]);
+  execLog("npm-install-sdk", "npm", ["install", "--no-fund", "@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-code", "zod"]);
 }
 
 // ────────── Agent SDK invocation ──────────

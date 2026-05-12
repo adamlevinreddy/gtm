@@ -314,7 +314,7 @@ async function ensureSdkInstalled() {
     TRACE.push({ ts: new Date().toISOString(), kind: "bootstrap", output: "sdk already installed" });
     return;
   }
-  execAndLog("npm-install-sdk", "npm", ["install", "--no-audit", "--no-fund", "@anthropic-ai/sdk"]);
+  execAndLog("npm-install-sdk", "npm", ["install", "--no-fund", "@anthropic-ai/sdk"]);
 }
 
 // ────────── Tools (executed by Claude) ──────────
@@ -455,7 +455,7 @@ async function runTool(name, args) {
         throw new Error(\`No package.json at \${dir}\`);
       }
       if (!existsSync(path.join(dir, "node_modules"))) {
-        execAndLog("npm-install-proposal", "npm", ["install", "--no-audit", "--no-fund"], { cwd: dir });
+        execAndLog("npm-install-proposal", "npm", ["install", "--no-fund"], { cwd: dir });
       }
       execAndLog("npx-tsx-render", "npx", ["tsx", "proposal.tsx"], { cwd: dir });
       const files = await readdir(dir);

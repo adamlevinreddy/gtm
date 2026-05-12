@@ -4,54 +4,57 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  axios: 1.14.0
+
 importers:
 
   .:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.113
-        version: 0.2.113(zod@4.3.6)
+        specifier: 0.2.113
+        version: 0.2.113(zod@4.0.0)
       '@anthropic-ai/sdk':
-        specifier: ^0.80.0
-        version: 0.80.0(zod@4.3.6)
+        specifier: 0.80.0
+        version: 0.80.0(zod@4.0.0)
       '@composio/core':
-        specifier: ^0.6.10
-        version: 0.6.10(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.6.10
+        version: 0.6.10(ws@8.20.0)(zod@4.0.0)
       '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.3.6)
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.0.0)
       '@octokit/rest':
-        specifier: ^22.0.1
+        specifier: 22.0.1
         version: 22.0.1
       '@slack/bolt':
-        specifier: ^4.6.0
+        specifier: 4.6.0
         version: 4.6.0(@types/express@5.0.6)
       '@slack/web-api':
-        specifier: ^7.15.0
+        specifier: 7.15.0
         version: 7.15.0
       '@vercel/kv':
-        specifier: ^3.0.0
+        specifier: 3.0.0
         version: 3.0.0
       '@vercel/sandbox':
         specifier: beta
         version: 2.0.0-beta.14
       drizzle-orm:
-        specifier: ^0.45.2
+        specifier: 0.45.2
         version: 0.45.2(@upstash/redis@1.37.0)(postgres@3.4.8)
       fuzzball:
-        specifier: ^2.2.3
+        specifier: 2.2.3
         version: 2.2.3
       googleapis:
-        specifier: ^171.4.0
+        specifier: 171.4.0
         version: 171.4.0
       next:
         specifier: 16.2.1
         version: 16.2.1(@babel/core@7.29.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       officecrypto-tool:
-        specifier: ^0.0.19
+        specifier: 0.0.19
         version: 0.0.19
       postgres:
-        specifier: ^3.4.8
+        specifier: 3.4.8
         version: 3.4.8
       react:
         specifier: 19.2.4
@@ -60,50 +63,50 @@ importers:
         specifier: 19.2.4
         version: 19.2.4(react@19.2.4)
       uuid:
-        specifier: ^13.0.0
+        specifier: 13.0.0
         version: 13.0.0
       xlsx:
-        specifier: ^0.18.5
+        specifier: 0.18.5
         version: 0.18.5
       zod:
-        specifier: ^4.0.0
-        version: 4.3.6
+        specifier: 4.0.0
+        version: 4.0.0
     devDependencies:
       '@tailwindcss/postcss':
-        specifier: ^4
+        specifier: '4'
         version: 4.2.2
       '@types/node':
-        specifier: ^20
+        specifier: '20'
         version: 20.19.37
       '@types/react':
-        specifier: ^19
+        specifier: '19'
         version: 19.2.14
       '@types/react-dom':
-        specifier: ^19
+        specifier: '19'
         version: 19.2.3(@types/react@19.2.14)
       '@types/uuid':
-        specifier: ^11.0.0
+        specifier: 11.0.0
         version: 11.0.0
       '@vitejs/plugin-react':
-        specifier: ^6.0.1
+        specifier: 6.0.1
         version: 6.0.1(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@20.19.37)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
       drizzle-kit:
-        specifier: ^0.31.10
+        specifier: 0.31.10
         version: 0.31.10
       eslint:
-        specifier: ^9
+        specifier: '9'
         version: 9.39.4(jiti@2.6.1)
       eslint-config-next:
         specifier: 16.2.1
         version: 16.2.1(@typescript-eslint/parser@8.57.2(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
       tailwindcss:
-        specifier: ^4
+        specifier: '4'
         version: 4.2.2
       typescript:
-        specifier: ^5
+        specifier: '5'
         version: 5.9.3
       vitest:
-        specifier: ^4.1.2
+        specifier: 4.1.2
         version: 4.1.2(@types/node@20.19.37)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@20.19.37)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
 
 packages:
@@ -3693,8 +3696,8 @@ packages:
   zod@3.24.4:
     resolution: {integrity: sha512-OdqJE9UDRPwWsrHjLN2F8bPxvwJBK22EHLWtanu0LSYr5YqzsaaW3RMgmjwr8Rypg5k+meEJdSPXJZXE/yqOMg==}
 
-  zod@4.3.6:
-    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+  zod@4.0.0:
+    resolution: {integrity: sha512-9diLdTPc/L7w/5jI4C3gHYNiGHDV9IZYxo1e5LSD8cabi65WVTWWb+g2BGPEpUUCOxR4D+6O5B0AzyMdUAXwrw==}
 
 snapshots:
 
@@ -3724,11 +3727,11 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.2.113':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.2.113(zod@4.3.6)':
+  '@anthropic-ai/claude-agent-sdk@0.2.113(zod@4.0.0)':
     dependencies:
-      '@anthropic-ai/sdk': 0.81.0(zod@4.3.6)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
-      zod: 4.3.6
+      '@anthropic-ai/sdk': 0.81.0(zod@4.0.0)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.0.0)
+      zod: 4.0.0
     optionalDependencies:
       '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.2.113
       '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.2.113
@@ -3742,17 +3745,17 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@anthropic-ai/sdk@0.80.0(zod@4.3.6)':
+  '@anthropic-ai/sdk@0.80.0(zod@4.0.0)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 4.3.6
+      zod: 4.0.0
 
-  '@anthropic-ai/sdk@0.81.0(zod@4.3.6)':
+  '@anthropic-ai/sdk@0.81.0(zod@4.0.0)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 4.3.6
+      zod: 4.0.0
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -3858,23 +3861,23 @@ snapshots:
 
   '@composio/client@0.1.0-alpha.66': {}
 
-  '@composio/core@0.6.10(ws@8.20.0)(zod@4.3.6)':
+  '@composio/core@0.6.10(ws@8.20.0)(zod@4.0.0)':
     dependencies:
       '@composio/client': 0.1.0-alpha.66
-      '@composio/json-schema-to-zod': 0.1.20(zod@4.3.6)
+      '@composio/json-schema-to-zod': 0.1.20(zod@4.0.0)
       '@types/json-schema': 7.0.15
       chalk: 4.1.2
-      openai: 6.34.0(ws@8.20.0)(zod@4.3.6)
+      openai: 6.34.0(ws@8.20.0)(zod@4.0.0)
       pusher-js: 8.5.0
       semver: 7.7.4
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.2(zod@4.3.6)
+      zod: 4.0.0
+      zod-to-json-schema: 3.25.2(zod@4.0.0)
     transitivePeerDependencies:
       - ws
 
-  '@composio/json-schema-to-zod@0.1.20(zod@4.3.6)':
+  '@composio/json-schema-to-zod@0.1.20(zod@4.0.0)':
     dependencies:
-      zod: 4.3.6
+      zod: 4.0.0
 
   '@drizzle-team/brocli@0.10.2': {}
 
@@ -4303,7 +4306,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.0.0)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.9)
       ajv: 8.18.0
@@ -4320,8 +4323,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.2(zod@4.3.6)
+      zod: 4.0.0
+      zod-to-json-schema: 3.25.2(zod@4.0.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -5611,8 +5614,8 @@ snapshots:
       '@babel/parser': 7.29.2
       eslint: 9.39.4(jiti@2.6.1)
       hermes-parser: 0.25.1
-      zod: 4.3.6
-      zod-validation-error: 4.0.2(zod@4.3.6)
+      zod: 4.0.0
+      zod-validation-error: 4.0.2(zod@4.0.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -6500,10 +6503,10 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.34.0(ws@8.20.0)(zod@4.3.6):
+  openai@6.34.0(ws@8.20.0)(zod@4.0.0):
     optionalDependencies:
       ws: 8.20.0
-      zod: 4.3.6
+      zod: 4.0.0
 
   optionator@0.9.4:
     dependencies:
@@ -7276,14 +7279,14 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@4.3.6):
+  zod-to-json-schema@3.25.2(zod@4.0.0):
     dependencies:
-      zod: 4.3.6
+      zod: 4.0.0
 
-  zod-validation-error@4.0.2(zod@4.3.6):
+  zod-validation-error@4.0.2(zod@4.0.0):
     dependencies:
-      zod: 4.3.6
+      zod: 4.0.0
 
   zod@3.24.4: {}
 
-  zod@4.3.6: {}
+  zod@4.0.0: {}
