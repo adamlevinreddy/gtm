@@ -1,0 +1,1509 @@
+{
+  "categories": {
+    "ccaas": {
+      "label": "CCaaS / Contact Center Platforms",
+      "action": "exclude"
+    },
+    "ai_voice": {
+      "label": "AI / Conversational AI / Voice AI Vendors",
+      "action": "exclude"
+    },
+    "quality_analytics_wfm": {
+      "label": "Quality / Analytics / WFM / CX Platforms",
+      "action": "exclude"
+    },
+    "workforce_training_km": {
+      "label": "Workforce / Training / Knowledge Management",
+      "action": "exclude"
+    },
+    "consulting": {
+      "label": "Consulting / Advisory / Systems Integrators",
+      "action": "exclude"
+    },
+    "telecom_infrastructure": {
+      "label": "Telecom / Infrastructure Vendors",
+      "action": "exclude"
+    },
+    "cloud_bigtech": {
+      "label": "Cloud / Big Tech (selling CX/CC solutions)",
+      "action": "exclude"
+    },
+    "crm_saas_martech": {
+      "label": "CRM / SaaS / Marketing Tech (selling to CC)",
+      "action": "exclude"
+    },
+    "compliance_security": {
+      "label": "Compliance / Identity / Security (selling to CC)",
+      "action": "exclude"
+    },
+    "self": {
+      "label": "Reddy (ourselves)",
+      "action": "exclude"
+    }
+  },
+  "companies": [
+    {
+      "name": "8x8",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Accenture",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Accolade",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Afiniti",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Alaska Communications",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Alhena AI",
+      "aliases": [
+        "Alhena"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Alithya",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Alvaria",
+      "aliases": [
+        "Alvaria, Inc."
+      ],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "AmplifAI",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ASAPP",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Aspect",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Assembled",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Astor Group",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "AudioCodes",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Avanade",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "AWS",
+      "aliases": [
+        "Amazon Web Services"
+      ],
+      "category": "cloud_bigtech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Balto",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Black Box",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Bland.ai",
+      "aliases": [
+        "Bland"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Bluip",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "BT",
+      "aliases": [
+        "EE, BT & Plusnet"
+      ],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Bucher + Suter",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Bucher + Suter Inc",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "C-lect Consulting",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Calabrio",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Call Simulator, Inc.",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Caller ID Reputation",
+      "aliases": [],
+      "category": "compliance_security",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CallMiner",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CallTrackingMetrics",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Capacity",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cartesia",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CaseGuard",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CCT Software LLC",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Centrical",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CH Consulting Group",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cinareo",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cisco",
+      "aliases": [
+        "Cisco (contact center division)",
+        "Cisco Systems",
+        "Webex by Cisco"
+      ],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ClearMash solutions Ltd",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cognigy",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CollaborationRoom.ai",
+      "aliases": [
+        "CollaborationRoom.aiq",
+        "collaborationroom.ai"
+      ],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CommBox",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "CommunityWFM",
+      "aliases": [
+        "Community WFM"
+      ],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Contact Center Compliance",
+      "aliases": [
+        "CONTACT CENTER COMPLIANCE"
+      ],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Content Guru",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Corporate Advisory Solutions",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Creovai",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cresta",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Cyara",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "D&M Enterprise Group",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Daon",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Datamatics",
+      "aliases": [
+        "Datamatics Global Services"
+      ],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Datanitiv Inc.",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Decagon",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Deepgram",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Diabolocom",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Dialpad",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Do Curious",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "DoraB Global",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "E Custom Solutions",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "eGain corporation",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "elevate2Great & SwitchGear Ltd",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ElevenLabs",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ELR Solutions LLC",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "em-tel communications corp",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Ema",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Emailgistics",
+      "aliases": [
+        "Emailgistics Corp."
+      ],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "First Class Connection Corp",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "First Orion",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Five9",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Forethought",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Foxhaven Asset Management",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "FreeClimb",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Freshworks",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Front",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Genesys",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Gladly",
+      "aliases": [
+        "Gladly Software"
+      ],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Goodcall",
+      "aliases": [
+        "Goodcall AI"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Google Cloud",
+      "aliases": [
+        "Google"
+      ],
+      "category": "cloud_bigtech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Havana CX",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Here®",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "HiringBranch",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Hiya",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "IBM",
+      "aliases": [],
+      "category": "cloud_bigtech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ID.me (vendor context)",
+      "aliases": [],
+      "category": "compliance_security",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ImpactLivesCX",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Industrial Networks",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "InMoment",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Inoria - A CallTower Company",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Insight Global - Evergreen",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "InterVision",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "INTO AI",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Invoca",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Journeyfront",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "K2D Group",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Klearcom",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "KMS Lighthouse",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Kore.ai",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "KPMG",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Krisp",
+      "aliases": [
+        "Krisp.AI"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Laivly",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Language I/O",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Level AI",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "LivePerson",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "LiveX AI Inc",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Local Measure",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Loren Meirose LLC",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Lorikeet",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Loris",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "MaestroQA",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Medallia",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Meridian IT Inc.",
+      "aliases": [
+        "Meridian IT Inc"
+      ],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Microsoft",
+      "aliases": [],
+      "category": "cloud_bigtech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Modulate",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Mosaicx",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "NeuraFlash",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Nextiva",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "NICE",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Nurix AI",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Observe.AI",
+      "aliases": [
+        "Obsereve.AI"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Omilia",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ONR BespokeCX",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Operata",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Parloa",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Pathstream",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Pegasystems",
+      "aliases": [
+        "Pega"
+      ],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Perficient",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Pindrop",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "PingPlotter for Contact Centers",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Pipkins, Inc.",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Plymale Enterprise Group, LLC",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "PolyAI",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "PossibleNOW",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Procedureflow",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Proponisi",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Prosodica",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "PTP",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Qualtrics",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Rasa",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Reaction Space",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Readymode",
+      "aliases": [
+        "READYMODE"
+      ],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Reddy",
+      "aliases": [],
+      "category": "self",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ReflexAI",
+      "aliases": [
+        "ReflexAI.com"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Regal.ai",
+      "aliases": [
+        "Regal"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Replicant",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Rime",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "RingCentral",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Salesforce",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Sanas",
+      "aliases": [
+        "Sanas.AI Inc.",
+        "Sanas.ai"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Savvy Service Pro Learning Solutions",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SearchUnify",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SecureLogix",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "ServiceNow",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SESTEK",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Shelf",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Shepard Presentations, LLC",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Sierra",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Smile.CX",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Snap Recordings",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Solid Rock Consulting",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Solidroad inc.",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Solutions By Text",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SoundHound AI",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SPAR Solutions",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Spectrum",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Spill the T Consulting, LLC",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Sprinklr",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SupportLogic",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "SymTrain",
+      "aliases": [
+        "Symtrain"
+      ],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Synthflow AI",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Talkdesk",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TASKE Technology",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Tata Communications",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TekVision",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Televox",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TheLoops AI",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Think Forward",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Thunder Consulting, Inc.",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TouchPoint One",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TPG Inc.",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TransPerfect",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "TruelioCX",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Twilio",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "UJET",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Upland Software",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "USU",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Vail Systems",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "VERIDAS",
+      "aliases": [],
+      "category": "compliance_security",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Verint",
+      "aliases": [
+        "Verint Systems Inc"
+      ],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Verizon Business",
+      "aliases": [
+        "Verizon Business Group"
+      ],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Verse.ai",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Virsae",
+      "aliases": [],
+      "category": "quality_analytics_wfm",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Vogent",
+      "aliases": [],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Vonage",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Waterfield Tech",
+      "aliases": [],
+      "category": "telecom_infrastructure",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Whatfix",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Whippy",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Wimprove",
+      "aliases": [],
+      "category": "consulting",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Zenarate",
+      "aliases": [],
+      "category": "workforce_training_km",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Zendesk",
+      "aliases": [],
+      "category": "crm_saas_martech",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Zingly.ai",
+      "aliases": [
+        "Zingly"
+      ],
+      "category": "ai_voice",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    },
+    {
+      "name": "Zoom",
+      "aliases": [],
+      "category": "ccaas",
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025"
+    }
+  ]
+}
