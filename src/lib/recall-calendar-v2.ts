@@ -38,6 +38,13 @@ export function buildDefaultBotConfig() {
   // not until a long silence or meeting end), so for live "what was
   // just said" queries we also need transcript.partial_data, which
   // streams in-progress words as they arrive.
+  //
+  // participant_events.chat_message captures the in-meeting chat panel.
+  // Recall does NOT record chat unless this event is subscribed — there
+  // is no separate `chat` recording_config artifact; once subscribed,
+  // chat messages also land in the post-meeting participant_events
+  // artifact (action="chat_message"), which the webhook persists to
+  // chat.txt alongside transcript.txt.
   const realtimeEndpoints = realtimeToken
     ? [
         {
@@ -48,7 +55,7 @@ export function buildDefaultBotConfig() {
           // skipTrailingSlashRedirect setting in next.config.ts so this
           // form hits the route handler directly (no 308 redirect).
           url: `${baseUrl}/api/recall/rt/ingest/?token=${encodeURIComponent(realtimeToken)}`,
-          events: ["transcript.data", "transcript.partial_data"],
+          events: ["transcript.data", "transcript.partial_data", "participant_events.chat_message"],
         },
       ]
     : [];

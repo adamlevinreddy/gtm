@@ -220,6 +220,74 @@ export async function fetchParticipants(bot: RecallBot): Promise<RecallParticipa
   }
 }
 
+// ────────── In-meeting chat ──────────
+
+export type RecallChatMessage = {
+  ts: string | null; // absolute ISO timestamp
+  rel: number | null; // seconds relative to recording start
+  speaker: string | null;
+  email: string | null;
+  to: string | null; // recipient ("everyone" for public messages)
+  text: string;
+};
+
+// Fetch the in-meeting chat log for a bot. Chat messages ride on the
+// participant_events artifact (action="chat_message"); they are only
+// present if the bot subscribed to participant_events.chat_message at
+// create time (see buildDefaultBotConfig). Returns [] on any failure or
+// if the meeting had no chat — best-effort, never throws into the
+// webhook path.
+export async function fetchChatMessages(bot: RecallBot): Promise<RecallChatMessage[]> {
+  const url = bot.recordings?.[0]?.media_shortcuts?.participant_events?.data?.participant_events_download_url;
+  if (!url) return [];
+  try {
+    const res = await fetch(url, { headers: { Authorization: authHeader() } });
+    if (!res.ok) return [];
+    const raw = await res.json();
+    const events = Array.isArray(raw) ? raw : [];
+    const out: RecallChatMessage[] = [];
+    for (const ev of events) {
+      if (!ev || typeof ev !== "object") continue;
+      const e = ev as {
+        action?: string;
+        timestamp?: { absolute?: string; relative?: number };
+        participant?: { name?: string; email?: string | null };
+        data?: { text?: string; to?: string } | null;
+      };
+      if (e.action !== "chat_message") continue;
+      const text = e.data?.text?.trim();
+      if (!text) continue;
+      out.push({
+        ts: e.timestamp?.absolute ?? null,
+        rel: e.timestamp?.relative ?? null,
+        speaker: e.participant?.name ?? null,
+        email: e.participant?.email ?? null,
+        to: e.data?.to ?? null,
+        text,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// Render chat messages as a plain-text log for KB storage, mirroring
+// transcriptToText. Each line: "[ISO ts] Speaker (to X): message".
+export function chatMessagesToText(messages: RecallChatMessage[]): string {
+  return messages
+    .map((m) => {
+      const who = m.speaker || m.email || "Unknown";
+      const stamp = m.ts ? `[${m.ts}] ` : "";
+      const to = m.to && m.to.toLowerCase() !== "everyone" ? ` (to ${m.to})` : "";
+      const text = m.text.trim();
+      if (!text) return "";
+      return `${stamp}${who}${to}: ${text}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 // Fetch a fresh signed video download URL for a completed bot. Recall's
 // download URLs expire (~hours), so we never persist them — agent calls
 // this just-in-time when it needs to share a video.

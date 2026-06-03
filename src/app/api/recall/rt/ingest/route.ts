@@ -45,10 +45,14 @@ type RealtimePayload = {
         name?: string;
         email?: string | null;
       };
+      timestamp?: { absolute?: string; relative?: number };
       words?: Array<{
         text?: string;
         start_timestamp?: { relative?: number };
       }>;
+      // participant_events.chat_message payload nests the message body
+      // one level deeper than transcript events.
+      data?: { text?: string; to?: string };
     };
   };
 };
@@ -95,9 +99,36 @@ export async function POST(req: NextRequest) {
   const words = inner?.words ?? [];
   const isFinal = eventName === "transcript.data";
   const isPartial = eventName === "transcript.partial_data";
-  if (!botId || (!isFinal && !isPartial)) {
+  const isChat = eventName === "participant_events.chat_message";
+  if (!botId || (!isFinal && !isPartial && !isChat)) {
     console.log(`[realtime] ignored event=${eventName} bot=${botId ?? "?"}`);
     return NextResponse.json({ ok: true, ignored: eventName });
+  }
+
+  // In-meeting chat. Buffer to a per-bot list so live readers can see
+  // chat during the call; the webhook also persists chat.txt to the KB
+  // post-meeting from the participant_events artifact (durable copy).
+  if (isChat) {
+    const chatText = inner?.data?.text?.trim();
+    if (!chatText) return NextResponse.json({ ok: true, skipped: "empty chat" });
+    const chatLine = {
+      ts: inner?.timestamp?.absolute ?? new Date().toISOString(),
+      rel: inner?.timestamp?.relative ?? null,
+      speaker: inner?.participant?.name ?? null,
+      email: inner?.participant?.email ?? null,
+      to: inner?.data?.to ?? null,
+      text: chatText,
+    };
+    const chatKey = `recall:rt:${botId}:chat`;
+    try {
+      await kv.rpush(chatKey, JSON.stringify(chatLine));
+      await kv.expire(chatKey, LIST_TTL_SECONDS);
+      await kv.ltrim(chatKey, -MAX_LINES_PER_BOT, -1);
+      console.log(`[realtime] chat bot=${botId} from=${chatLine.speaker ?? "?"} chars=${chatText.length}`);
+    } catch (err) {
+      console.error(`[realtime] chat kv write failed bot=${botId}: ${err instanceof Error ? err.message : err}`);
+    }
+    return NextResponse.json({ ok: true });
   }
   if (words.length === 0) {
     return NextResponse.json({ ok: true, skipped: "empty words" });

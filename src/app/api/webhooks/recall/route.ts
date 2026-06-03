@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   attributeCustomer,
   fetchBot,
+  fetchChatMessages,
   fetchParticipants,
   fetchTranscript,
+  chatMessagesToText,
   transcriptToText,
   verifyWebhookSignature,
   type RecallBot,
@@ -259,6 +261,7 @@ type ExistingMeta = {
   video?: { oid: string; size: number } | null;
   mux?: { asset_id: string; playback_id: string } | null;
   has_transcript?: boolean;
+  has_chat?: boolean;
   schema_version?: number;
 };
 
@@ -343,6 +346,24 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
     reasons.push(`transcript (${transcriptText.length} chars)`);
   }
 
+  // In-meeting chat — commit chat.txt once and only if the meeting
+  // actually had chat. Chat messages live in the participant_events
+  // artifact (action="chat_message"), captured because the bot
+  // subscribes to participant_events.chat_message. Gated on !has_chat so
+  // we don't re-commit on later reconcile passes; fetchChatMessages
+  // returns [] when the artifact isn't ready yet, so a later event
+  // (recording.done / transcript.done) will pick it up.
+  let hasChat = !!existing.has_chat;
+  if (!existing.has_chat) {
+    const chatMessages = await fetchChatMessages(bot);
+    if (chatMessages.length > 0) {
+      const chatText = chatMessagesToText(chatMessages);
+      filesToCommit.push({ path: `${dir}/chat.txt`, utf8: chatText });
+      hasChat = true;
+      reasons.push(`chat (${chatMessages.length} msgs)`);
+    }
+  }
+
   // Always rewrite meta.json with the merged view (cheap; tree commits
   // dedupe identical content via blob SHA).
   const metaText = mergedMetaJson({
@@ -354,6 +375,7 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
     muxAssetId,
     muxPlaybackId,
     hasTranscript,
+    hasChat,
     liveParticipants,
     liveTitle,
   });
@@ -428,10 +450,11 @@ function mergedMetaJson(opts: {
   muxAssetId: string | null;
   muxPlaybackId: string | null;
   hasTranscript: boolean;
+  hasChat: boolean;
   liveParticipants: RecallParticipant[];
   liveTitle: string | null;
 }): string {
-  const { bot, slug, attribution, videoOid, videoSize, muxAssetId, muxPlaybackId, hasTranscript, liveParticipants, liveTitle } = opts;
+  const { bot, slug, attribution, videoOid, videoSize, muxAssetId, muxPlaybackId, hasTranscript, hasChat, liveParticipants, liveTitle } = opts;
   const participants = liveParticipants.length > 0
     ? liveParticipants
     : (bot.meeting_metadata?.participants ?? []);
@@ -463,6 +486,7 @@ function mergedMetaJson(opts: {
       video: videoOid && videoSize != null ? { oid: videoOid, size: videoSize } : null,
       mux: muxAssetId && muxPlaybackId ? { asset_id: muxAssetId, playback_id: muxPlaybackId } : null,
       has_transcript: hasTranscript,
+      has_chat: hasChat,
       schema_version: 2,
     },
     null,
