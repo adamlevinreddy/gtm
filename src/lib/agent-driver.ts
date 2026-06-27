@@ -417,19 +417,28 @@ async function main() {
   }
 
   const queryOptions = {
-    model: "claude-opus-4-7",
+    model: "claude-opus-4-8",
     systemPrompt: { type: "preset", preset: "claude_code", append: ${JSON.stringify(APPEND_SYSTEM_PROMPT)} },
     cwd: "/vercel/sandbox/workspace",
     additionalDirectories: ["/vercel/sandbox"],
     settingSources: ["project"],
     allowedTools: [
-      "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "TodoWrite", "Task",
+      "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "TodoWrite",
+      // Subagent fan-out + orchestration. "Agent" is the current SDK name for the
+      // subagent tool (renamed from "Task"); keep both so it works across SDK versions.
+      // "Workflow" lets the bot orchestrate large off-thread batch jobs (audits,
+      // multi-customer research). Subagent definitions live in the KB at .claude/agents/
+      // and load via settingSources:["project"].
+      "Task", "Agent", "Workflow",
       "mcp__reddy-gtm__post_slack_message",
       "mcp__reddy-gtm__upload_slack_pdf",
       "mcp__reddy-gtm__fetch_url",
     ],
     mcpServers,
     thinking: { type: "adaptive" },
+    // Highest practical effort for an INTERACTIVE agent (a Slack user is waiting).
+    // "max" is also valid on Opus 4.8 but risks overthinking/latency in the loop;
+    // bump to "max" for unattended/proactive runs where correctness > latency.
     effort: "xhigh",
     maxTurns: ${MAX_TURNS},
     permissionMode: "bypassPermissions",

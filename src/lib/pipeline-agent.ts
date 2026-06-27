@@ -210,7 +210,7 @@ async function extractBatch(batchIndex) {
 
   try {
     const response = await client.messages.create({
-      model: "anthropic/claude-opus-4.6",
+      model: "anthropic/claude-opus-4.8",
       max_tokens: 128000,
       system: EXTRACTION_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
@@ -708,7 +708,7 @@ log('AGENT', 'Sending initial message to Claude...');
 let response;
 try {
   response = await client.messages.create({
-    model: "anthropic/claude-opus-4.6",
+    model: "anthropic/claude-opus-4.8",
     max_tokens: 128000,
     system: SYSTEM_PROMPT,
     tools: TOOLS,
@@ -769,7 +769,7 @@ while (response.stop_reason === "tool_use" && turns < MAX_TURNS) {
 
   try {
     response = await client.messages.create({
-      model: "anthropic/claude-opus-4.6",
+      model: "anthropic/claude-opus-4.8",
       max_tokens: 128000,
       system: SYSTEM_PROMPT,
       tools: TOOLS,

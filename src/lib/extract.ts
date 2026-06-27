@@ -134,7 +134,7 @@ async function processAgent(batchIndex) {
 
   try {
     const response = await client.messages.create({
-      model: "anthropic/claude-opus-4.6",
+      model: "anthropic/claude-opus-4.8",
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],

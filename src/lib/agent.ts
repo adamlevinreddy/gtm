@@ -202,7 +202,7 @@ try {
 
   // Agentic tool-use loop
   let response = await client.messages.create({
-    model: "anthropic/claude-opus-4.6",
+    model: "anthropic/claude-opus-4.8",
     max_tokens: 16000,
     thinking: { type: "adaptive" },
     system: enhancedSystem,
@@ -232,7 +232,7 @@ try {
     messages.push({ role: "user", content: toolResults });
 
     response = await client.messages.create({
-      model: "anthropic/claude-opus-4.6",
+      model: "anthropic/claude-opus-4.8",
       max_tokens: 16000,
       thinking: { type: "adaptive" },
       system: enhancedSystem,
