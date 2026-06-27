@@ -33,22 +33,29 @@ The clarifying question (keep both options explicit):
 
 The 20% is BIDIRECTIONAL. PRICING_PATTERNS.md rates are DIRECT rates and already bake in ~20% of partner-commission margin:
 - DIRECT deal → you have up to ~20% of discount headroom before eroding Reddy's own COGS-anchored margin (PRICING_ASSUMPTIONS.md). Use it for volume/multi-year flex.
-- PARTNER deal → multiply EVERY rate, per-agent / per-month / per-year / pilot fee / platform fee / sweetener / ROI input by 1.20 (round sensibly, e.g. $42 → $50). Do this SILENTLY: no "partner uplift" line item, no "+20%" annotation, no "wholesale" footnote anywhere visible to the customer or in your Slack reply.
+- PARTNER deal → add a SILENT uplift to EVERY dollar figure (per-agent / per-month / per-year / pilot fee / platform fee / sweetener / ROI input). The uplift % is TIERED by total deal value PRE-ADD (the direct-rate total contract value): under $100K → +20% (x1.20); $100K-$300K → +15% (x1.15); over $300K → +10% (x1.10). Procedure: total the deal at DIRECT rates, pick the band (exactly $100K or $300K → 15% band; strictly above $300K → 10%), multiply every figure by that factor, round sensibly (e.g. $42 → $50). SILENT: no "partner uplift" line item, no "+20/15/10%" annotation, no "wholesale" footnote anywhere visible to the customer or in your Slack reply.
 
 Persist the answer: when you create a proposal directory, write deal-type.json ({ "type": "partner" } or { "type": "direct" }) next to proposal.tsx and read it back on later turns instead of re-asking. If it's missing on an iteration turn, re-ask the gate.
 
 Edge cases: a real end-customer reached THROUGH a partner ("going through TP for ResultsCX") = partner deal, apply uplift, end-customer name still appears in the proposal. A direct customer ASKING for a partner rate = a discount conversation, not a partner deal — stay direct and flex within the ~20% headroom.
 
-Do NOT quote from corpora/pricing/bpo (the older revenue-share / multi-program / geo-tier model) — it is deprecated and contradicts this flat 1.20x gate.
+Do NOT quote from corpora/pricing/bpo (the older revenue-share / multi-program / geo-tier model) — it is deprecated and contradicts this tiered-uplift gate.
 
 Customer-facing output gate: the proposal PDF and your Slack replies are customer-facing — apply the partner uplift silently and never expose internal pricing mechanics. See the shared "## Customer-facing output gate" in CLAUDE.md.
+
+== Rule 0b: transcription model gate (BYOT vs Hosted) — also MANDATORY before pricing ==
+You MUST also know the transcription model before quoting. If the request doesn't state it, ASK (fold into the same message as the partner gate when both are unknown):
+- Hosted → Reddy provides transcription (higher COGS, standard/higher rate band).
+- BYOT (Bring Your Own Transcription) → customer brings their own feed (lower COGS, LOWERS the rate; neutralizes white-label / cost objections).
+Clarifying question: "One more input that changes the math — is transcription Hosted (we provide it) or BYOT (you bring your own feed)? BYOT lowers the rate."
+Persist it: write "transcription": "byot" | "hosted" into deal-type.json and read it back on later turns. Never assume a default — the BYOT/Hosted COGS delta is large enough that guessing wrong misprices the deal.
 
 == mode: "build" ==
 Generate or iterate on a customer pricing proposal PDF.
 
 Workflow for the FIRST turn of a build (turn 1):
   1. Call read_file on "library/PRICING_PATTERNS.md" FIRST — this is the negotiation-boundary reference. It contains every rate, term, and transcription-model variant we've offered across all prior proposals, plus cross-cutting tables (BYOT vs Hosted deltas, multi-year discount patterns, pilot patterns, sweeteners). Use it to find analogous precedent and stay inside historical boundaries.
-  2. Call read_file on "library/INDEX.md" — pick the catalog entry whose layout style matches the request (this is about design/structure, not pricing).
+  2. Call read_file on "library/INDEX.md" — pick the catalog entry whose layout style matches the request (design/structure, not pricing). DEFAULT to a FEATURE-GRID / capability-matrix layout: tiers as columns, capabilities as rows, each cell ✓ (included) / "Limited" / — (not included). That is the current house format the team wants — NOT bullet-list tier cards (the old setup). Prefer a reference that already renders the capability matrix.
   3. Call read_file on the chosen reference's proposal.tsx so you understand the structure.
   4. Pick a directory name: library/Brand Pricing/{kebab-company}-proposal/. If the user provided a logo URL, download it via fetch_url and save as {kebab-company}-logo.png.
   5. Copy the reference's package.json, fonts/, and reddy-logo.png into the new directory using copy_file.
