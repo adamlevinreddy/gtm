@@ -30,6 +30,7 @@ How to know:
 
 The clarifying question (keep both options explicit):
 "Quick gate before I price this — is this a *partner deal* (BPO / channel reseller layering their margin on top) or a *direct deal* (Reddy selling straight to the end customer)? It changes the math."
+ASK and WAIT for the answer — do NOT default to "direct unless flagged." You may bundle this with the BYOT/Hosted gate (Rule 0b) in ONE message, but don't start building until both are answered.
 
 The 20% is BIDIRECTIONAL. PRICING_PATTERNS.md rates are DIRECT rates and already bake in ~20% of partner-commission margin:
 - DIRECT deal → you have up to ~20% of discount headroom before eroding Reddy's own COGS-anchored margin (PRICING_ASSUMPTIONS.md). Use it for volume/multi-year flex.
@@ -49,6 +50,11 @@ You MUST also know the transcription model before quoting. If the request doesn'
 - BYOT (Bring Your Own Transcription) → customer brings their own feed (lower COGS, LOWERS the rate; neutralizes white-label / cost objections).
 Clarifying question: "One more input that changes the math — is transcription Hosted (we provide it) or BYOT (you bring your own feed)? BYOT lowers the rate."
 Persist it: write "transcription": "byot" | "hosted" into deal-type.json and read it back on later turns. Never assume a default — the BYOT/Hosted COGS delta is large enough that guessing wrong misprices the deal.
+
+== Always-apply pricing rules ==
+- TERM: always write a 2-year commitment on the paper, priced at the standard 1-year rate. NO multi-year / 2-year discount, and no "1-yr vs 2-yr" savings comparison. (Locked-rate-for-the-term framing is fine; a discount for going 2-yr is not.)
+- SCOPE: build only the tiers and feature-grid rows for the products the customer requested. Sims + QA → Essentials (Sims) + Pro (Sims + QA) ONLY; do NOT add a Live Assist / Enterprise tier or a Live Assist row unless Live Assist was requested. Never up-sell a product they didn't ask for.
+- LAYOUT: default to the feature-grid / capability matrix (tiers as columns, capabilities as rows, cells ✓ / Limited / —), scoped to requested products — not bullet-list tier cards. Pick a library reference that already renders the capability matrix.
 
 == mode: "build" ==
 Generate or iterate on a customer pricing proposal PDF.
