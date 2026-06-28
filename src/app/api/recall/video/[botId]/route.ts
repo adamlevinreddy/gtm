@@ -96,6 +96,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
   const filename = `${customerSlug}-${botId.slice(0, 8)}.mp4`;
 
   if (inline) {
+    const isPartial = upstream.status === 206;
     const headers = new Headers({
       "Content-Type": "video/mp4",
       "Content-Disposition": `inline; filename="${filename}"`,
@@ -104,10 +105,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
     });
     const cr = upstream.headers.get("content-range");
     if (cr) headers.set("Content-Range", cr);
-    const cl = upstream.headers.get("content-length") ?? String(obj.size);
-    headers.set("Content-Length", cl);
-    // 206 if the CDN honored the Range request, else 200.
-    return new NextResponse(upstream.body, { status: upstream.status === 206 ? 206 : 200, headers });
+    // Content-Length must match the BODY. On a 206 the body is only the
+    // requested chunk — never the full object size. Prefer the upstream
+    // length; on a partial without one, derive it from Content-Range; on a
+    // full response fall back to obj.size. Never force obj.size on a 206
+    // (that stalls <video> seeking when the CDN omits content-length).
+    const upstreamCl = upstream.headers.get("content-length");
+    if (upstreamCl) {
+      headers.set("Content-Length", upstreamCl);
+    } else if (!isPartial) {
+      headers.set("Content-Length", String(obj.size));
+    } else if (cr) {
+      const m = cr.match(/bytes\s+(\d+)-(\d+)\//);
+      if (m) headers.set("Content-Length", String(Number(m[2]) - Number(m[1]) + 1));
+    }
+    return new NextResponse(upstream.body, { status: isPartial ? 206 : 200, headers });
   }
 
   return new NextResponse(upstream.body, {

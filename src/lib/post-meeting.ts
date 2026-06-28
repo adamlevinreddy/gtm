@@ -330,14 +330,15 @@ export async function executeProposal(
       if (it.disposition === "update" && it.targetId) {
         const target = await getItem(it.targetId);
         if (target) {
-          await logActivity(it.targetId, {
+          const wrote = await logActivity(it.targetId, {
             kind: "logged_activity",
             actorKind: "human",
             actorEmail,
             body: it.note ?? it.title,
             dedupeKey: `pm:${botId}:upd:${it.targetId}:${it.title}`.slice(0, 180),
           });
-          res.updated += 1;
+          if (wrote) res.updated += 1;
+          else res.skipped += 1;
           continue;
         }
         // target deleted between propose and confirm → fall through to create

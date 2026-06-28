@@ -45,7 +45,10 @@ export async function POST(req: NextRequest) {
     title: body.title,
     kind: body.kind,
     status,
-    source: body.source ?? "manual",
+    // Infer post_meeting when a sourceRef (the meeting botId) is present so
+    // agent text-confirm creates link back to the meeting, matching the
+    // /api/board/subtask route and the deterministic button executor.
+    source: body.source ?? (body.sourceRef ? "post_meeting" : "manual"),
     boardId,
     ownerEmail: body.ownerEmail ?? actor,
     botAssigned: body.botAssigned ?? false,

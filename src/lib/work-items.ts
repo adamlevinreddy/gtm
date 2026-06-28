@@ -145,8 +145,11 @@ export type ActivityInput = {
   dedupeKey?: string | null;
 };
 
-export async function logActivity(workItemId: string, a: ActivityInput): Promise<void> {
-  await db
+// Returns true if a row was inserted, false if the dedupeKey collided (no-op).
+// Most callers ignore the result; the post-meeting executor uses it to report
+// an honest created-vs-skipped count on a double-confirm.
+export async function logActivity(workItemId: string, a: ActivityInput): Promise<boolean> {
+  const rows = await db
     .insert(workItemActivities)
     .values({
       workItemId,
@@ -158,7 +161,9 @@ export async function logActivity(workItemId: string, a: ActivityInput): Promise
       occurredAt: a.occurredAt ?? new Date(),
       dedupeKey: a.dedupeKey ?? null,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: workItemActivities.id });
+  return rows.length > 0;
 }
 export async function addComment(
   workItemId: string,
