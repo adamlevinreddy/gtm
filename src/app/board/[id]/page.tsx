@@ -191,6 +191,30 @@ export default async function WorkItemDetailPage({
           </div>
         </header>
 
+        {/* source meeting — watch the recording, read the transcript, ask Claude */}
+        {item.source === "post_meeting" && item.sourceRef && (
+          <section className="mt-5">
+            <Link
+              href={`/board/meeting/${item.sourceRef}${item.customerSlug ? `?from=${item.id}&customer=${item.customerSlug}` : `?from=${item.id}`}`}
+              className="flex items-center gap-3 rounded-xl border px-4 py-3 no-underline transition-colors hover:bg-white"
+              style={{ borderColor: "#E4DCE3", background: "#FBF8FB" }}
+            >
+              <span className="text-lg">🎥</span>
+              <span className="flex flex-col">
+                <span className="text-sm font-semibold" style={{ color: PLUM }}>
+                  From a meeting — watch the recording &amp; read the transcript
+                </span>
+                <span className="text-xs text-zinc-500">
+                  Open the meeting viewer to play the video, read the transcript, and ask Claude about it.
+                </span>
+              </span>
+              <span className="ml-auto text-sm" style={{ color: PLUM }}>
+                Open ↗
+              </span>
+            </Link>
+          </section>
+        )}
+
         {/* draft panel */}
         {drafts.length > 0 && (
           <section className="mt-5">

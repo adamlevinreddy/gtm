@@ -1,8 +1,81 @@
 import { WebClient } from "@slack/web-api";
+import crypto from "crypto";
 import { kv } from "./kv-client";
 
 function getSlackClient() {
   return new WebClient(process.env.SLACK_BOT_TOKEN);
+}
+
+/**
+ * Verify a Slack request signature (Events API / interactivity). Slack signs
+ * `v0:${timestamp}:${rawBody}` with the app's signing secret and sends the hex
+ * digest as `x-slack-signature: v0=<hex>` plus `x-slack-request-timestamp`.
+ * Mutating endpoints (the post-meeting confirm button) MUST verify this. Fails
+ * closed: a missing secret/header returns false. Best-effort — never throws.
+ */
+export function verifySlackSignature(
+  rawBody: string,
+  signature: string | null,
+  timestamp: string | null,
+  secret = process.env.SLACK_SIGNING_SECRET
+): boolean {
+  try {
+    if (!secret || !signature || !timestamp) return false;
+    // Replay guard: reject anything more than 5 minutes old.
+    const age = Math.abs(Date.now() / 1000 - Number(timestamp));
+    if (!Number.isFinite(age) || age > 300) return false;
+    const expected =
+      "v0=" + crypto.createHmac("sha256", secret).update(`v0:${timestamp}:${rawBody}`).digest("hex");
+    const a = Buffer.from(expected);
+    const b = Buffer.from(signature);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a Slack user id → email (the reverse of slackIdForEmail), KV-cached.
+ * Used to attribute a button click to a teammate. Returns null if unknown.
+ * Best-effort — never throws.
+ */
+export async function emailForSlackId(userId: string): Promise<string | null> {
+  if (!userId) return null;
+  const key = `slack:emailForId:${userId}`;
+  try {
+    const cached = await kv.get<string>(key);
+    if (cached) return cached;
+  } catch {
+    /* ignore cache miss */
+  }
+  try {
+    const res = await getSlackClient().users.info({ user: userId });
+    const email = res.user?.profile?.email ?? null;
+    if (email) await kv.set(key, email, { ex: 7 * 24 * 3600 }).catch(() => {});
+    return email;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST to a Slack response_url (from a slash command / interactivity payload).
+ * Used to replace the original message in place (e.g. swap the confirm button
+ * for a "✅ Created" state). Best-effort — never throws.
+ */
+export async function postToResponseUrl(
+  responseUrl: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  try {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 /**

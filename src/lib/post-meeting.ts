@@ -14,7 +14,20 @@
 
 import { kv } from "@/lib/kv-client";
 import { postToChannel, slackIdForEmail } from "@/lib/slack";
-import { boardUrl, selfBaseUrl, type WorkItemKind } from "@/lib/work-items";
+import {
+  boardUrl,
+  selfBaseUrl,
+  resolveBoardId,
+  createWorkItem,
+  createSubtask,
+  logActivity,
+  getItem,
+  type WorkItemKind,
+} from "@/lib/work-items";
+
+// action_id on the Slack "Confirm & create tasks" button → routed by the
+// interactivity endpoint. The button's value carries the meeting botId.
+export const CONFIRM_ACTION_ID = "pm_confirm_create";
 
 const VALID_KINDS: readonly WorkItemKind[] = [
   "pricing_proposal", "deck_qbr", "meeting_prep", "prep_custom_demo", "rfp_response",
@@ -254,13 +267,18 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     const channel = process.env.SALES_TESTING_CHANNEL_ID;
     if (channel) {
       try {
-        const res = await postToChannel(channel, buildSuggestionMessage(parsed, slackIds));
+        const res = await postToChannel(channel, buildSuggestionMessage(parsed, slackIds, botId));
         slackTs = res.ts;
       } catch { /* ignore Slack failures */ }
     }
+    // Stash the proposal under TWO keys: by message ts (the text-reply
+    // "@Reddy-GTM confirm" path looks up via thread_ts) and by botId (the
+    // Confirm button carries botId as its value).
+    const stored = { botId, ...parsed };
     if (slackTs) {
-      await kv.set(`postmeeting:proposal:${slackTs}`, { botId, ...parsed }, { ex: PROPOSAL_TTL }).catch(() => {});
+      await kv.set(`postmeeting:proposal:${slackTs}`, stored, { ex: PROPOSAL_TTL }).catch(() => {});
     }
+    await kv.set(proposalKeyForBot(botId), stored, { ex: PROPOSAL_TTL }).catch(() => {});
 
     const boards = Array.from(new Set(parsed.items.map((i) => i.boardKey)));
     return { ok: true, meetingType: parsed.meetingType, proposed: parsed.items.length, boards, ...(slackTs ? { slackTs } : {}) };
@@ -268,6 +286,104 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     await releaseClaim();
     return { ok: false, proposed: 0, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// ----------------------------------------------------------------------------
+// Confirm → create. The Slack "Confirm & create tasks" button (and the text
+// "@Reddy-GTM confirm" reply) resolve to executeProposal, which creates each
+// item DETERMINISTICALLY by its disposition — no agent round-trip. Every item
+// is stamped sourceRef=botId so it links back to the source meeting and the
+// (sourceRef, kind, title) unique index makes a double-confirm idempotent.
+// ----------------------------------------------------------------------------
+
+export type StoredProposal = { botId: string } & TriageResult;
+
+export function proposalKeyForBot(botId: string): string {
+  return `postmeeting:proposal:bot:${botId}`;
+}
+
+export async function getStoredProposal(botId: string): Promise<StoredProposal | null> {
+  if (!botId) return null;
+  return (await kv.get<StoredProposal>(proposalKeyForBot(botId)).catch(() => null)) ?? null;
+}
+
+export type ExecuteResult = {
+  ok: boolean;
+  created: number;
+  subtasks: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+};
+
+export async function executeProposal(
+  proposal: StoredProposal,
+  actorEmail: string
+): Promise<ExecuteResult> {
+  const res: ExecuteResult = { ok: true, created: 0, subtasks: 0, updated: 0, skipped: 0, errors: [] };
+  const botId = proposal.botId;
+  for (const it of proposal.items) {
+    try {
+      const payload = it.note ? { detail: it.note } : undefined;
+
+      // update → append to the existing card's activity ledger (no new card).
+      if (it.disposition === "update" && it.targetId) {
+        const target = await getItem(it.targetId);
+        if (target) {
+          await logActivity(it.targetId, {
+            kind: "logged_activity",
+            actorKind: "human",
+            actorEmail,
+            body: it.note ?? it.title,
+            dedupeKey: `pm:${botId}:upd:${it.targetId}:${it.title}`.slice(0, 180),
+          });
+          res.updated += 1;
+          continue;
+        }
+        // target deleted between propose and confirm → fall through to create
+      }
+
+      // subtask → child of the existing card.
+      if (it.disposition === "subtask" && it.targetId) {
+        const parent = await getItem(it.targetId);
+        if (parent) {
+          const child = await createSubtask(it.targetId, {
+            title: it.title,
+            kind: it.kind,
+            status: "approved",
+            source: "post_meeting",
+            ownerEmail: it.ownerEmail ?? null,
+            sourceRef: botId,
+            payload,
+            createdBy: actorEmail,
+          });
+          if (child) res.subtasks += 1;
+          else res.skipped += 1;
+          continue;
+        }
+        // parent gone → fall through to create a standalone card
+      }
+
+      // new (or fallback) → fresh card on its own board.
+      const created = await createWorkItem({
+        title: it.title,
+        kind: it.kind,
+        status: "approved",
+        source: "post_meeting",
+        boardId: await resolveBoardId(it.boardKey),
+        ownerEmail: it.ownerEmail ?? null,
+        sourceRef: botId,
+        payload,
+        createdBy: actorEmail,
+      });
+      if (created) res.created += 1;
+      else res.skipped += 1;
+    } catch (err) {
+      res.errors.push(`${it.title}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  res.ok = res.errors.length === 0;
+  return res;
 }
 
 // ----------------------------------------------------------------------------
@@ -291,7 +407,8 @@ function rowFor(it: TriageItem, slackIds: Record<string, string | null>): string
 
 function buildSuggestionMessage(
   parsed: TriageResult,
-  slackIds: Record<string, string | null>
+  slackIds: Record<string, string | null>,
+  botId: string
 ): { text: string; blocks: object[] } {
   const title = parsed.meetingTitle ?? "the meeting";
   const boardsWithItems = (VALID_BOARDS as readonly BoardKey[]).filter((b) =>
@@ -324,14 +441,26 @@ function buildSuggestionMessage(
         text: { type: "mrkdwn", text: `${BOARD_EMOJI[b]} *${BOARD_LABEL[b]} board* · ${parsed.items.filter((i) => i.boardKey === b).length}\n${rows}` },
       });
     }
+    // Primary CTA = an interactive Confirm button (no `url`, so Slack POSTs a
+    // block_actions payload to the interactivity endpoint). The per-board
+    // "Open <Board>" links are demoted to secondary url-buttons alongside it —
+    // they remain as shareable always-on links to each board.
     blocks.push({
       type: "actions",
-      elements: boardsWithItems.map((b) => ({
-        type: "button",
-        text: { type: "plain_text", text: `Open ${BOARD_LABEL[b]}`, emoji: true },
-        url: `${boardUrl()}?board=${b}`,
-        ...(b === boardsWithItems[0] ? { style: "primary" as const } : {}),
-      })),
+      elements: [
+        {
+          type: "button",
+          action_id: CONFIRM_ACTION_ID,
+          style: "primary" as const,
+          text: { type: "plain_text", text: "✅ Confirm & create tasks", emoji: true },
+          value: botId,
+        },
+        ...boardsWithItems.map((b) => ({
+          type: "button",
+          text: { type: "plain_text", text: `Open ${BOARD_LABEL[b]}`, emoji: true },
+          url: `${boardUrl()}?board=${b}`,
+        })),
+      ],
     });
   }
 
@@ -341,7 +470,7 @@ function buildSuggestionMessage(
       type: "mrkdwn",
       text:
         parsed.items.length
-          ? "Reply *“@Reddy-GTM confirm”* to create these on their boards — or say what to change (move an item to another board, reassign, drop it, make it a subtask). Nothing is created until you confirm."
+          ? "Click *Confirm & create tasks* to create these on their boards — or reply to say what to change (move an item to another board, reassign, drop it, make it a subtask). Nothing is created until you confirm."
           : "Nothing to create. Reply if you'd like me to add a task anyway.",
     }],
   });

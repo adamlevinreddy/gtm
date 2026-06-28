@@ -72,8 +72,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
     return NextResponse.json({ ok: false, error: "LFS object not available" }, { status: 404 });
   }
 
-  // Stream from GitHub's LFS CDN through Vercel with proper headers.
-  const upstream = await fetch(dl.url);
+  // `?inline=1` → play in an in-page <video> (the board meeting viewer) instead
+  // of downloading. We forward the browser's Range header so the LFS CDN serves
+  // a 206 partial and seeking works; otherwise we proxy the whole body.
+  const inline = req.nextUrl.searchParams.get("inline") === "1";
+  const range = req.headers.get("range");
+
+  const upstream = await fetch(
+    dl.url,
+    inline && range ? { headers: { Range: range } } : undefined,
+  );
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json(
       { ok: false, error: `LFS upstream ${upstream.status}` },
@@ -86,6 +94,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
   const segments = path.split("/");
   const customerSlug = segments[3] ?? "meeting";
   const filename = `${customerSlug}-${botId.slice(0, 8)}.mp4`;
+
+  if (inline) {
+    const headers = new Headers({
+      "Content-Type": "video/mp4",
+      "Content-Disposition": `inline; filename="${filename}"`,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, max-age=0, no-store",
+    });
+    const cr = upstream.headers.get("content-range");
+    if (cr) headers.set("Content-Range", cr);
+    const cl = upstream.headers.get("content-length") ?? String(obj.size);
+    headers.set("Content-Length", cl);
+    // 206 if the CDN honored the Range request, else 200.
+    return new NextResponse(upstream.body, { status: upstream.status === 206 ? 206 : 200, headers });
+  }
 
   return new NextResponse(upstream.body, {
     status: 200,

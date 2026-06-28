@@ -381,8 +381,8 @@ async function main() {
       ),
       tool(
         "board_create",
-        "Create a board work item. boardKey ∈ 'gtm'|'success'|'operations' (default gtm: gtm=pre-sale/prospects/unsigned pilots, success=signed customers, operations=internal). kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'.",
-        { title: z.string(), kind: z.string(), boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional() },
+        "Create a board work item. boardKey ∈ 'gtm'|'success'|'operations' (default gtm: gtm=pre-sale/prospects/unsigned pilots, success=signed customers, operations=internal). kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'. When creating from a post-meeting proposal, set sourceRef to the meeting botId so the task links back to its recording/transcript.",
+        { title: z.string(), kind: z.string(), boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional(), sourceRef: z.string().optional() },
         async (args) => boardFetch("create", args),
       ),
       tool(
@@ -405,8 +405,8 @@ async function main() {
       ),
       tool(
         "board_create_subtask",
-        "Create a subtask under a parent work item (e.g. a follow-up under an in-flight deal task). Pass {parentId, title, kind, ownerEmail?, dueAt?}.",
-        { parentId: z.string(), title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), dueAt: z.string().optional() },
+        "Create a subtask under a parent work item (e.g. a follow-up under an in-flight deal task). Pass {parentId, title, kind, ownerEmail?, dueAt?}. From a post-meeting proposal, set sourceRef to the meeting botId.",
+        { parentId: z.string(), title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), dueAt: z.string().optional(), sourceRef: z.string().optional() },
         async (args) => boardFetch("subtask", args),
       ),
       tool(
