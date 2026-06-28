@@ -253,12 +253,29 @@ export async function POST(req: NextRequest) {
           console.log(`[slack] forwarding ${slackFiles.length} file(s) to agent: ${slackFiles.map((f) => f.name).join(", ")}`);
         }
 
+        // Post-meeting confirm: if this mention is a reply in a thread that has
+        // a pending suggestion, inject the stashed proposal so the agent CREATES
+        // /UPDATES on approval (instead of re-proposing). The user can also
+        // correct routing/owners/dispositions in the same reply.
+        let proposalContext = "";
+        if (event.thread_ts) {
+          try {
+            const proposal = await kv.get(`postmeeting:proposal:${event.thread_ts}`);
+            if (proposal) {
+              proposalContext =
+                "\n\n[PENDING POST-MEETING PROPOSAL for this thread — the user is responding to it. Do NOT re-analyze the meeting or re-propose; ACT on it with the board tools. Proposal JSON: " +
+                JSON.stringify(proposal) +
+                ". If the user approves (e.g. 'confirm', 'yes', 'go', 'looks good', 'do it'), execute EACH item by its disposition on board `boardKey`: 'new' → board_create({boardKey, title, kind, ownerEmail}); 'subtask' → board_create_subtask({parentId: targetId, title, kind, ownerEmail}); 'update' → board_add_activity({id: targetId, kind:'logged_activity', body: note}). FIRST apply any corrections the user states (different board, owner, drop/add an item, change a disposition). Use board_list to avoid duplicating a card that already exists. After acting, reply with a concise list of exactly what you created/updated and the board link. Create ONLY what is in the (corrected) proposal.]";
+            }
+          } catch { /* ignore — proceed as a normal mention */ }
+        }
+
         const baseUrl = "https://gtm-jet.vercel.app";
         fetch(`${baseUrl}/api/agent`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            userText: rawText,
+            userText: rawText + proposalContext,
             slackChannel: channel,
             slackThreadTs: threadTs,
             slackUser: event.user,

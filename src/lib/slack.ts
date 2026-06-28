@@ -1,7 +1,31 @@
 import { WebClient } from "@slack/web-api";
+import { kv } from "./kv-client";
 
 function getSlackClient() {
   return new WebClient(process.env.SLACK_BOT_TOKEN);
+}
+
+/**
+ * Resolve a teammate email → Slack user id (for @mentions), KV-cached. Returns
+ * null if not found (caller falls back to the name). Best-effort — never throws.
+ */
+export async function slackIdForEmail(email: string): Promise<string | null> {
+  if (!email || !email.includes("@")) return null;
+  const key = `slack:idForEmail:${email.toLowerCase()}`;
+  try {
+    const cached = await kv.get<string>(key);
+    if (cached) return cached;
+  } catch {
+    /* ignore cache miss */
+  }
+  try {
+    const res = await getSlackClient().users.lookupByEmail({ email });
+    const id = res.user?.id ?? null;
+    if (id) await kv.set(key, id, { ex: 7 * 24 * 3600 }).catch(() => {});
+    return id;
+  } catch {
+    return null;
+  }
 }
 
 /**
