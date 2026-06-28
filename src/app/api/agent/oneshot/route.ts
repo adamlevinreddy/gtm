@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Sandbox } from "@vercel/sandbox";
+import { getOrCreateSandbox } from "@/lib/sandbox";
 import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
@@ -142,21 +143,21 @@ export async function POST(req: NextRequest) {
     // Reuse this teammate's persistent sandbox if one exists (warm =
     // ~10-30s per call). Cold start happens once per email per snapshot
     // expiry window.
-    let sandbox: Sandbox;
-    try {
-      sandbox = await Sandbox.get({ name: sandboxName, resume: true });
-      console.log(`[agent/oneshot] resumed sandbox for ${userEmail}`);
-    } catch {
-      sandbox = await Sandbox.create({
-        name: sandboxName,
-        resources: { vcpus: 4 },
-        timeout: SANDBOX_TIMEOUT_MS,
-        runtime: "node22",
-        persistent: true,
-        snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
-      });
-      console.log(`[agent/oneshot] created sandbox for ${userEmail}`);
-
+    const { sandbox, created } = await getOrCreateSandbox(
+      sandboxName,
+      () =>
+        Sandbox.create({
+          name: sandboxName,
+          resources: { vcpus: 4 },
+          timeout: SANDBOX_TIMEOUT_MS,
+          runtime: "node22",
+          persistent: true,
+          snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+        }),
+      (m) => console.log(`[agent/oneshot] ${m}`)
+    );
+    console.log(`[agent/oneshot] ${created ? "created" : "resumed"} sandbox for ${userEmail}`);
+    if (created) {
       await sandbox.runCommand({
         cmd: "pip3",
         args: ["install", "--quiet", "openpyxl", "python-docx", "pikepdf"],

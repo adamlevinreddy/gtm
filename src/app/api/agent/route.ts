@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Sandbox } from "@vercel/sandbox";
+import { getOrCreateSandbox } from "@/lib/sandbox";
 import { WebClient } from "@slack/web-api";
 import { kv } from "@/lib/kv-client";
 import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
@@ -90,22 +91,21 @@ export async function POST(req: NextRequest) {
     // Get-or-create the persistent sandbox. Sandbox.get auto-resumes stopped
     // sandboxes from their last auto-snapshot (filesystem restored); new
     // sandboxes get created and the library + node_modules bootstrap once.
-    let sandbox: Sandbox;
-    try {
-      sandbox = await Sandbox.get({ name: sandboxName, resume: true });
-      console.log(`[agent] Resumed ${sandboxName} (turn ${state.turnCount})`);
-    } catch (getErr) {
-      console.log(`[agent] Sandbox.get miss (${getErr instanceof Error ? getErr.message : String(getErr)}) — creating`);
-      sandbox = await Sandbox.create({
-        name: sandboxName,
-        resources: { vcpus: 4 },
-        timeout: SANDBOX_TIMEOUT_MS,
-        runtime: "node22",
-        persistent: true,
-        snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
-      });
+    const { sandbox, created } = await getOrCreateSandbox(
+      sandboxName,
+      () =>
+        Sandbox.create({
+          name: sandboxName,
+          resources: { vcpus: 4 },
+          timeout: SANDBOX_TIMEOUT_MS,
+          runtime: "node22",
+          persistent: true,
+          snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+        }),
+      (m) => console.log(`[agent] ${m}`)
+    );
+    if (created) {
       console.log(`[agent] Created persistent sandbox ${sandbox.name}`);
-
       // Bootstrap Python packages for document processing (RFP/security
       // questionnaire fill). Only runs on first creation — subsequent turns
       // restore from snapshot with packages already installed.
@@ -115,6 +115,8 @@ export async function POST(req: NextRequest) {
       }).catch((err: unknown) => {
         console.warn(`[agent] Python package install failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
       });
+    } else {
+      console.log(`[agent] Resumed ${sandboxName} (turn ${state.turnCount})`);
     }
 
     // Reset the idle timer on every turn — sandbox stays alive as long as
