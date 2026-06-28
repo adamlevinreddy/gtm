@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { loadMeeting } from "@/lib/meeting-viewer";
-import MeetingChat from "./MeetingChat";
+import MeetingChatStream from "../MeetingChatStream";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -140,7 +140,16 @@ export default async function MeetingViewerPage({
                 className="lg:sticky lg:top-7 flex h-[78vh] flex-col overflow-hidden rounded-xl border bg-white"
                 style={{ borderColor: "#E4DCE3" }}
               >
-                <MeetingChat botId={meeting.botId} />
+                <MeetingChatStream
+                  botIds={[meeting.botId]}
+                  starters={[
+                    "Summarize this meeting",
+                    "What are the action items and who owns them?",
+                    "What objections or concerns came up?",
+                    "What did we commit to?",
+                  ]}
+                  placeholder="Ask about this meeting…"
+                />
               </div>
             </div>
           </div>

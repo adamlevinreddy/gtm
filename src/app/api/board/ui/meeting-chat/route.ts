@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { selfBaseUrl } from "@/lib/work-items";
 
-// Browser-facing chat proxy for the board meeting viewer. The client posts a
-// question about a meeting; we resolve the viewer (board cookie), build a
-// transcript-scoped prompt, and forward to /api/agent/oneshot holding
-// MCP_INTERNAL_SECRET server-side (the browser never sees it). Mirrors the
-// auth model of the other /api/board/ui/* routes.
+// Browser-facing chat for the meetings view. Routes through the SAME agent
+// primitive as the Slack bot (/api/agent/oneshot → buildAgentDriver), so it has
+// the full toolset (board create/update, HubSpot, KB) and obeys the same
+// guardrails. One brain across Slack, the meetings view, and (later) Gmail —
+// improving agent-driver.ts improves all of them. Non-streaming under the hood
+// (the sandbox agent returns a final answer); we pseudo-stream it back so the
+// panel types it out. Body: { botIds: string[], messages: [{role,content}] }.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 300;
 
 const VIEWER_COOKIE = "board_viewer";
+const MAX_BOTS = 15;
 
 function resolveViewer(req: NextRequest, bodyAs?: unknown): string {
   if (typeof bodyAs === "string" && bodyAs.includes("@")) return bodyAs;
@@ -21,12 +24,47 @@ function resolveViewer(req: NextRequest, bodyAs?: unknown): string {
   return process.env.BOARD_DEFAULT_VIEWER || "adam@reddy.io";
 }
 
-type Body = {
-  botId?: string;
-  question?: string;
-  history?: Array<{ role?: string; text?: string }>;
-  as?: string;
-};
+type ChatMsg = { role: "user" | "assistant"; content: string };
+type Body = { botIds?: unknown; messages?: unknown; as?: string };
+
+function buildPrompt(botIds: string[], messages: ChatMsg[]): string {
+  const scope =
+    botIds.length === 1
+      ? `the meeting with bot id ${botIds[0]}`
+      : `these ${botIds.length} meetings (bot ids: ${botIds.join(", ")})`;
+  const convo = messages
+    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .join("\n");
+  return [
+    `You are the Reddy GTM assistant — the SAME bot as in Slack — answering inside the board's meetings view. The user is focused on ${scope}.`,
+    `Read the transcript(s) + metadata from the cloned KB ('_unsorted' is a real slug, so glob) for EACH bot id:`,
+    `  corpora/success/customers/*/meetings/<botId>/transcript.txt  and  .../meta.json`,
+    `Ground your answers in these meetings. You have your full toolset: when the user asks you to ACT — create/update a board task (board_*), log to or update HubSpot, draft a follow-up, etc. — do it, following the usual guardrails (anything customer-facing is draft/suggest-only, never auto-sent; respect task ownership; confirm-first for risky changes). When you create or change something, state exactly what you did.`,
+    `Be concise and conversational — this is a chat panel, not a report. No preamble.`,
+    ``,
+    `CONVERSATION SO FAR (oldest first):`,
+    convo,
+    ``,
+    `Reply to the user's latest message.`,
+  ].join("\n");
+}
+
+async function runOneshot(question: string, userEmail: string): Promise<string | null> {
+  const secret = process.env.MCP_INTERNAL_SECRET;
+  if (!secret) return null;
+  try {
+    const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-reddy-internal": secret },
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 250_000 }),
+    });
+    const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
+    if (json?.ok && json.answer) return json.answer;
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
 
 export async function POST(req: NextRequest) {
   let body: Body;
@@ -35,51 +73,45 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
-  const botId = typeof body.botId === "string" ? body.botId : "";
-  const question = typeof body.question === "string" ? body.question.trim() : "";
-  if (!botId || !question) {
-    return NextResponse.json({ ok: false, error: "missing botId or question" }, { status: 400 });
-  }
 
-  const secret = process.env.MCP_INTERNAL_SECRET;
-  if (!secret) return NextResponse.json({ ok: false, error: "server misconfigured" }, { status: 500 });
+  const botIds = Array.isArray(body.botIds)
+    ? (body.botIds.filter((b) => typeof b === "string" && b) as string[]).slice(0, MAX_BOTS)
+    : [];
+  const messages = Array.isArray(body.messages)
+    ? (body.messages
+        .filter(
+          (m): m is ChatMsg =>
+            !!m && typeof m === "object" && typeof (m as ChatMsg).content === "string"
+        )
+        .map((m) => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.content,
+        })) as ChatMsg[])
+    : [];
+  if (botIds.length === 0 || messages.length === 0) {
+    return NextResponse.json({ ok: false, error: "missing botIds or messages" }, { status: 400 });
+  }
 
   const viewer = resolveViewer(req, body.as);
+  const encoder = new TextEncoder();
 
-  const history = Array.isArray(body.history) ? body.history.slice(-6) : [];
-  const historyBlock = history.length
-    ? "\n\nCONVERSATION SO FAR (oldest first):\n" +
-      history
-        .map((h) => `${h.role === "user" ? "Q" : "A"}: ${(h.text ?? "").slice(0, 1500)}`)
-        .join("\n") +
-      "\n"
-    : "";
+  // Open the stream immediately; run the agent inside it. The panel shows a
+  // thinking cursor during the wait, then the answer types out.
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const answer =
+        (await runOneshot(buildPrompt(botIds, messages), viewer)) ??
+        "⚠️ The assistant didn't respond in time — try again.";
+      const chunkSize = 24;
+      for (let i = 0; i < answer.length; i += chunkSize) {
+        controller.enqueue(encoder.encode(answer.slice(i, i + chunkSize)));
+        if (i + chunkSize < answer.length) await new Promise((r) => setTimeout(r, 10));
+      }
+      controller.close();
+    },
+  });
 
-  const prompt = [
-    `You are answering a question about ONE specific meeting, inside the Reddy board's meeting viewer.`,
-    `MEETING BOT ID: ${botId}`,
-    `Read this meeting's transcript and metadata from the cloned KB ('_unsorted' is a real slug, so glob):`,
-    `  - transcript: corpora/success/customers/*/meetings/${botId}/transcript.txt`,
-    `  - metadata:   corpora/success/customers/*/meetings/${botId}/meta.json`,
-    `Answer ONLY from THIS meeting's transcript/metadata. Do NOT consult Granola, the web, HubSpot, or other meetings. If the transcript doesn't cover it, say so in one line.`,
-    `Be concise and conversational — this is a chat panel, not a report. Short paragraphs or tight bullets, no preamble.`,
-    historyBlock,
-    `USER QUESTION: ${question}`,
-  ].join("\n");
-
-  try {
-    const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-reddy-internal": secret },
-      body: JSON.stringify({ question: prompt, userEmail: viewer, pollTimeoutMs: 680_000 }),
-    });
-    const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
-    if (json?.ok && json.answer) return NextResponse.json({ ok: true, answer: json.answer });
-    return NextResponse.json({ ok: false, error: "agent unavailable or timed out" }, { status: 502 });
-  } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
-  }
+  return new Response(stream, {
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }

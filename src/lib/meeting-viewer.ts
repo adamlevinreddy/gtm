@@ -110,6 +110,30 @@ function slugFromMetaPath(path: string): string | null {
   return seg[3] ?? null;
 }
 
+// Lightweight transcript + title loader (no video minting) — used by the
+// meeting chat so corpus chat over N meetings doesn't mint N video URLs.
+export async function loadTranscript(
+  botId: string,
+  customerHint?: string | null
+): Promise<{ botId: string; slug: string | null; title: string | null; transcript: string | null }> {
+  const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
+  if (!pat || !botId) return { botId, slug: null, title: null, transcript: null };
+  const metaPath = await findMetaPath(pat, botId, customerHint);
+  if (!metaPath) return { botId, slug: null, title: null, transcript: null };
+  const slug = slugFromMetaPath(metaPath);
+  const [metaText, transcript] = await Promise.all([
+    readKbFile(pat, metaPath).catch(() => null),
+    readKbFile(pat, metaPath.replace(/meta\.json$/, "transcript.txt")).catch(() => null),
+  ]);
+  let title: string | null = null;
+  try {
+    if (metaText) title = (JSON.parse(metaText) as MeetingMeta).title ?? null;
+  } catch {
+    /* ignore */
+  }
+  return { botId, slug, title, transcript };
+}
+
 export async function loadMeeting(
   botId: string,
   opts?: { customerHint?: string | null; videoTtlSeconds?: number }

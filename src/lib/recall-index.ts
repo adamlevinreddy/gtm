@@ -26,6 +26,7 @@ type MetaJson = {
 export type IndexedMeeting = {
   customer_slug: string;
   bot_id: string;
+  title: string | null;
   started_at: string | null;
   attendees: Array<{ name: string | null; email: string | null }>;
   has_transcript: boolean;
@@ -113,6 +114,7 @@ export async function recentMeetingIndex(
       const row: IndexedRow = {
         customer_slug,
         bot_id,
+        title: parsed.title ?? null,
         started_at: parsed.started_at ?? null,
         attendees: (parsed.attendees ?? []).map((a) => ({ name: a.name ?? null, email: a.email ?? null })),
         has_transcript: !!parsed.has_transcript,

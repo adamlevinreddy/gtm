@@ -387,6 +387,13 @@ export default async function BoardPage({
 
           <div className="ml-auto flex items-center gap-3">
             <Link
+              href="/board/meetings"
+              className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
+              title="Meetings — recordings, transcripts & chat"
+            >
+              🎥 Meetings
+            </Link>
+            <Link
               href="/board/inbox"
               className="relative rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
               title="Notifications"
