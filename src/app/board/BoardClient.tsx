@@ -7,17 +7,11 @@ import {
   type BoardColumn,
 } from "@/lib/board-shared";
 import type { WorkItem } from "@/lib/schema";
+import { Avatar } from "./Avatar";
+import { AgingBadge } from "./AgingBadge";
+import { KIND_LABEL, PLUM, dueLabel, relTime } from "./ui-shared";
 
-const PLUM = "#773D72";
-
-const KIND_LABEL: Record<string, string> = {
-  pricing_proposal: "Pricing", deck_qbr: "QBR deck", meeting_prep: "Prep",
-  prep_custom_demo: "Demo prep", rfp_response: "RFP", contract_redline: "Redline",
-  followup_email: "Follow-up", book_meeting: "Book mtg", reengage_tickler: "Re-engage",
-  recording_link: "Recording", scheduling: "Scheduling", account_research: "Research",
-  enablement_collateral: "Enablement", crm_update: "CRM", log_to_hubspot: "HubSpot note",
-  propose_stage_move: "Stage move", action_items: "Action", generic: "Task",
-};
+type LabelChip = { id: string; name: string; color: string | null };
 
 const COLUMN_ACCENT: Record<BoardColumn, string> = {
   Unsorted: "#8A7C8A",
@@ -27,29 +21,25 @@ const COLUMN_ACCENT: Record<BoardColumn, string> = {
   Completed: "#3F7D5B",
 };
 
-// --- date/string helpers (mirror page.tsx so the client paint matches) ---
-
-function relTime(d: Date): string {
-  const m = Math.round((Date.now() - d.getTime()) / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  const days = Math.round(h / 24);
-  if (days === 1) return "1d";
-  if (days < 30) return `${days}d`;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-function dueLabel(d: Date): { text: string; cls: string } {
-  const diff = d.getTime() - Date.now();
-  const text = `due ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-  if (diff < 0) return { text: `${text} · overdue`, cls: "text-red-700" };
-  if (diff < 7 * 86400000) return { text, cls: "text-amber-700" };
-  return { text, cls: "text-zinc-400" };
-}
-function initials(email: string | null): string {
-  if (!email) return "·";
-  return email.split("@")[0].slice(0, 2).toUpperCase();
+function LabelChips({ labels }: { labels: LabelChip[] | undefined }) {
+  if (!labels || labels.length === 0) return null;
+  return (
+    <>
+      {labels.map((l) => (
+        <span
+          key={l.id}
+          className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+          style={{
+            background: l.color ? `${l.color}22` : "#EEE",
+            color: l.color ?? "#555",
+            border: `1px solid ${l.color ?? "#DDD"}55`,
+          }}
+        >
+          {l.name}
+        </span>
+      ))}
+    </>
+  );
 }
 
 // Serialized board crosses the server→client boundary: timestamps arrive as
@@ -73,9 +63,11 @@ type Toast = { kind: "info" | "error"; text: string } | null;
 export default function BoardClient({
   initial,
   viewerEmail,
+  labelsByItem = {},
 }: {
   initial: WireBoard;
   viewerEmail?: string;
+  labelsByItem?: Record<string, LabelChip[]>;
 }) {
   const [cols, setCols] = useState<Record<BoardColumn, WorkItem[]>>(() => {
     const out = {} as Record<BoardColumn, WorkItem[]>;
@@ -238,6 +230,7 @@ export default function BoardClient({
                       key={it.id}
                       item={it}
                       now={now}
+                      labels={labelsByItem[it.id]}
                       dragging={dragId === it.id}
                       onDragStart={() => {
                         setDragId(it.id);
@@ -281,12 +274,14 @@ export default function BoardClient({
 function DraggableCard({
   item,
   now,
+  labels,
   dragging,
   onDragStart,
   onDragEnd,
 }: {
   item: WorkItem;
   now: Date;
+  labels?: LabelChip[];
   dragging: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
@@ -333,13 +328,26 @@ function DraggableCard({
       >
         {item.title}
       </a>
+      {labels && labels.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          <LabelChips labels={labels} />
+        </div>
+      )}
       <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
-        <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-100 px-1 text-[9px] font-semibold text-zinc-600">{initials(item.ownerEmail)}</span>
-        {item.botAssigned && <span title="bot co-assigned">🤖</span>}
+        <span className="flex min-w-0 items-center gap-1">
+          <Avatar email={item.ownerEmail} size={16} />
+          <span className={item.ownerEmail ? "truncate text-zinc-500" : "italic text-zinc-400"}>
+            {item.ownerEmail ? item.ownerEmail.split("@")[0] : "unassigned"}
+          </span>
+          {item.botAssigned && <span title="Reddy bot co-assigned">🤖</span>}
+        </span>
         {item.childTotalCount > 0 && (
           <span className="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">▦ {item.childTotalCount - item.childOpenCount}/{item.childTotalCount}</span>
         )}
-        {item.dueAt && <span className={dueLabel(item.dueAt).cls}>{dueLabel(item.dueAt).text}</span>}
+        <span className="ml-auto flex items-center gap-2">
+          <AgingBadge item={item} now={now} />
+          {item.dueAt && <span className={dueLabel(item.dueAt).cls}>{dueLabel(item.dueAt).text}</span>}
+        </span>
       </div>
     </div>
   );

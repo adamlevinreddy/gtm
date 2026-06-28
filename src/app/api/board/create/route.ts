@@ -4,6 +4,7 @@ import { badRequest, unauthorized } from "../_lib";
 import { maybeFire } from "@/lib/board-events";
 import {
   createWorkItem,
+  resolveBoardId,
   type CreateInput,
   type WorkItemKind,
   type WorkItemStatus,
@@ -31,16 +32,21 @@ export async function POST(req: NextRequest) {
     title?: string;
     kind?: WorkItemKind;
     dueAt?: string | null;
+    /** Optional board key (gtm/success/operations); defaults to GTM. */
+    boardKey?: string | null;
   };
   if (!body.title || !body.kind) return badRequest("missing title or kind");
 
   const status: WorkItemStatus = body.status ?? "approved";
+  // Explicit boardId wins; else resolve the boardKey (defaults to GTM).
+  const boardId = body.boardId ?? (await resolveBoardId(body.boardKey));
 
   const item = await createWorkItem({
     title: body.title,
     kind: body.kind,
     status,
     source: body.source ?? "manual",
+    boardId,
     ownerEmail: body.ownerEmail ?? actor,
     botAssigned: body.botAssigned ?? false,
     customerSlug: body.customerSlug ?? null,

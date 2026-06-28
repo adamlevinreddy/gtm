@@ -4,6 +4,7 @@ import { unauthorized } from "../_lib";
 import {
   listWorkItems,
   getBoard,
+  resolveBoardId,
   type BoardFilter,
 } from "@/lib/work-items";
 
@@ -25,8 +26,16 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     filter?: BoardFilter;
     mode?: "flat" | "board";
+    /** Optional board key (gtm/success/operations); scopes the listing. */
+    boardKey?: string | null;
   };
-  const filter = body.filter ?? {};
+  const filter: BoardFilter = { ...(body.filter ?? {}) };
+  // Scope to a board: explicit filter.boardId wins; else resolve boardKey
+  // (which defaults to GTM). Pass boardKey === null to opt out of scoping.
+  if (!filter.boardId && body.boardKey !== null) {
+    const boardId = await resolveBoardId(body.boardKey);
+    if (boardId) filter.boardId = boardId;
+  }
 
   if (body.mode === "flat") {
     const items = await listWorkItems(filter);

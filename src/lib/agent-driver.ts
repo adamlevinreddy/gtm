@@ -369,8 +369,8 @@ async function main() {
       ),
       tool(
         "board_list",
-        "List GTM board work items (the team's task board). Optional filters {ownerEmail, customerSlug}. Use for 'what's on the board', 'what's open for <customer>', 'my tasks'. Returns items with their current version (needed to move/update them).",
-        { ownerEmail: z.string().optional(), customerSlug: z.string().optional(), mode: z.string().optional() },
+        "List work items from a board. boardKey is one of 'gtm' (pre-sale / prospects / unsigned pilots), 'success' (signed customers), 'operations' (internal) — defaults to gtm. Optional filters {ownerEmail, customerSlug}. Use for 'what's on the board', 'what's open for <customer>', 'my tasks'. Returns items with their current version (needed to move/update them).",
+        { boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), mode: z.string().optional() },
         async (args) => boardFetch("list", args),
       ),
       tool(
@@ -381,8 +381,8 @@ async function main() {
       ),
       tool(
         "board_create",
-        "Create a board work item. kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'.",
-        { title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional() },
+        "Create a board work item. boardKey ∈ 'gtm'|'success'|'operations' (default gtm: gtm=pre-sale/prospects/unsigned pilots, success=signed customers, operations=internal). kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'.",
+        { title: z.string(), kind: z.string(), boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional() },
         async (args) => boardFetch("create", args),
       ),
       tool(

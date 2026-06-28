@@ -4,9 +4,11 @@ import { db } from "./db";
 import {
   workItems,
   workItemActivities,
+  boards,
   type WorkItem,
   type NewWorkItem,
   type NewWorkItemActivity,
+  type Board,
 } from "./schema";
 
 // ============================================================================
@@ -53,6 +55,31 @@ export type { WorkItemType, WorkItemKind, WorkItemStatus, BoardColumn };
 // ---------------------------------------------------------------------------
 // URLs
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// boards (top-level: GTM / Success / Operations)
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_BOARD_KEY = "gtm";
+const _boardCache = new Map<string, Board>();
+
+export async function listBoards(): Promise<Board[]> {
+  const rows = await db.select().from(boards).orderBy(asc(boards.sortOrder), asc(boards.key));
+  for (const b of rows) _boardCache.set(b.key, b);
+  return rows;
+}
+
+/** Resolve a board key (gtm/success/operations) to its id; defaults to GTM. */
+export async function resolveBoardId(key?: string | null): Promise<string | null> {
+  const k = (key || DEFAULT_BOARD_KEY).toLowerCase();
+  if (_boardCache.has(k)) return _boardCache.get(k)!.id;
+  const rows = await db.select().from(boards).where(eq(boards.key, k)).limit(1);
+  if (rows[0]) {
+    _boardCache.set(k, rows[0]);
+    return rows[0].id;
+  }
+  return null;
+}
 
 export function selfBaseUrl(): string {
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL)
@@ -280,6 +307,7 @@ export type CreateInput = {
   kind: WorkItemKind;
   status?: WorkItemStatus;
   source: WorkItem["source"];
+  boardId?: string | null;
   ownerEmail?: string | null;
   botAssigned?: boolean;
   customerSlug?: string | null;
@@ -303,6 +331,7 @@ export async function createWorkItem(input: CreateInput): Promise<WorkItem | nul
     title: input.title,
     status: input.status ?? "triage",
     source: input.source,
+    boardId: input.boardId ?? null,
     ownerKind: "human",
     ownerEmail: input.ownerEmail ?? null,
     botAssigned: input.botAssigned ?? false,
@@ -344,7 +373,7 @@ export async function createWorkItem(input: CreateInput): Promise<WorkItem | nul
 /** Bot suggestion batch (post-meeting etc.) — always status 'triage'/'suggested'. */
 export async function createSuggestions(
   items: Array<{ kind: WorkItemKind; title: string; payload?: WorkItemPayload; ownerEmail?: string; parentId?: string }>,
-  ctx: { source: WorkItem["source"]; sourceRef?: string; customerSlug?: string; accountId?: string; meetingId?: string; status?: WorkItemStatus; createdBy?: string }
+  ctx: { source: WorkItem["source"]; boardId?: string; sourceRef?: string; customerSlug?: string; accountId?: string; meetingId?: string; status?: WorkItemStatus; createdBy?: string }
 ): Promise<WorkItem[]> {
   const out: WorkItem[] = [];
   for (const it of items) {
@@ -353,6 +382,7 @@ export async function createSuggestions(
       kind: it.kind,
       status: ctx.status ?? "triage",
       source: ctx.source,
+      boardId: ctx.boardId ?? null,
       sourceRef: ctx.sourceRef ?? null,
       customerSlug: ctx.customerSlug ?? null,
       accountId: ctx.accountId ?? null,
@@ -491,6 +521,7 @@ export async function getChildren(parentId: string): Promise<WorkItem[]> {
 }
 
 export type BoardFilter = {
+  boardId?: string;
   ownerEmail?: string;
   customerSlug?: string;
   kind?: WorkItemKind[];
@@ -501,6 +532,7 @@ export type BoardFilter = {
 
 export async function listWorkItems(filter: BoardFilter = {}, limit = 500): Promise<WorkItem[]> {
   const conds = [] as ReturnType<typeof eq>[];
+  if (filter.boardId) conds.push(eq(workItems.boardId, filter.boardId));
   if (filter.ownerEmail) conds.push(eq(workItems.ownerEmail, filter.ownerEmail));
   if (filter.customerSlug) conds.push(eq(workItems.customerSlug, filter.customerSlug));
   if (filter.kind?.length) conds.push(inArray(workItems.kind, filter.kind));
@@ -545,10 +577,11 @@ export type BoardSummary = {
   done: number;
   dismissed: number;
 };
-export async function getBoardSummary(): Promise<BoardSummary> {
+export async function getBoardSummary(boardId?: string): Promise<BoardSummary> {
   const rows = await db
     .select({ status: workItems.status, n: sql<number>`count(*)::int` })
     .from(workItems)
+    .where(boardId ? eq(workItems.boardId, boardId) : undefined)
     .groupBy(workItems.status);
   const byColumn = {
     Unsorted: 0,

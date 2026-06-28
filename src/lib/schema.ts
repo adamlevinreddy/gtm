@@ -1265,6 +1265,8 @@ export const workItems = pgTable(
     accountId: uuid("account_id").references(() => accounts.id),
     opportunityId: uuid("opportunity_id").references(() => opportunities.id),
     meetingId: uuid("meeting_id").references(() => meetings.id),
+    /** Which top-level board this item lives on (GTM / Success / Operations) */
+    boardId: uuid("board_id").references(() => boards.id),
     projectId: uuid("project_id").references(() => projects.id),
     cycleId: uuid("cycle_id").references(() => cycles.id),
     templateId: uuid("template_id").references(() => templates.id),
@@ -1345,6 +1347,7 @@ export const workItems = pgTable(
     index("idx_work_items_account").on(table.accountId),
     index("idx_work_items_opportunity").on(table.opportunityId),
     index("idx_work_items_meeting").on(table.meetingId),
+    index("idx_work_items_board").on(table.boardId),
     index("idx_work_items_project").on(table.projectId),
     index("idx_work_items_cycle").on(table.cycleId),
     index("idx_work_items_parent").on(table.parentId),
@@ -1448,6 +1451,19 @@ export const workItemBotAttempts = pgTable(
       .where(sql`${t.status} <> 'failed'`),
   ]
 );
+
+// --- Boards (top-level: GTM / Success / Operations) ---
+
+export const boards = pgTable("boards", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Stable key used in URLs/APIs: 'gtm' | 'success' | 'operations' */
+  key: text("key").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  sortOrder: integer("sort_order").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type Board = typeof boards.$inferSelect;
 
 // --- Projects (deal rooms) — empty hook until P2 ---
 
