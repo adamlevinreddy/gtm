@@ -136,13 +136,16 @@ export async function runBotPass(
 ): Promise<void> {
   let attemptId: string | null = null;
   let actedAsEmail: string | null = null;
+  let lockKey: string | null = null;
+  let acquired = false;
   const oneshotRequestId = `botworker:${itemId}:rev:${taskRevision}`;
 
   try {
     // (a) KV NX lock — bail if another worker already claimed this revision.
-    const lockKey = `botworker:item:${itemId}:rev:${taskRevision}`;
+    lockKey = `botworker:item:${itemId}:rev:${taskRevision}`;
     const got = await kv.set(lockKey, "1", { nx: true, ex: 900 });
-    if (got === null) return; // already claimed
+    if (got === null) return; // already claimed (another worker holds the lock)
+    acquired = true;
 
     // (b) re-read + eligibility recheck.
     const item = await getItem(itemId);
@@ -299,5 +302,11 @@ export async function runBotPass(
     } catch {
       /* swallow */
     }
+  } finally {
+    // Release the run lock so a failed attempt (e.g. a cold-start timeout) can be
+    // retried immediately once the sandbox is warm. Success is independently
+    // guarded by the unique-attempt index + the eligibility recheck, so freeing
+    // the lock on success is harmless. Only release a lock we actually took.
+    if (acquired && lockKey) await kv.del(lockKey).catch(() => {});
   }
 }
