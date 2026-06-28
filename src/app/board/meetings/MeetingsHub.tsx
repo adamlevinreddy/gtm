@@ -10,6 +10,7 @@ export type HubMeeting = {
   botId: string;
   title: string | null;
   slug: string;
+  account: string;
   startedAt: string | null;
   platform: string | null;
   attendees: string[];
@@ -23,6 +24,8 @@ const STATUS_LABEL: Record<string, string> = {
   ready_for_review: "Review", blocked: "Blocked", waiting: "Waiting", done: "Done", dismissed: "Dismissed",
 };
 
+const RANGES = [30, 90, 365];
+
 function fmtPT(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -33,27 +36,23 @@ function fmtPT(iso: string | null): string {
   }).format(d) + " PT";
 }
 
-function acctLabel(slug: string): string {
-  return slug === "_unsorted" ? "Unsorted" : slug;
-}
-
-export default function MeetingsHub({ meetings }: { meetings: HubMeeting[] }) {
+export default function MeetingsHub({ meetings, days }: { meetings: HubMeeting[]; days: number }) {
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState<string>("all");
   const [tasksOnly, setTasksOnly] = useState(false);
 
   const accounts = useMemo(
-    () => Array.from(new Set(meetings.map((m) => m.slug))).sort((a, b) => acctLabel(a).localeCompare(acctLabel(b))),
+    () => Array.from(new Set(meetings.map((m) => m.account))).sort((a, b) => a.localeCompare(b)),
     [meetings]
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return meetings.filter((m) => {
-      if (account !== "all" && m.slug !== account) return false;
+      if (account !== "all" && m.account !== account) return false;
       if (tasksOnly && m.tasks.length === 0) return false;
       if (q) {
-        const hay = `${m.title ?? ""} ${m.slug} ${m.attendees.join(" ")}`.toLowerCase();
+        const hay = `${m.title ?? ""} ${m.account} ${m.slug} ${m.attendees.join(" ")}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -67,12 +66,31 @@ export default function MeetingsHub({ meetings }: { meetings: HubMeeting[] }) {
   );
   const scopeLabel =
     `${chatBotIds.length} meeting${chatBotIds.length === 1 ? "" : "s"}` +
-    (account !== "all" ? ` · ${acctLabel(account)}` : "");
+    (account !== "all" ? ` · ${account}` : "");
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
       {/* left: filters + list */}
       <div className="lg:col-span-3">
+        {/* range tabs */}
+        <div className="mb-3 flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5 w-fit">
+          {RANGES.map((d) => (
+            <Link
+              key={d}
+              href={`/board/meetings?days=${d}`}
+              scroll={false}
+              className="rounded-md px-2.5 py-1 text-sm font-medium no-underline"
+              style={
+                d === days
+                  ? { background: PLUM, color: "white" }
+                  : { color: "#52525b" }
+              }
+            >
+              {d === 365 ? "1 year" : `${d} days`}
+            </Link>
+          ))}
+        </div>
+
         {/* filter bar */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <input
@@ -85,12 +103,12 @@ export default function MeetingsHub({ meetings }: { meetings: HubMeeting[] }) {
           <select
             value={account}
             onChange={(e) => setAccount(e.target.value)}
-            className="rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
+            className="max-w-[180px] rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
             style={{ borderColor: "#E4DCE3" }}
           >
             <option value="all">All accounts</option>
             {accounts.map((a) => (
-              <option key={a} value={a}>{acctLabel(a)}</option>
+              <option key={a} value={a}>{a}</option>
             ))}
           </select>
           <button
@@ -108,7 +126,7 @@ export default function MeetingsHub({ meetings }: { meetings: HubMeeting[] }) {
         </div>
 
         <p className="mb-2 text-xs text-zinc-400">
-          {filtered.length} of {meetings.length} meetings
+          {filtered.length} of {meetings.length} meetings · last {days === 365 ? "year" : `${days} days`}
         </p>
 
         <div className="flex flex-col gap-2">
@@ -125,7 +143,8 @@ export default function MeetingsHub({ meetings }: { meetings: HubMeeting[] }) {
                     {m.title || "(untitled meeting)"}
                   </p>
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    {[acctLabel(m.slug), fmtPT(m.startedAt)].filter(Boolean).join(" · ")}
+                    <span style={{ color: PLUM }}>{m.account}</span>
+                    {m.startedAt && <> · {fmtPT(m.startedAt)}</>}
                     {m.attendees.length > 0 && <> · {m.attendees.slice(0, 4).join(", ")}{m.attendees.length > 4 ? "…" : ""}</>}
                   </p>
                   {m.tasks.length > 0 && (
@@ -168,7 +187,7 @@ export default function MeetingsHub({ meetings }: { meetings: HubMeeting[] }) {
           style={{ borderColor: "#E4DCE3" }}
         >
           <MeetingChatStream
-            key={account + ":" + tasksOnly}
+            key={account + ":" + tasksOnly + ":" + days}
             botIds={chatBotIds}
             title="Chat across these meetings"
             scopeLabel={scopeLabel}

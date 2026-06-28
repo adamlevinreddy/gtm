@@ -2,7 +2,7 @@ import Link from "next/link";
 import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
-import { recentMeetingIndex } from "@/lib/recall-index";
+import { recentMeetingIndex, deriveAccountLabel } from "@/lib/recall-index";
 import MeetingsHub, { type HubMeeting } from "./MeetingsHub";
 
 export const dynamic = "force-dynamic";
@@ -11,9 +11,17 @@ export const maxDuration = 60;
 
 const PLUM = "#773D72";
 
-export default async function MeetingsPage() {
+const DAYS_LIMIT: Record<number, number> = { 30: 120, 90: 350, 365: 700 };
+
+export default async function MeetingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ days?: string }>;
+}) {
+  const { days: daysRaw } = await searchParams;
+  const days = [30, 90, 365].includes(Number(daysRaw)) ? Number(daysRaw) : 30;
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
-  const meetings = pat ? await recentMeetingIndex(pat, 30, 60).catch(() => []) : [];
+  const meetings = pat ? await recentMeetingIndex(pat, days, DAYS_LIMIT[days]).catch(() => []) : [];
   const botIds = meetings.map((m) => m.bot_id).filter(Boolean);
 
   // Tasks linked to these meetings (work_items.sourceRef = botId).
@@ -39,6 +47,7 @@ export default async function MeetingsPage() {
     botId: m.bot_id,
     title: m.title,
     slug: m.customer_slug,
+    account: deriveAccountLabel(m.title, m.customer_slug),
     startedAt: m.started_at,
     platform: m.platform,
     attendees: m.attendees
@@ -59,7 +68,7 @@ export default async function MeetingsPage() {
           <div className="mr-2">
             <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Meetings</h1>
             <p className="text-sm text-zinc-500">
-              Watch recordings, read transcripts, and chat across them. Last 30 days.
+              Watch recordings, read transcripts, and chat across them.
             </p>
           </div>
           <div className="ml-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
@@ -78,13 +87,7 @@ export default async function MeetingsPage() {
           </div>
         </header>
 
-        {data.length === 0 ? (
-          <div className="rounded-xl border bg-white p-6 text-sm text-zinc-500" style={{ borderColor: "#E4DCE3" }}>
-            No meetings found in the last 30 days.
-          </div>
-        ) : (
-          <MeetingsHub meetings={data} />
-        )}
+        <MeetingsHub meetings={data} days={days} />
       </div>
     </main>
   );

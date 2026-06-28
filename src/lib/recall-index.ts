@@ -6,6 +6,7 @@
 import { buildVideoLink } from "./video-link";
 import { signedPlayerUrl } from "./mux";
 import { listActiveBots, type RecallBot } from "./recall";
+import { kv } from "./kv-client";
 
 const GH_API = "https://api.github.com";
 const REPO = { owner: "ReddySolutions", name: "reddy-gtm" };
@@ -83,57 +84,65 @@ export async function recentMeetingIndex(
 
   if (metaPaths.length === 0) return [];
 
-  // Fetch up to `limit * 2` blobs in parallel (we'll filter by date
-  // afterwards; over-fetching a bit so the date cutoff doesn't leave
-  // us with too few entries).
-  const candidates = metaPaths.slice(-Math.max(limit * 2, 30));
-
   type IndexedRow = IndexedMeeting & { _muxPlaybackId: string | null };
 
-  const fetched = await Promise.all(
-    candidates.map(async (entry) => {
-      const blob = await fetch(`${GH_API}/repos/${REPO.owner}/${REPO.name}/git/blobs/${entry.sha}`, {
-        headers: ghHeaders(pat),
-      });
-      if (!blob.ok) return null;
-      const body = (await blob.json()) as { content?: string; encoding?: string };
-      if (!body.content) return null;
-      const text = Buffer.from(body.content, (body.encoding ?? "base64") as BufferEncoding).toString("utf8");
-      let parsed: MetaJson;
-      try {
-        parsed = JSON.parse(text) as MetaJson;
-      } catch {
-        return null;
-      }
-
-      // path: corpora/success/customers/{slug}/meetings/{bot_id}/meta.json
-      const segs = entry.path.split("/");
-      const customer_slug = segs[3] ?? "_unsorted";
-      const bot_id = parsed.recall_bot_id ?? segs[5] ?? "";
-
-      const row: IndexedRow = {
-        customer_slug,
-        bot_id,
-        title: parsed.title ?? null,
-        started_at: parsed.started_at ?? null,
-        attendees: (parsed.attendees ?? []).map((a) => ({ name: a.name ?? null, email: a.email ?? null })),
-        has_transcript: !!parsed.has_transcript,
-        has_video: !!parsed.video,
-        has_mux: !!parsed.mux?.playback_id,
-        platform: parsed.platform ?? null,
-        // Stash the Mux playback id on the row so we can mint a signed
-        // URL below without re-reading meta.json.
-        _muxPlaybackId: parsed.mux?.playback_id ?? null,
-      };
-      return row;
-    }),
-  );
+  // Parse EVERY meeting's meta, then sort by recency. We must NOT rely on tree
+  // (lexicographic) order — `_unsorted/` sorts in the MIDDLE, so a tail slice
+  // buries recent unsorted meetings and silently drops them. Cache the full
+  // parsed set keyed on the tree SHA: a cold render fetches all blobs once
+  // (bounded concurrency); steady state is a single kv.get until the kb commits
+  // again (SHA changes → auto-invalidate). video_url is minted per request
+  // below, never cached (its token TTL differs from the cache TTL).
+  const cacheKey = `mtgidx:${commit.tree.sha}`;
+  let rows = await kv.get<IndexedRow[]>(cacheKey).catch(() => null);
+  if (!rows) {
+    rows = [];
+    const CONCURRENCY = 30;
+    for (let i = 0; i < metaPaths.length; i += CONCURRENCY) {
+      const chunk = metaPaths.slice(i, i + CONCURRENCY);
+      const got = await Promise.all(
+        chunk.map(async (entry) => {
+          const blob = await fetch(
+            `${GH_API}/repos/${REPO.owner}/${REPO.name}/git/blobs/${entry.sha}`,
+            { headers: ghHeaders(pat) },
+          ).catch(() => null);
+          if (!blob || !blob.ok) return null;
+          const body = (await blob.json().catch(() => null)) as { content?: string; encoding?: string } | null;
+          if (!body?.content) return null;
+          const text = Buffer.from(body.content, (body.encoding ?? "base64") as BufferEncoding).toString("utf8");
+          let parsed: MetaJson;
+          try {
+            parsed = JSON.parse(text) as MetaJson;
+          } catch {
+            return null;
+          }
+          // path: corpora/success/customers/{slug}/meetings/{bot_id}/meta.json
+          const segs = entry.path.split("/");
+          const row: IndexedRow = {
+            customer_slug: segs[3] ?? "_unsorted",
+            bot_id: parsed.recall_bot_id ?? segs[5] ?? "",
+            title: parsed.title ?? null,
+            started_at: parsed.started_at ?? null,
+            attendees: (parsed.attendees ?? []).map((a) => ({ name: a.name ?? null, email: a.email ?? null })),
+            has_transcript: !!parsed.has_transcript,
+            has_video: !!parsed.video,
+            has_mux: !!parsed.mux?.playback_id,
+            platform: parsed.platform ?? null,
+            _muxPlaybackId: parsed.mux?.playback_id ?? null,
+          };
+          return row;
+        }),
+      );
+      for (const r of got) if (r) rows.push(r);
+    }
+    await kv.set(cacheKey, rows, { ex: 3600 }).catch(() => {});
+  }
 
   // Cutoff anchored to PT midnight, sinceDays back. Users are all on
   // Pacific time — a UTC-anchored cutoff at 11pm PT silently rolls into
   // the next day and excludes meetings from the start of the user's day.
   const cutoff = ptMidnightDaysAgo(sinceDays);
-  const filtered = fetched
+  const filtered = rows
     .filter((m): m is IndexedRow => !!m && !!m.started_at)
     .filter((m) => {
       const t = Date.parse(m.started_at as string);
@@ -172,6 +181,35 @@ export async function recentMeetingIndex(
     void _drop;
     return rest;
   });
+}
+
+// Derive a display "account" for a meeting. Most meetings land in `_unsorted`
+// because Teams gives null attendee emails (no domain to match → HubSpot), but
+// the TITLE almost always names the company ("Lowe's / Reddy Touchpoint",
+// "Reddy <> NDR Weekly Sync", "Luminare Health Pilot Planning"). So: use a real
+// customer slug when present, else strip Reddy/meeting-noise from the title.
+// (HubSpot canonicalization — mapping "NDR" → "National Debt Relief" — is a
+// future refinement via findHubSpotCompanyByName, cached by label.)
+export function deriveAccountLabel(title: string | null, slug: string): string {
+  const pretty = (s: string) =>
+    s
+      .split(/[-_]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+  if (slug && slug !== "_unsorted") return pretty(slug);
+  if (!title) return "Unsorted";
+  const cleaned = title
+    .replace(/\(.*?\)/g, " ") // drop parentheticals like "(Weekly)" / "(CS+CL)"
+    .replace(/\breddy\b/gi, " ")
+    .replace(/[<>|/&,]+/g, " ")
+    .replace(
+      /\b(weekly|sync|touchpoint|huddle|review|pipeline|kickoff|pilot|planning|questions?|meeting|notetaker|standup|check[- ]?in|catch[- ]?up|call|demo|intro|and|the|with|it)\b/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "Internal";
 }
 
 export function formatMeetingIndex(meetings: IndexedMeeting[]): string {

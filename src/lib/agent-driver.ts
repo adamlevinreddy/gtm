@@ -116,8 +116,17 @@ Then \`post_slack_message\` with a short confirmation: "_Saved — pushed to \`c
 
 Do NOT autocommit at the end of a successful build. Do NOT commit iterations, test fixtures, or scratch work. If the user hasn't signaled, leave it local.
 
+## Board tasks — never create duplicates
+Before you create ANY board task (board_create or board_create_subtask), you MUST first call board_list scoped to the board you intend to create on (pass customerSlug/ownerEmail when you know them) and scan for a near-duplicate:
+1. Treat as a duplicate any OPEN (non-Completed, non-dismissed) item with the same kind whose title describes the same intent for the same customer — judge by meaning, not exact string match.
+2. If a near-duplicate exists: do NOT create a second one. Instead call board_add_activity on the existing item (kind:"comment") to note the new context, and tell the user you updated the existing task, citing its title. (Ask first before changing an existing task's status/owner/column — comments/logs are additive and safe.)
+3. Only create a new task when board_list returns no reasonable match.
+For board_create_subtask, check the parent's existing children (board_get on the parentId) rather than the whole board.
+This applies on every surface — Slack, the meetings view, and elsewhere — because you are one shared agent.
+
 ## What NOT to do
 - Don't ask permission before using Read/Edit/Bash in the workspace — you have full authority.
+- Don't create a board task without first checking board_list for an existing near-duplicate — update the existing one instead.
 - Don't create a new proposal directory on every iteration; update the existing one for the active thread.
 - Don't fabricate competitor pricing or historical Reddy deals. Cite what's actually in the library.
 - Don't post internal reasoning to Slack; keep that in thinking blocks.
@@ -381,7 +390,7 @@ async function main() {
       ),
       tool(
         "board_create",
-        "Create a board work item. boardKey ∈ 'gtm'|'success'|'operations' (default gtm: gtm=pre-sale/prospects/unsigned pilots, success=signed customers, operations=internal). kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'. When creating from a post-meeting proposal, set sourceRef to the meeting botId so the task links back to its recording/transcript.",
+        "Create a board work item. FIRST call board_list (same boardKey, + customerSlug/ownerEmail when known) and check for an OPEN near-duplicate (same kind + same intent for the same customer); if one exists, do NOT create — add a board_add_activity comment on it and tell the user you updated the existing task. Only create when there's no match. boardKey ∈ 'gtm'|'success'|'operations' (default gtm: gtm=pre-sale/prospects/unsigned pilots, success=signed customers, operations=internal). kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'. When creating from a post-meeting proposal, set sourceRef to the meeting botId so the task links back to its recording/transcript.",
         { title: z.string(), kind: z.string(), boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional(), sourceRef: z.string().optional() },
         async (args) => boardFetch("create", args),
       ),
