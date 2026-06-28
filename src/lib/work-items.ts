@@ -48,7 +48,8 @@ const OPEN_STATUSES: WorkItemStatus[] = ["suggested", "approved"];
 // URLs
 // ---------------------------------------------------------------------------
 
-function appBaseUrl(): string {
+/** Origin of this deployment, for self-calls (e.g. the digest → oneshot). */
+export function selfBaseUrl(): string {
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
     return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   }
@@ -62,7 +63,7 @@ function appBaseUrl(): string {
  * dedicated board ships -- both capabilities import this, never inline a URL.
  */
 export function boardUrl(): string {
-  return process.env.TRACKING_BOARD_URL || `${appBaseUrl()}/board`;
+  return process.env.TRACKING_BOARD_URL || `${selfBaseUrl()}/board`;
 }
 
 /** Forward-compatible deep link to a single item (anchor on the stub board). */
@@ -235,6 +236,9 @@ export type DigestData = {
   yesterdayLabel: string; // "Thursday, Jun 26"
   addedYesterday: DigestItem[];
   doneYesterday: DigestItem[];
+  /** All open items — the candidate set the sandbox agent reasons over for focus. */
+  openItems: DigestItem[];
+  /** Deterministic top-priority open item. Fallback when the agent can't run. */
   focusToday: DigestItem | null;
   summary: BoardSummary;
 };
@@ -288,18 +292,19 @@ export async function getDigestData(now: Date = new Date()): Promise<DigestData>
     getBoardSummary(),
   ]);
 
-  const focus = [...openItems].sort(
+  const ranked = [...openItems].sort(
     (a, b) =>
       focusScore(b) - focusScore(a) ||
       a.createdAt.getTime() - b.createdAt.getTime()
-  )[0];
+  );
 
   return {
     url: boardUrl(),
     yesterdayLabel: humanDate(yPt),
     addedYesterday: added.map(toDigestItem),
     doneYesterday: completed.map(toDigestItem),
-    focusToday: focus ? toDigestItem(focus) : null,
+    openItems: ranked.map(toDigestItem),
+    focusToday: ranked[0] ? toDigestItem(ranked[0]) : null,
     summary,
   };
 }

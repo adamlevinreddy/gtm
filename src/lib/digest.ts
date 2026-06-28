@@ -1,4 +1,5 @@
 import type { DigestData, DigestItem, WorkItemType } from "./work-items";
+import type { Focus } from "./digest-focus";
 
 // ============================================================================
 // Morning digest message: "Here's what was added yesterday, what got done,
@@ -27,22 +28,41 @@ function bulletList(items: DigestItem[], max = 5): string {
   return shown.join("\n");
 }
 
+/**
+ * Resolve the focus line. Prefers the agent-authored focus; falls back to the
+ * deterministic top item; otherwise a clear-board note.
+ */
+function focusText(d: DigestData, focus?: Focus | null): string {
+  if (focus?.text) return focus.text;
+  if (d.focusToday) {
+    return `${d.focusToday.title}${d.focusToday.customerSlug ? ` (${d.focusToday.customerSlug})` : ""}`;
+  }
+  return "Board is clear — no open items to prioritize.";
+}
+
 /** Plain-text fallback (notifications, screen readers, no-blocks clients). */
-export function buildDigestText(d: DigestData): string {
+export function buildDigestText(d: DigestData, focus?: Focus | null): string {
   return [
     `GTM Morning Digest — ${d.yesterdayLabel} recap`,
     `Added yesterday: ${d.addedYesterday.length} · Completed: ${d.doneYesterday.length} · Open: ${d.summary.open}`,
-    d.focusToday ? `Focus today: ${d.focusToday.title}` : "Focus today: board is clear",
+    `Focus today: ${focusText(d, focus)}`,
     d.url,
   ].join("\n");
 }
 
-export function buildDigestBlocks(d: DigestData): object[] {
-  const focus = d.focusToday
-    ? `${TYPE_EMOJI[d.focusToday.type]} *${d.focusToday.title}*${
-        d.focusToday.customerSlug ? ` _(${d.focusToday.customerSlug})_` : ""
-      }`
-    : "_Board is clear — no open items to prioritize._";
+export function buildDigestBlocks(d: DigestData, focus?: Focus | null): object[] {
+  const focusBody = focus?.text
+    ? focus.text
+    : d.focusToday
+      ? `${TYPE_EMOJI[d.focusToday.type]} *${d.focusToday.title}*${
+          d.focusToday.customerSlug ? ` _(${d.focusToday.customerSlug})_` : ""
+        }`
+      : "_Board is clear — no open items to prioritize._";
+  // Footnote distinguishes the agent's judgment from the deterministic fallback.
+  const focusNote =
+    focus?.source === "agent"
+      ? "\n_✨ chosen by the sandbox agent from today’s board + context_"
+      : "";
 
   return [
     {
@@ -79,7 +99,7 @@ export function buildDigestBlocks(d: DigestData): object[] {
     },
     {
       type: "section",
-      text: { type: "mrkdwn", text: `*🎯 Focus today*\n${focus}` },
+      text: { type: "mrkdwn", text: `*🎯 Focus today*\n${focusBody}${focusNote}` },
     },
     { type: "divider" },
     {

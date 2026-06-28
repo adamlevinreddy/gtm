@@ -3,8 +3,11 @@ import { kv } from "@/lib/kv-client";
 import { postToChannel } from "@/lib/slack";
 import { getDigestData, ptDate } from "@/lib/work-items";
 import { buildDigestBlocks, buildDigestText } from "@/lib/digest";
+import { deriveFocusViaAgent } from "@/lib/digest-focus";
 
-export const maxDuration = 60;
+// Long enough for the sandbox agent (focus-today) to run; added/done are
+// deterministic and instant, the agent run is the only slow part.
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 // Weekday 7am-PT morning digest.
@@ -75,9 +78,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const data = await getDigestData(now);
+    // Deterministic: added / done. Agent-authored: focus today (heuristic fallback).
+    const focus = await deriveFocusViaAgent(data.openItems);
     const { ts } = await postToChannel(channel, {
-      text: buildDigestText(data),
-      blocks: buildDigestBlocks(data),
+      text: buildDigestText(data, focus),
+      blocks: buildDigestBlocks(data, focus),
     });
     return NextResponse.json({
       ok: true,
@@ -85,6 +90,7 @@ export async function GET(req: NextRequest) {
       forced: force,
       added: data.addedYesterday.length,
       done: data.doneYesterday.length,
+      focusSource: focus?.source ?? "heuristic",
       summary: data.summary,
     });
   } catch (err) {
