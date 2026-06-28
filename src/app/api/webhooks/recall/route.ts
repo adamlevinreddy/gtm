@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import {
   attributeCustomer,
   fetchBot,
@@ -396,6 +397,28 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   console.log(
     `[recall webhook] committed bot=${botId} slug=${slug} reasons=[${reasons.join(",")}] confidence=${attribution.confidence}`,
   );
+
+  // P2: once a transcript is present, fire the post-meeting triage → board
+  // routing. after() so it survives this webhook returning; idempotent per
+  // botId via the route's KV claim; best-effort (replay route + backstop cron
+  // can re-run). Never lets the triage break the webhook.
+  if (hasTranscript) {
+    after(async () => {
+      try {
+        const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+        await fetch(`${base}/api/proactive/meeting`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-reddy-internal": process.env.MCP_INTERNAL_SECRET ?? "",
+          },
+          body: JSON.stringify({ botId }),
+        });
+      } catch {
+        /* post-meeting triage is best-effort */
+      }
+    });
+  }
 }
 
 // ────────── Helpers ──────────

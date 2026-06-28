@@ -148,16 +148,33 @@ export async function runBotPass(
     acquired = true;
 
     // (b) re-read + eligibility recheck.
-    const item = await getItem(itemId);
+    let item = await getItem(itemId);
     if (!item) return;
-    if (
-      item.status !== "in_progress" ||
-      !item.botAssigned ||
-      !item.ownerEmail ||
-      item.botTaskRevision !== taskRevision
-    ) {
+    if (!item.botAssigned || !item.ownerEmail || item.botTaskRevision !== taskRevision) return;
+    if (item.status === "approved") {
+      // Backstop retry path: re-arm to in_progress ONLY if a prior pass at this
+      // revision already FAILED (e.g. a first-ever cold-start timeout). Never
+      // auto-start a fresh To Do card — that only happens when a human moves it
+      // into Reddy Working (which fires via maybeFire).
+      const failed = await db
+        .select()
+        .from(workItemBotAttempts)
+        .where(
+          and(
+            eq(workItemBotAttempts.workItemId, itemId),
+            eq(workItemBotAttempts.taskRevision, taskRevision),
+            eq(workItemBotAttempts.status, "failed")
+          )
+        )
+        .limit(1);
+      if (!failed[0]) return;
+      const t = await transitionStatus(itemId, item.version, "in_progress", { kind: "system" });
+      if (!t.ok) return;
+      item = t.item;
+    } else if (item.status !== "in_progress") {
       return;
     }
+    if (!item.ownerEmail) return;
     actedAsEmail = item.ownerEmail;
 
     // No existing non-failed attempt at this revision (running or succeeded).
