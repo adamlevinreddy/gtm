@@ -1,28 +1,20 @@
 // ============================================================================
-// POST-MEETING TRIAGE → SUGGEST (confirm-first) → create on confirmation
+// POST-MEETING TRIAGE → SUGGEST (confirm-first), routed PER ITEM
 //
-// When a meeting finishes, reconcile() fires /api/proactive/meeting →
-// proposeFromMeeting. Claude runs in the runner's sandbox (oneshot): it reads
-// the transcript + meta from the cloned KB, picks the board, and — crucially —
-// uses the board_list tool to check EXISTING open cards so each action item is
-// classified as NEW / SUBTASK-of-existing / UPDATE-existing. It returns strict
-// JSON. We DO NOT create anything: we post a Slack SUGGESTION (owners @-mentioned)
-// and stash the structured proposal in KV keyed by the message ts. A human then
-// replies "@Reddy-GTM confirm" in the thread; slack/events injects the stashed
-// proposal and the agent executes it with the board tools (applying corrections).
-//
-// proposeFromMeeting NEVER throws.
+// A single meeting's action items can span boards (a prospect follow-up → GTM,
+// an internal cleanup → Operations, a signed-customer task → Success). So we
+// route EACH ITEM to its own board. Claude runs in the sandbox (oneshot): reads
+// the transcript + meta, uses board_list to check existing cards, and returns
+// strict JSON where every item carries its own boardKey + disposition
+// (new / subtask-of-existing / update-existing). We DON'T create anything — we
+// post a Slack suggestion grouped by board (owners @-mentioned) and stash the
+// proposal in KV. A human replies "@Reddy-GTM confirm"; slack/events injects the
+// proposal and the agent creates each item on ITS board. Never throws.
 // ============================================================================
 
 import { kv } from "@/lib/kv-client";
 import { postToChannel, slackIdForEmail } from "@/lib/slack";
-import {
-  resolveBoardId,
-  boardUrl,
-  selfBaseUrl,
-  listWorkItems,
-  type WorkItemKind,
-} from "@/lib/work-items";
+import { boardUrl, selfBaseUrl, type WorkItemKind } from "@/lib/work-items";
 
 const VALID_KINDS: readonly WorkItemKind[] = [
   "pricing_proposal", "deck_qbr", "meeting_prep", "prep_custom_demo", "rfp_response",
@@ -36,30 +28,27 @@ type BoardKey = (typeof VALID_BOARDS)[number];
 type Disposition = "new" | "subtask" | "update";
 
 export type TriageItem = {
+  boardKey: BoardKey;
   disposition: Disposition;
   title: string;
   kind: WorkItemKind;
   ownerEmail: string | null;
-  targetId: string | null;     // existing card id for subtask(parent) / update(target)
-  targetTitle: string | null;  // for display
-  note: string | null;         // the activity body for an 'update'
+  targetId: string | null;
+  targetTitle: string | null;
+  note: string | null;
 };
 
 export type TriageResult = {
-  boardKey: BoardKey;
   meetingType: "internal" | "prospect" | "signed_customer" | "pilot" | "partner";
-  customerSlug: string | null;
-  confidence: "high" | "medium" | "low";
-  rationale: string;
   meetingTitle: string | null;
   items: TriageItem[];
 };
 
 export type ProposeResult = {
   ok: boolean;
-  boardKey?: BoardKey;
   meetingType?: TriageResult["meetingType"];
   proposed: number;
+  boards?: string[];
   slackTs?: string;
   skipped?: string;
   error?: string;
@@ -67,9 +56,11 @@ export type ProposeResult = {
 
 const IDEMPOTENCY_TTL = 14 * 24 * 3600;
 const PROPOSAL_TTL = 7 * 24 * 3600;
+const BOARD_LABEL: Record<BoardKey, string> = { gtm: "GTM", success: "Success", operations: "Operations" };
+const BOARD_EMOJI: Record<BoardKey, string> = { gtm: "📈", success: "🤝", operations: "🛠️" };
 
 // ----------------------------------------------------------------------------
-// Prompt — read the meeting, pick the board, RECONCILE vs existing cards.
+// Prompt — read the meeting, route EACH ITEM, reconcile vs existing cards.
 // ----------------------------------------------------------------------------
 
 export function buildTriagePrompt(botId: string): string {
@@ -78,42 +69,35 @@ export function buildTriagePrompt(botId: string): string {
     ``,
     `MEETING BOT ID: ${botId}`,
     ``,
-    `STEP 1 — READ THE MEETING (the KB is cloned in your sandbox; '_unsorted' is a real slug, so glob):`,
+    `STEP 1 — READ THE MEETING (KB is cloned in your sandbox; '_unsorted' is a real slug, so glob):`,
     "  - transcript: `corpora/success/customers/*/meetings/" + botId + "/transcript.txt`",
-    "  - metadata (title, attendees+emails, attribution): `corpora/success/customers/*/meetings/" + botId + "/meta.json`",
-    `Read BOTH. Capture the meeting title.`,
+    "  - metadata (title, attendees+emails): `corpora/success/customers/*/meetings/" + botId + "/meta.json`",
+    `Read BOTH. Capture the meeting title and note who the @reddy.io attendees are.`,
     ``,
-    `STEP 2 — PICK THE BOARD (best-effort; a human confirms after):`,
-    `  - INTERNAL-only (all/most attendees @reddy.io, no external company) → "operations".`,
-    `  - SIGNED CUSTOMER (paying; a corpora/success/customers/<slug>/ exists, or the transcript shows an active signed relationship / onboarding / QBR / CS sync) → "success".`,
-    `  - SIGNED PILOT (active pilot WITH a signed contract) → "success" if onboarding/enablement/CS, else "gtm". If the contract is NOT yet signed (still in procurement/negotiation), it is NOT signed → "gtm". State this in the rationale.`,
-    `  - PROSPECT / UNSIGNED (discovery, eval, pricing, demo) → "gtm".`,
-    `  - PARTNER (BPO/channel) → "gtm" for sell-with/through, "operations" for internal partner-ops.`,
-    `  Set confidence and explain the board choice in one sentence.`,
+    `STEP 2 — EXTRACT THE ACTION ITEMS (real commitments / next-steps / owed deliverables only).`,
     ``,
-    `STEP 3 — CHECK EXISTING CARDS. Call the board_list tool for the chosen board, e.g. board_list({ boardKey: "<board>", customerSlug: "<slug if known>" }). Study the returned open cards (each has id, title, kind, status, ownerEmail). You will reconcile every action item against them.`,
+    `STEP 3 — ROUTE EACH ITEM TO ITS OWN BOARD. Items from ONE meeting can span boards — route by what EACH item is about, not by the meeting overall:`,
+    `  - "gtm": the item is about a PROSPECT / unsigned lead / pilot whose contract isn't signed (discovery, demo, pricing, outreach, follow-up with a not-yet-customer).`,
+    `  - "success": the item is about a SIGNED CUSTOMER (a corpora/success/customers/<slug>/ exists, or it's onboarding / QBR / CS / expansion for a paying customer).`,
+    `  - "operations": the item is PURELY INTERNAL (CRM cleanup, internal scheduling, process, enablement that isn't tied to one external account).`,
+    `  Example: in an internal lead-triage meeting, "follow up with prospect X" → gtm, "re-upload the lead list to HubSpot" → operations, "QBR prep for <signed customer>" → success.`,
     ``,
-    `STEP 4 — EXTRACT ACTION ITEMS and choose a DISPOSITION for each (only real commitments / next-steps / owed deliverables; 0 is valid for a pure status meeting):`,
-    `  - "update": this is the SAME work as an existing open card → don't create anything; we'll log an activity/note on it. Set targetId = that card's id, targetTitle = its title, and note = the concrete update to record.`,
-    `  - "subtask": this is a sub-step of an existing in-flight card → set targetId = the parent card's id and targetTitle = its title (we'll create it under that parent).`,
-    `  - "new": none of the above → a fresh top-level card.`,
-    `  For each: title (short imperative), kind (one of ${VALID_KINDS.join(", ")}), ownerEmail (the @reddy.io attendee who clearly owns it from meta.json, else null).`,
+    `STEP 4 — CHECK EXISTING CARDS before deciding disposition. For each board you're routing items to, call board_list({ boardKey, customerSlug? }) to see existing open cards (id, title, kind, status, ownerEmail). Then set each item's disposition:`,
+    `  - "update": same work as an existing card → set targetId = that card id, targetTitle = its title, note = the update to log (no new card).`,
+    `  - "subtask": a sub-step of an existing in-flight card → set targetId = parent card id, targetTitle = its title.`,
+    `  - "new": otherwise.`,
     ``,
     `STEP 5 — RETURN STRICT JSON in a SINGLE fenced \`\`\`json block, nothing after it:`,
     "```json",
     `{`,
-    `  "boardKey": "gtm" | "success" | "operations",`,
     `  "meetingType": "internal" | "prospect" | "signed_customer" | "pilot" | "partner",`,
-    `  "customerSlug": string | null,`,
-    `  "confidence": "high" | "medium" | "low",`,
-    `  "rationale": "one sentence on the board choice",`,
     `  "meetingTitle": string,`,
     `  "items": [`,
-    `    { "disposition": "new"|"subtask"|"update", "title": string, "kind": "<kind>", "ownerEmail": string|null, "targetId": string|null, "targetTitle": string|null, "note": string|null }`,
+    `    { "boardKey": "gtm"|"success"|"operations", "disposition": "new"|"subtask"|"update", "title": string, "kind": "<one of: ${VALID_KINDS.join(", ")}>", "ownerEmail": string|null, "targetId": string|null, "targetTitle": string|null, "note": string|null }`,
     `  ]`,
     `}`,
     "```",
-    `You MAY call board_list (read-only). Do NOT create, update, or move any card — proposing the JSON is your entire job.`,
+    `title = short imperative; ownerEmail = the @reddy.io attendee who clearly owns it (from meta.json), else null. You MAY call board_list (read-only). Do NOT create/update/move any card — the JSON is your entire job.`,
   ].join("\n");
 }
 
@@ -140,10 +124,10 @@ function tryParse(raw: string): TriageResult | null {
   try { obj = JSON.parse(raw); } catch { return null; }
   if (!obj || typeof obj !== "object") return null;
   const o = obj as Record<string, unknown>;
-  const boardKey = coerceBoard(o.boardKey);
-  if (!boardKey) return null;
+  if (!Array.isArray(o.items)) return null;
+
   const items: TriageItem[] = [];
-  for (const it of Array.isArray(o.items) ? o.items : []) {
+  for (const it of o.items) {
     if (!it || typeof it !== "object") continue;
     const i = it as Record<string, unknown>;
     const title = typeof i.title === "string" ? i.title.trim() : "";
@@ -152,7 +136,8 @@ function tryParse(raw: string): TriageResult | null {
       i.disposition === "subtask" || i.disposition === "update" ? i.disposition : "new";
     const targetId = typeof i.targetId === "string" && i.targetId.trim() ? i.targetId.trim() : null;
     items.push({
-      disposition: disposition !== "new" && !targetId ? "new" : disposition, // a subtask/update with no target is just new
+      boardKey: coerceBoard(i.boardKey) ?? "gtm",
+      disposition: disposition !== "new" && !targetId ? "new" : disposition,
       title,
       kind: coerceKind(i.kind),
       ownerEmail: typeof i.ownerEmail === "string" && i.ownerEmail.includes("@") ? i.ownerEmail.trim().toLowerCase() : null,
@@ -161,15 +146,7 @@ function tryParse(raw: string): TriageResult | null {
       note: typeof i.note === "string" && i.note.trim() ? i.note.trim() : null,
     });
   }
-  return {
-    boardKey,
-    meetingType: coerceType(o.meetingType),
-    customerSlug: typeof o.customerSlug === "string" && o.customerSlug.trim() ? o.customerSlug.trim() : null,
-    confidence: o.confidence === "high" || o.confidence === "medium" || o.confidence === "low" ? o.confidence : "low",
-    rationale: typeof o.rationale === "string" ? o.rationale.trim() : "",
-    meetingTitle: typeof o.meetingTitle === "string" && o.meetingTitle.trim() ? o.meetingTitle.trim() : null,
-    items,
-  };
+  return { meetingType: coerceType(o.meetingType), meetingTitle: typeof o.meetingTitle === "string" && o.meetingTitle.trim() ? o.meetingTitle.trim() : null, items };
 }
 
 function coerceBoard(v: unknown): BoardKey | null {
@@ -225,12 +202,10 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     const parsed = parseTriage(answer);
     if (!parsed) return { ok: false, proposed: 0, error: "could not parse triage JSON" };
 
-    // resolve owner emails → slack ids for @-mentions (best-effort)
     const owners = Array.from(new Set(parsed.items.map((i) => i.ownerEmail).filter((e): e is string => !!e)));
     const slackIds: Record<string, string | null> = {};
     await Promise.all(owners.map(async (e) => { slackIds[e] = await slackIdForEmail(e); }));
 
-    // post the SUGGESTION (nothing created yet)
     let slackTs: string | undefined;
     const channel = process.env.SALES_TESTING_CHANNEL_ID;
     if (channel) {
@@ -239,53 +214,48 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
         slackTs = res.ts;
       } catch { /* ignore Slack failures */ }
     }
-
-    // stash the structured proposal so the confirm reply (slack/events) can execute it
     if (slackTs) {
-      await kv
-        .set(`postmeeting:proposal:${slackTs}`, { botId, ...parsed }, { ex: PROPOSAL_TTL })
-        .catch(() => {});
+      await kv.set(`postmeeting:proposal:${slackTs}`, { botId, ...parsed }, { ex: PROPOSAL_TTL }).catch(() => {});
     }
 
-    return { ok: true, boardKey: parsed.boardKey, meetingType: parsed.meetingType, proposed: parsed.items.length, ...(slackTs ? { slackTs } : {}) };
+    const boards = Array.from(new Set(parsed.items.map((i) => i.boardKey)));
+    return { ok: true, meetingType: parsed.meetingType, proposed: parsed.items.length, boards, ...(slackTs ? { slackTs } : {}) };
   } catch (err) {
     return { ok: false, proposed: 0, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 // ----------------------------------------------------------------------------
-// Slack suggestion message
+// Slack suggestion — grouped by board (table-like), owners @-mentioned.
 // ----------------------------------------------------------------------------
-
-const BOARD_LABEL: Record<BoardKey, string> = { gtm: "GTM", success: "Success", operations: "Operations" };
 
 function ownerTag(email: string | null, slackIds: Record<string, string | null>): string {
   if (!email) return "_unassigned_";
   const id = slackIds[email];
-  return id ? `<@${id}>` : email.split("@")[0];
+  return id ? `<@${id}>` : `@${email.split("@")[0]}`;
+}
+
+function rowFor(it: TriageItem, slackIds: Record<string, string | null>): string {
+  const owner = ownerTag(it.ownerEmail, slackIds);
+  if (it.disposition === "update")
+    return `• ✎ *update* "${it.targetTitle ?? "existing"}" — ${it.note ?? it.title} · ${owner}`;
+  if (it.disposition === "subtask")
+    return `• ↳ *subtask* of "${it.targetTitle ?? "existing"}" · ${it.title} · _${it.kind}_ · ${owner}`;
+  return `• 🆕 ${it.title} · _${it.kind}_ · ${owner}`;
 }
 
 function buildSuggestionMessage(
   parsed: TriageResult,
   slackIds: Record<string, string | null>
 ): { text: string; blocks: object[] } {
-  const boardLabel = BOARD_LABEL[parsed.boardKey];
-  const link = `${boardUrl()}?board=${parsed.boardKey}`;
-  const title = parsed.meetingTitle ? `*${parsed.meetingTitle}*` : "the meeting";
-  const customerBit = parsed.customerSlug ? ` · ${parsed.customerSlug}` : "";
+  const title = parsed.meetingTitle ?? "the meeting";
+  const boardsWithItems = (VALID_BOARDS as readonly BoardKey[]).filter((b) =>
+    parsed.items.some((i) => i.boardKey === b)
+  );
 
-  const lines = parsed.items.length
-    ? parsed.items.map((it, n) => {
-        const owner = ownerTag(it.ownerEmail, slackIds);
-        if (it.disposition === "update")
-          return `${n + 1}. ✎ *Update* "${it.targetTitle ?? "existing card"}" — log: ${it.note ?? it.title} · ${owner}`;
-        if (it.disposition === "subtask")
-          return `${n + 1}. ↳ *Subtask* under "${it.targetTitle ?? "existing card"}" · ${it.title} · _${it.kind}_ · ${owner}`;
-        return `${n + 1}. 🆕 *New* · ${it.title} · _${it.kind}_ · ${owner}`;
-      }).join("\n")
-    : "_No action items found — looks like a pure status meeting._";
-
-  const text = `Post-meeting suggestions from ${parsed.meetingTitle ?? "the meeting"} → ${boardLabel} board — ${parsed.items.length} proposed (nothing created yet). ${parsed.rationale}`;
+  const text = `Post-meeting suggestions from ${title} — ${parsed.items.length} task${
+    parsed.items.length === 1 ? "" : "s"
+  } across ${boardsWithItems.map((b) => BOARD_LABEL[b]).join(", ") || "—"} (nothing created yet).`;
 
   const blocks: object[] = [
     { type: "header", text: { type: "plain_text", text: "📋  Post-meeting suggestions", emoji: true } },
@@ -293,34 +263,43 @@ function buildSuggestionMessage(
       type: "context",
       elements: [{
         type: "mrkdwn",
-        text: `From ${title} → *${boardLabel}* board${customerBit}  ·  *${parsed.meetingType}*  ·  confidence *${parsed.confidence}*`,
-      }],
-    },
-    { type: "section", text: { type: "mrkdwn", text: `*Why this board:* ${parsed.rationale || "(none)"}` } },
-    { type: "divider" },
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `*Proposed — nothing created yet:*\n${lines}` },
-    },
-    {
-      type: "actions",
-      elements: [{
-        type: "button",
-        text: { type: "plain_text", text: `Open the ${boardLabel} board`, emoji: true },
-        url: link,
-        style: "primary",
-      }],
-    },
-    {
-      type: "context",
-      elements: [{
-        type: "mrkdwn",
-        text:
-          parsed.items.length
-            ? "Reply *“@Reddy-GTM confirm”* to create these — or say what to change (board, owner, drop an item, make it a subtask). Nothing is created until you confirm."
-            : "Nothing to create. Reply if you'd like me to add a task anyway.",
+        text: `From *${title}* · ${parsed.items.length} task${parsed.items.length === 1 ? "" : "s"} · nothing created until you confirm`,
       }],
     },
   ];
+
+  if (parsed.items.length === 0) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: "_No action items found — looks like a pure status meeting._" } });
+  } else {
+    for (const b of boardsWithItems) {
+      const rows = parsed.items.filter((i) => i.boardKey === b).map((i) => rowFor(i, slackIds)).join("\n");
+      blocks.push({ type: "divider" });
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: `${BOARD_EMOJI[b]} *${BOARD_LABEL[b]} board* · ${parsed.items.filter((i) => i.boardKey === b).length}\n${rows}` },
+      });
+    }
+    blocks.push({
+      type: "actions",
+      elements: boardsWithItems.map((b) => ({
+        type: "button",
+        text: { type: "plain_text", text: `Open ${BOARD_LABEL[b]}`, emoji: true },
+        url: `${boardUrl()}?board=${b}`,
+        ...(b === boardsWithItems[0] ? { style: "primary" as const } : {}),
+      })),
+    });
+  }
+
+  blocks.push({
+    type: "context",
+    elements: [{
+      type: "mrkdwn",
+      text:
+        parsed.items.length
+          ? "Reply *“@Reddy-GTM confirm”* to create these on their boards — or say what to change (move an item to another board, reassign, drop it, make it a subtask). Nothing is created until you confirm."
+          : "Nothing to create. Reply if you'd like me to add a task anyway.",
+    }],
+  });
+
   return { text, blocks };
 }
