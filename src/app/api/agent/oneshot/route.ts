@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
   // callers up to a ceiling that stays under maxDuration (800s).
   const pollTimeout =
     typeof pollTimeoutMs === "number" && pollTimeoutMs > 0
-      ? Math.min(Math.max(pollTimeoutMs, 30_000), 760_000)
+      ? Math.min(Math.max(pollTimeoutMs, 30_000), 720_000)
       : POLL_TIMEOUT_MS;
 
   const requestId = randomUUID();

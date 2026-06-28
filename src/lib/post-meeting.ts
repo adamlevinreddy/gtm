@@ -207,7 +207,7 @@ async function runOneshot(question: string, userEmail: string, reqId: string): P
       // oneshot route poll well past its 240s interactive default (bounded by
       // its own 800s maxDuration). The poll returns the instant the agent
       // writes its result, so a generous ceiling only costs us on a true hang.
-      body: JSON.stringify({ question, userEmail, oneshotRequestId: reqId, pollTimeoutMs: 560_000 }),
+      body: JSON.stringify({ question, userEmail, oneshotRequestId: reqId, pollTimeoutMs: 680_000 }),
     });
     const json = (await res.json()) as { ok?: boolean; answer?: string };
     if (json?.ok && typeof json.answer === "string" && json.answer.trim()) return json.answer;
@@ -220,22 +220,31 @@ async function runOneshot(question: string, userEmail: string, reqId: string): P
 // ----------------------------------------------------------------------------
 
 export async function proposeFromMeeting(botId: string, opts?: { force?: boolean }): Promise<ProposeResult> {
+  const claimKey = `proactive:meeting:${botId}`;
+  let claimedHere = false;
+  // Release the idempotency claim on any failure so a re-trigger (or retry) can
+  // run again — otherwise a transient timeout would block this meeting's triage
+  // for the full IDEMPOTENCY_TTL. Success keeps the claim (post-once semantics).
+  const releaseClaim = async () => {
+    if (claimedHere) await kv.del(claimKey).catch(() => {});
+  };
   try {
     if (!botId) return { ok: false, proposed: 0, error: "missing botId" };
 
     if (!opts?.force) {
       const claimed = await kv
-        .set(`proactive:meeting:${botId}`, new Date().toISOString(), { nx: true, ex: IDEMPOTENCY_TTL })
+        .set(claimKey, new Date().toISOString(), { nx: true, ex: IDEMPOTENCY_TTL })
         .catch(() => "errored");
       if (claimed === null) return { ok: true, proposed: 0, skipped: "already-processed" };
+      if (claimed !== "errored") claimedHere = true;
     }
 
     const runnerEmail = process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io";
     const answer = await runOneshot(buildTriagePrompt(botId), runnerEmail, `postmeeting:${botId}`);
-    if (!answer) return { ok: false, proposed: 0, error: "triage agent unavailable or empty" };
+    if (!answer) { await releaseClaim(); return { ok: false, proposed: 0, error: "triage agent unavailable or empty" }; }
 
     const parsed = parseTriage(answer);
-    if (!parsed) return { ok: false, proposed: 0, error: "could not parse triage JSON" };
+    if (!parsed) { await releaseClaim(); return { ok: false, proposed: 0, error: "could not parse triage JSON" }; }
 
     const owners = Array.from(new Set(parsed.items.map((i) => i.ownerEmail).filter((e): e is string => !!e)));
     const slackIds: Record<string, string | null> = {};
@@ -256,6 +265,7 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     const boards = Array.from(new Set(parsed.items.map((i) => i.boardKey)));
     return { ok: true, meetingType: parsed.meetingType, proposed: parsed.items.length, boards, ...(slackTs ? { slackTs } : {}) };
   } catch (err) {
+    await releaseClaim();
     return { ok: false, proposed: 0, error: err instanceof Error ? err.message : String(err) };
   }
 }
