@@ -295,6 +295,35 @@ export const warmupStatusEnum = pgEnum("warmup_status", [
   "complete",
 ]);
 
+/** Kind of work item the bot tracks on the board */
+export const workItemTypeEnum = pgEnum("work_item_type", [
+  "followup",
+  "crm_update",
+  "prep",
+  "task",
+]);
+
+/** Work item lifecycle. Everything the bot proposes starts as `suggested`. */
+export const workItemStatusEnum = pgEnum("work_item_status", [
+  "suggested",
+  "approved",
+  "done",
+  "dismissed",
+]);
+
+/** Where a work item came from */
+export const workItemSourceEnum = pgEnum("work_item_source", [
+  "post_meeting",
+  "cron",
+  "manual",
+]);
+
+/** Whether the owner is a human teammate or the bot itself */
+export const workItemOwnerKindEnum = pgEnum("work_item_owner_kind", [
+  "human",
+  "bot",
+]);
+
 // ============================================================================
 // EXISTING TABLES (preserved exactly as-is)
 // ============================================================================
@@ -1089,3 +1118,83 @@ export const sendingAccounts = pgTable(
     index("idx_sending_accounts_warmup").on(table.warmupStatus),
   ]
 );
+
+// --- Work Items (tracking board: bot-suggested + manual tasks) ---
+
+/**
+ * The unit the GTM tracking board renders and the proactive bot writes into.
+ *
+ * Every suggestion the bot makes (post-meeting follow-ups, CRM updates, prep)
+ * is a row here with status `suggested` -- it is NEVER auto-applied. A human
+ * approves, which flips status to `approved` and (later) triggers the write.
+ * The morning digest reads this table to summarize what was added / completed.
+ *
+ * FKs to accounts/opportunities/meetings are all nullable on purpose: a
+ * suggestion can fire from the recall webhook before the matching account or
+ * meeting row exists. `customerSlug` + `sourceRef` (the recall botId) are the
+ * durable join keys; the typed FKs get backfilled when the rows appear.
+ */
+export const workItems = pgTable(
+  "work_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** What kind of work this is */
+    type: workItemTypeEnum("type").notNull(),
+    /** One-line human summary -- what the board card and digest render */
+    title: text("title").notNull(),
+    /** Lifecycle state. Bot output always starts at 'suggested'. */
+    status: workItemStatusEnum("status").default("suggested").notNull(),
+    /** How this item was created */
+    source: workItemSourceEnum("source").notNull(),
+    /** Whether the owner is a human teammate or the bot */
+    ownerKind: workItemOwnerKindEnum("owner_kind").default("human").notNull(),
+    /** Teammate email (enforces the HubSpot ownership rule); null if unassigned */
+    ownerEmail: text("owner_email"),
+
+    // -- attribution / FKs (all nullable: a suggestion may predate the rows) --
+    accountId: uuid("account_id").references(() => accounts.id),
+    opportunityId: uuid("opportunity_id").references(() => opportunities.id),
+    meetingId: uuid("meeting_id").references(() => meetings.id),
+    /** Denormalized recall slug -- survives even with no account row */
+    customerSlug: text("customer_slug"),
+    /** Recall botId (post_meeting) / cron run id / null (manual) */
+    sourceRef: text("source_ref"),
+
+    /** The machine-actionable suggested change, shaped per `type` */
+    payload: jsonb("payload").notNull(),
+
+    // -- lifecycle --
+    dismissedReason: text("dismissed_reason"),
+    /** Slack user id / email of whoever approved */
+    approvedBy: text("approved_by"),
+    approvedAt: timestamp("approved_at"),
+    completedAt: timestamp("completed_at"),
+    /** 'bot' | 'seed' | slack user id */
+    createdBy: text("created_by").default("bot").notNull(),
+
+    // -- timestamps --
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_work_items_status").on(table.status),
+    index("idx_work_items_owner").on(table.ownerEmail),
+    index("idx_work_items_account").on(table.accountId),
+    index("idx_work_items_meeting").on(table.meetingId),
+    index("idx_work_items_source_ref").on(table.sourceRef),
+    index("idx_work_items_customer_slug").on(table.customerSlug),
+    index("idx_work_items_created").on(table.createdAt),
+    index("idx_work_items_completed").on(table.completedAt),
+    /**
+     * Idempotency: the same meeting reprocessing (webhook retries fire
+     * reconcile multiple times) can't duplicate a suggestion. Partial so
+     * manual items (no sourceRef) are never collapsed together.
+     */
+    uniqueIndex("idx_work_items_dedup")
+      .on(table.sourceRef, table.type, table.title)
+      .where(sql`${table.sourceRef} IS NOT NULL`),
+  ]
+);
+
+export type WorkItem = typeof workItems.$inferSelect;
+export type NewWorkItem = typeof workItems.$inferInsert;

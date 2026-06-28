@@ -4,6 +4,25 @@ function getSlackClient() {
   return new WebClient(process.env.SLACK_BOT_TOKEN);
 }
 
+/**
+ * Post a message to an arbitrary channel. Generalizes the hardcoded
+ * SLACK_CHANNEL_ID posting above so proactive features (morning digest,
+ * post-meeting suggestions) can target the sales-testing channel.
+ */
+export async function postToChannel(
+  channel: string,
+  msg: { text: string; blocks?: object[]; threadTs?: string }
+): Promise<{ ts?: string }> {
+  const client = getSlackClient();
+  const res = await client.chat.postMessage({
+    channel,
+    text: msg.text, // fallback / notification text -- always set
+    ...(msg.blocks ? { blocks: msg.blocks as never } : {}),
+    ...(msg.threadTs ? { thread_ts: msg.threadTs } : {}),
+  });
+  return { ts: res.ts };
+}
+
 export async function sendReviewNotification(params: {
   reviewId: string;
   source: string;
