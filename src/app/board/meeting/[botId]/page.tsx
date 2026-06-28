@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { loadMeeting } from "@/lib/meeting-viewer";
 import MeetingChatStream from "../MeetingChatStream";
+import MeetingPlayerAndTranscript from "./MeetingPlayerAndTranscript";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,28 +19,6 @@ function fmtPT(iso: string | null): string {
       weekday: "short", month: "short", day: "numeric",
       hour: "numeric", minute: "2-digit",
     }).format(d) + " PT"
-  );
-}
-
-// Render the "Speaker: line" transcript with speaker names emphasized.
-function TranscriptBody({ text }: { text: string }) {
-  const lines = text.split(/\r?\n/);
-  return (
-    <div className="space-y-1.5 text-sm leading-relaxed text-zinc-700">
-      {lines.map((line, i) => {
-        const m = line.match(/^([^:]{1,40}):\s?(.*)$/);
-        if (m) {
-          return (
-            <p key={i}>
-              <span className="font-semibold" style={{ color: PLUM }}>{m[1]}:</span>{" "}
-              <span>{m[2]}</span>
-            </p>
-          );
-        }
-        if (!line.trim()) return <div key={i} className="h-1.5" />;
-        return <p key={i}>{line}</p>;
-      })}
-    </div>
   );
 }
 
@@ -96,42 +75,13 @@ export default async function MeetingViewerPage({
 
         {meeting.found && (
           <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-5">
-            {/* left: video + transcript */}
+            {/* left: video + clickable transcript (shared player ref → seek) */}
             <div className="flex flex-col gap-5 lg:col-span-3">
-              {/* recording */}
-              <section className="overflow-hidden rounded-xl border bg-black" style={{ borderColor: "#E4DCE3" }}>
-                {meeting.video.kind === "mux" && meeting.video.url ? (
-                  <iframe
-                    src={meeting.video.url}
-                    className="aspect-video w-full"
-                    allow="autoplay; fullscreen; picture-in-picture"
-                    allowFullScreen
-                    title="Meeting recording"
-                  />
-                ) : meeting.video.kind === "lfs" && meeting.video.url ? (
-                  // eslint-disable-next-line jsx-a11y/media-has-caption
-                  <video src={meeting.video.url} controls preload="metadata" className="aspect-video w-full bg-black" />
-                ) : (
-                  <div className="flex aspect-video w-full items-center justify-center bg-zinc-900 text-sm text-zinc-400">
-                    No recording available for this meeting.
-                  </div>
-                )}
-              </section>
-
-              {/* transcript */}
-              <section className="rounded-xl border bg-white" style={{ borderColor: "#E4DCE3" }}>
-                <div className="flex items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: "#EFE5EE" }}>
-                  <span>📄</span>
-                  <h2 className="text-sm font-semibold" style={{ color: PLUM }}>Transcript</h2>
-                </div>
-                <div className="max-h-[60vh] overflow-y-auto px-4 py-4">
-                  {meeting.transcript ? (
-                    <TranscriptBody text={meeting.transcript} />
-                  ) : (
-                    <p className="text-sm text-zinc-400">No transcript available for this meeting.</p>
-                  )}
-                </div>
-              </section>
+              <MeetingPlayerAndTranscript
+                video={meeting.video}
+                timed={meeting.timedTranscript}
+                fallback={meeting.transcript}
+              />
             </div>
 
             {/* right: chat */}

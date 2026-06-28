@@ -7,9 +7,13 @@
 // walk) so freshly-committed meetings resolve before code search indexes them.
 
 import { readKbFile, KB_REPO } from "@/lib/github-kb";
-import { signedPlayerUrl } from "@/lib/mux";
+import { signedPlayerUrl, signedPlayerTokens } from "@/lib/mux";
 import { buildVideoLink } from "@/lib/video-link";
 import { selfBaseUrl } from "@/lib/work-items";
+import { fetchTranscript, transcriptToTimedSegments } from "@/lib/recall";
+import { kv } from "@/lib/kv-client";
+
+export type TimedLine = { start: number; speaker: string; text: string };
 
 export type MeetingMeta = {
   recall_bot_id?: string;
@@ -35,7 +39,13 @@ export type LoadedMeeting = {
   companyName: string | null;
   attendees: Array<{ name?: string; email?: string }>;
   transcript: string | null;
-  video: { kind: "mux" | "lfs" | "none"; url: string | null };
+  timedTranscript: TimedLine[] | null;
+  video: {
+    kind: "mux" | "lfs" | "none";
+    url: string | null;
+    muxPlaybackId?: string | null;
+    muxTokens?: { playback: string; thumbnail: string; storyboard: string } | null;
+  };
 };
 
 const ghHeaders = (pat: string) => ({
@@ -141,7 +151,7 @@ export async function loadMeeting(
   const empty: LoadedMeeting = {
     botId, slug: null, found: false, title: "Meeting", startedAt: null,
     platform: null, companyName: null, attendees: [], transcript: null,
-    video: { kind: "none", url: null },
+    timedTranscript: null, video: { kind: "none", url: null },
   };
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   if (!pat || !botId) return empty;
@@ -165,7 +175,12 @@ export async function loadMeeting(
   let video: LoadedMeeting["video"] = { kind: "none", url: null };
   if (meta.mux?.playback_id && process.env.MUX_SIGNING_KEY_ID && process.env.MUX_SIGNING_KEY_PRIVATE) {
     try {
-      video = { kind: "mux", url: signedPlayerUrl(meta.mux.playback_id, ttl) };
+      video = {
+        kind: "mux",
+        url: signedPlayerUrl(meta.mux.playback_id, ttl),
+        muxPlaybackId: meta.mux.playback_id,
+        muxTokens: signedPlayerTokens(meta.mux.playback_id, ttl),
+      };
     } catch {
       /* fall back to LFS */
     }
@@ -179,6 +194,33 @@ export async function loadMeeting(
     }
   }
 
+  // Timestamped transcript (for click-to-seek): prefer a persisted
+  // transcript.json; else fetch the timed segments from Recall once and cache
+  // them (transcripts are immutable). Falls back to the plain transcript.txt
+  // for meetings whose Recall artifacts have expired.
+  let timedTranscript: TimedLine[] | null = null;
+  const timedText = await readKbFile(pat, metaPath.replace(/meta\.json$/, "transcript.json")).catch(() => null);
+  if (timedText) {
+    try {
+      timedTranscript = JSON.parse(timedText) as TimedLine[];
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!timedTranscript && meta.has_transcript) {
+    const ck = `mtgtimed:${botId}`;
+    timedTranscript = await kv.get<TimedLine[]>(ck).catch(() => null);
+    if (!timedTranscript) {
+      try {
+        const { segments } = await fetchTranscript(botId);
+        timedTranscript = transcriptToTimedSegments(segments);
+        await kv.set(ck, timedTranscript, { ex: 30 * 24 * 3600 }).catch(() => {});
+      } catch {
+        /* leave null → plain-text transcript fallback in the viewer */
+      }
+    }
+  }
+
   return {
     botId,
     slug,
@@ -189,6 +231,7 @@ export async function loadMeeting(
     companyName: meta.attribution?.company_name ?? null,
     attendees: (meta.attendees ?? []).map((a) => ({ name: a.name, email: a.email })),
     transcript: transcript ?? null,
+    timedTranscript: timedTranscript && timedTranscript.length ? timedTranscript : null,
     video,
   };
 }

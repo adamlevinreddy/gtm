@@ -201,15 +201,20 @@ export function deriveAccountLabel(title: string | null, slug: string): string {
   if (!title) return "Unsorted";
   const cleaned = title
     .replace(/\(.*?\)/g, " ") // drop parentheticals like "(Weekly)" / "(CS+CL)"
+    .replace(/\b(via|on)\s+(zoom|teams|google\s*meet|g\s*meet|gmeet|meet|hangouts?|webex)\b/gi, " ")
     .replace(/\breddy\b/gi, " ")
-    .replace(/[<>|/&,]+/g, " ")
+    .replace(/['’]s\b/gi, "") // Lowe's → Lowe (keep it simple/groupable)
+    .replace(/[<>|/&,:–—-]+/g, " ")
     .replace(
-      /\b(weekly|sync|touchpoint|huddle|review|pipeline|kickoff|pilot|planning|questions?|meeting|notetaker|standup|check[- ]?in|catch[- ]?up|call|demo|intro|and|the|with|it)\b/gi,
+      /\b(weekly|biweekly|monthly|sync|touchpoint|touch\s*base|huddle|review|pipeline|kickoff|kick\s*off|pilot|planning|questions?|meeting|notetaker|note\s*taker|standup|stand\s*up|check\s*in|catch\s*up|call|demo|intro|debrief|recurring|external|personal|room|block|for|and|the|with|it|x)\b/gi,
       " "
     )
     .replace(/\s+/g, " ")
     .trim();
-  return cleaned || "Internal";
+  // If nothing meaningful survives (internal/admin meetings, name-only titles),
+  // bucket as Internal rather than a noisy fragment.
+  if (!cleaned || cleaned.length < 2) return "Internal";
+  return cleaned;
 }
 
 export function formatMeetingIndex(meetings: IndexedMeeting[]): string {

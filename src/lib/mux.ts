@@ -140,6 +140,21 @@ export function signedPlaybackUrl(playbackId: string, ttlSeconds?: number): stri
   return `https://stream.mux.com/${playbackId}.m3u8?token=${token}`;
 }
 
+// The same three signed JWTs as signedPlayerUrl, returned as an object for the
+// <MuxPlayer> React component's `tokens` prop (which wants the raw JWTs, not a
+// player.mux.com URL). Lets the in-board viewer control the player (seek) while
+// signedPlayerUrl stays for Slack-share / agent-index clickable links.
+export function signedPlayerTokens(
+  playbackId: string,
+  ttlSeconds?: number
+): { playback: string; thumbnail: string; storyboard: string } {
+  return {
+    playback: signPlaybackJwt({ playbackId, ttlSeconds, aud: "v" }),
+    thumbnail: signPlaybackJwt({ playbackId, ttlSeconds, aud: "t" }),
+    storyboard: signPlaybackJwt({ playbackId, ttlSeconds, aud: "s" }),
+  };
+}
+
 // Player page URL — embeds the Mux web player. Better for "click and
 // watch" scenarios because raw .m3u8 doesn't play in most browsers.
 //

@@ -190,6 +190,30 @@ export function transcriptToText(segments: RecallTranscriptSegment[]): string {
     .join("\n");
 }
 
+// Like transcriptToText, but keeps per-line start times (seconds from
+// recording start) so the meeting viewer can render a clickable, seek-to
+// transcript. start falls back to the first word's relative timestamp, then 0.
+export function transcriptToTimedSegments(
+  segments: RecallTranscriptSegment[]
+): Array<{ start: number; speaker: string; text: string }> {
+  return segments
+    .map((s) => {
+      const speaker = s.participant?.name || s.participant?.email || s.speaker || "Unknown";
+      const text =
+        s.text ??
+        (Array.isArray(s.words) ? s.words.map((w) => w.text ?? "").join(" ").trim() : "");
+      if (!text) return null;
+      const start =
+        typeof s.start === "number" ? s.start : s.words?.[0]?.start_timestamp?.relative ?? 0;
+      return {
+        start: typeof start === "number" && Number.isFinite(start) ? start : 0,
+        speaker,
+        text,
+      };
+    })
+    .filter((x): x is { start: number; speaker: string; text: string } => !!x);
+}
+
 // Fetch the participants artifact for a bot. Returns the raw list of
 // participants Recall observed during the meeting. Each entry has at
 // least `name` and (for calendar-scheduled bots with email matching
