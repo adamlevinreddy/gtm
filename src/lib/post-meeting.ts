@@ -285,20 +285,39 @@ function buildSuggestionMessage(
       }).join("\n")
     : "_No action items found — looks like a pure status meeting._";
 
-  const headline = `:clipboard: Suggestions from ${title} → *${boardLabel}* board${customerBit}`;
-  const text = `${headline} — ${parsed.items.length} proposed (nothing created yet). ${parsed.rationale}`;
+  const text = `Post-meeting suggestions from ${parsed.meetingTitle ?? "the meeting"} → ${boardLabel} board — ${parsed.items.length} proposed (nothing created yet). ${parsed.rationale}`;
 
   const blocks: object[] = [
-    { type: "section", text: { type: "mrkdwn", text: `${headline}\n*Meeting type:* ${parsed.meetingType}  ·  *Confidence:* ${parsed.confidence}\n*Why this board:* ${parsed.rationale || "(none)"}` } },
-    { type: "section", text: { type: "mrkdwn", text: `*Proposed — nothing created yet:*\n${lines}` } },
-    { type: "context", elements: [{ type: "mrkdwn", text: `<${link}|Preview the ${boardLabel} board>` }] },
+    { type: "header", text: { type: "plain_text", text: "📋  Post-meeting suggestions", emoji: true } },
+    {
+      type: "context",
+      elements: [{
+        type: "mrkdwn",
+        text: `From ${title} → *${boardLabel}* board${customerBit}  ·  *${parsed.meetingType}*  ·  confidence *${parsed.confidence}*`,
+      }],
+    },
+    { type: "section", text: { type: "mrkdwn", text: `*Why this board:* ${parsed.rationale || "(none)"}` } },
+    { type: "divider" },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*Proposed — nothing created yet:*\n${lines}` },
+    },
+    {
+      type: "actions",
+      elements: [{
+        type: "button",
+        text: { type: "plain_text", text: `Open the ${boardLabel} board`, emoji: true },
+        url: link,
+        style: "primary",
+      }],
+    },
     {
       type: "context",
       elements: [{
         type: "mrkdwn",
         text:
           parsed.items.length
-            ? "Reply *“@Reddy-GTM confirm”* to create these, or tell me what to change (board, owner, drop an item, make it a subtask). Nothing is created until you confirm."
+            ? "Reply *“@Reddy-GTM confirm”* to create these — or say what to change (board, owner, drop an item, make it a subtask). Nothing is created until you confirm."
             : "Nothing to create. Reply if you'd like me to add a task anyway.",
       }],
     },

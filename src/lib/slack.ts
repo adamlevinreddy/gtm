@@ -43,6 +43,10 @@ export async function postToChannel(
     text: msg.text, // fallback / notification text -- always set
     ...(msg.blocks ? { blocks: msg.blocks as never } : {}),
     ...(msg.threadTs ? { thread_ts: msg.threadTs } : {}),
+    // These are structured Block Kit messages with their own buttons/links;
+    // don't let Slack auto-unfurl board URLs into an ugly preview card.
+    unfurl_links: false,
+    unfurl_media: false,
   });
   return { ts: res.ts };
 }
