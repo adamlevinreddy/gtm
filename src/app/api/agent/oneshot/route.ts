@@ -226,11 +226,18 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
+    // Surface the underlying API error body — @vercel/sandbox / Composio
+    // APIError carries the real reason on .json/.text, which err.message hides.
+    const detail =
+      err && typeof err === "object"
+        ? (err as { json?: unknown }).json ?? (err as { text?: unknown }).text ?? null
+        : null;
     console.error(
-      `[agent/oneshot] failed for ${userEmail}: ${err instanceof Error ? err.stack || err.message : String(err)}`,
+      `[agent/oneshot] failed for ${userEmail}: ${err instanceof Error ? err.stack || err.message : String(err)}` +
+        (detail ? ` | detail: ${JSON.stringify(detail)}` : ""),
     );
     return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : String(err) },
+      { ok: false, error: err instanceof Error ? err.message : String(err), detail },
       { status: 500 },
     );
   }
