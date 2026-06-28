@@ -283,7 +283,30 @@ async function main() {
   const turn = JSON.parse(await readFile(\`inbox/turn-\${TURN_NUMBER}.json\`, "utf-8"));
   trace("info", { output: "turn payload: " + JSON.stringify(turn) });
 
-  // Domain MCP server — Slack + fetch_url. PDF compile uses plain Bash.
+  // Board API helper — the in-sandbox tools call back to /api/board/* as the
+  // current Slack user (x-board-actor) with the shared secret. String concat
+  // only (no backticks / no \${}) so this stays literal inside the driver template.
+  const boardFetch = async (apiPath, body) => {
+    try {
+      const base = process.env.REDDY_GTM_BASE_URL || "https://gtm-jet.vercel.app";
+      const r = await fetch(base + "/api/board/" + apiPath, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-board-secret": process.env.BOARD_API_SECRET || "",
+          "x-board-actor": (META && META.slackUserEmail) || "",
+        },
+        body: JSON.stringify(body || {}),
+      });
+      const text = await r.text();
+      trace("tool_call", { name: "board:" + apiPath, status: r.status });
+      return { content: [{ type: "text", text: "HTTP " + r.status + " " + text }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: "board error: " + (e && e.message ? e.message : String(e)) }], isError: true };
+    }
+  };
+
+  // Domain MCP server — Slack + fetch_url + the GTM board. PDF compile uses Bash.
   const reddyMcp = createSdkMcpServer({
     name: "reddy-gtm",
     version: "0.1.0",
@@ -343,6 +366,54 @@ async function main() {
           trace("tool_call", { name: "fetch_url", url, savePath: abs, bytes: buf.length });
           return { content: [{ type: "text", text: \`saved \${buf.length} bytes to \${abs}\` }] };
         },
+      ),
+      tool(
+        "board_list",
+        "List GTM board work items (the team's task board). Optional filters {ownerEmail, customerSlug}. Use for 'what's on the board', 'what's open for <customer>', 'my tasks'. Returns items with their current version (needed to move/update them).",
+        { ownerEmail: z.string().optional(), customerSlug: z.string().optional(), mode: z.string().optional() },
+        async (args) => boardFetch("list", args),
+      ),
+      tool(
+        "board_get",
+        "Get one board work item with its subtasks and activity feed. Pass {id}.",
+        { id: z.string() },
+        async (args) => boardFetch("get", args),
+      ),
+      tool(
+        "board_create",
+        "Create a board work item. kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'.",
+        { title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional() },
+        async (args) => boardFetch("create", args),
+      ),
+      tool(
+        "board_move",
+        "Move a work item between columns: Unsorted | To Do | Reddy Working | Reddy Waiting | Completed. Pass {id, expectedVersion, column} (expectedVersion from board_get/board_list). Moving a bot-assigned item into 'Reddy Working' fires the bot to do a first-pass draft.",
+        { id: z.string(), expectedVersion: z.number(), column: z.string() },
+        async (args) => boardFetch("move", args),
+      ),
+      tool(
+        "board_assign",
+        "Assign a work item to a teammate and/or the bot. Pass {id, expectedVersion, ownerEmail?, botAssigned?}.",
+        { id: z.string(), expectedVersion: z.number(), ownerEmail: z.string().optional(), botAssigned: z.boolean().optional() },
+        async (args) => boardFetch("assign", args),
+      ),
+      tool(
+        "board_add_activity",
+        "Add a comment or log a real-world activity (email sent, call made) on a work item. Pass {id, kind:'comment'|'logged_activity', body}.",
+        { id: z.string(), kind: z.string(), body: z.string() },
+        async (args) => boardFetch("activity", args),
+      ),
+      tool(
+        "board_create_subtask",
+        "Create a subtask under a parent work item (e.g. a follow-up under an in-flight deal task). Pass {parentId, title, kind, ownerEmail?, dueAt?}.",
+        { parentId: z.string(), title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), dueAt: z.string().optional() },
+        async (args) => boardFetch("subtask", args),
+      ),
+      tool(
+        "board_set_status",
+        "Set a work item's status directly (triage|approved|in_progress|waiting|blocked|done|dismissed). Prefer board_move for normal column moves. Pass {id, expectedVersion, status, dismissedReason?}.",
+        { id: z.string(), expectedVersion: z.number(), status: z.string(), dismissedReason: z.string().optional() },
+        async (args) => boardFetch("update", { id: args.id, expectedVersion: args.expectedVersion, patch: { status: args.status, dismissedReason: args.dismissedReason } }),
       ),
     ],
   });
@@ -433,6 +504,14 @@ async function main() {
       "mcp__reddy-gtm__post_slack_message",
       "mcp__reddy-gtm__upload_slack_pdf",
       "mcp__reddy-gtm__fetch_url",
+      "mcp__reddy-gtm__board_list",
+      "mcp__reddy-gtm__board_get",
+      "mcp__reddy-gtm__board_create",
+      "mcp__reddy-gtm__board_move",
+      "mcp__reddy-gtm__board_assign",
+      "mcp__reddy-gtm__board_add_activity",
+      "mcp__reddy-gtm__board_create_subtask",
+      "mcp__reddy-gtm__board_set_status",
     ],
     mcpServers,
     thinking: { type: "adaptive" },

@@ -203,6 +203,7 @@ export async function POST(req: NextRequest) {
         POSTGRES_URL: process.env.POSTGRES_URL ?? "",
         POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
         REDDY_GTM_BASE_URL: process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app",
+        BOARD_API_SECRET: process.env.BOARD_API_SECRET ?? "",
       },
     });
 

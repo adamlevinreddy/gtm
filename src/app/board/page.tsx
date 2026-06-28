@@ -9,7 +9,7 @@ import {
   type BoardColumn,
   type DigestData,
 } from "@/lib/work-items";
-import type { WorkItem } from "@/lib/schema";
+import BoardClient from "./BoardClient";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,17 +33,6 @@ const COLUMN_ACCENT: Record<BoardColumn, string> = {
   Completed: "#3F7D5B",
 };
 
-function relTime(d: Date): string {
-  const m = Math.round((Date.now() - d.getTime()) / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  const days = Math.round(h / 24);
-  if (days === 1) return "1d";
-  if (days < 30) return `${days}d`;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 function dueLabel(d: Date): { text: string; cls: string } {
   const diff = d.getTime() - Date.now();
   const days = Math.round(diff / 86400000);
@@ -51,78 +40,6 @@ function dueLabel(d: Date): { text: string; cls: string } {
   if (diff < 0) return { text: `${text} · overdue`, cls: "text-red-700" };
   if (diff < 7 * 86400000) return { text, cls: "text-amber-700" };
   return { text, cls: "text-zinc-400" };
-}
-function initials(email: string | null): string {
-  if (!email) return "·";
-  const name = email.split("@")[0];
-  return name.slice(0, 2).toUpperCase();
-}
-
-function Card({ item, now }: { item: WorkItem; now: Date }) {
-  const high = effectiveHighPriority(item, now);
-  return (
-    <div
-      id={`item-${item.id}`}
-      className="rounded-lg border p-2.5 shadow-sm"
-      style={
-        high
-          ? { background: "#FCF3E7", borderColor: "#E8C99A", borderLeft: "3px solid #B07D2E" }
-          : { background: "#fff", borderColor: "#E4DCE3" }
-      }
-    >
-      <div className="flex items-center gap-1.5">
-        <span
-          className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-          style={{ background: "#F0E8EF", color: PLUM }}
-        >
-          {KIND_LABEL[item.kind] ?? item.kind}
-        </span>
-        {item.customerSlug && (
-          <span className="truncate text-xs text-zinc-500">{item.customerSlug}</span>
-        )}
-        {item.status === "blocked" && (
-          <span className="rounded px-1 py-0.5 text-[9px] font-semibold" style={{ background: "#F3E3E3", color: "#A84A4A" }}>BLOCKED</span>
-        )}
-        {item.status === "ready_for_review" && (
-          <span className="rounded px-1 py-0.5 text-[9px] font-semibold" style={{ background: "#E5EEF4", color: "#3A6B8C" }}>REVIEW</span>
-        )}
-        <span className="ml-auto shrink-0 text-[10px] text-zinc-400">{relTime(item.createdAt)}</span>
-      </div>
-      <a href={`/board/${item.id}`} className="mt-1.5 block text-sm font-medium leading-snug text-zinc-900 no-underline hover:underline">
-        {item.title}
-      </a>
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
-        <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-100 px-1 text-[9px] font-semibold text-zinc-600">{initials(item.ownerEmail)}</span>
-        {item.botAssigned && <span title="bot co-assigned">🤖</span>}
-        {item.childTotalCount > 0 && (
-          <span className="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">▦ {item.childTotalCount - item.childOpenCount}/{item.childTotalCount}</span>
-        )}
-        {item.dueAt && <span className={dueLabel(item.dueAt).cls}>{dueLabel(item.dueAt).text}</span>}
-      </div>
-    </div>
-  );
-}
-
-function Kanban({ board, now }: { board: BoardColumns; now: Date }) {
-  return (
-    <div className="mt-5 flex gap-3 overflow-x-auto pb-3">
-      {BOARD_COLUMNS.map((col) => (
-        <section key={col} className="flex w-72 shrink-0 flex-col gap-2">
-          <div className="flex items-baseline gap-2 border-b-2 pb-1.5" style={{ borderColor: COLUMN_ACCENT[col] }}>
-            <h2 className="text-sm font-semibold text-zinc-900">{col}</h2>
-            <span className="text-xs text-zinc-400">{board[col].length}</span>
-          </div>
-          <div className="flex flex-col gap-2">
-            {board[col].length === 0 ? (
-              <p className="rounded-lg border border-dashed border-zinc-200 p-2.5 text-center text-xs text-zinc-300">empty</p>
-            ) : (
-              board[col].map((it) => <Card key={it.id} item={it} now={now} />)
-            )}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
 }
 
 async function ListView({ now, owner, customer }: { now: Date; owner?: string; customer?: string }) {
@@ -243,7 +160,7 @@ export default async function BoardPage({
           <>
             {digest && <RecapBar d={digest} />}
             {view === "kanban" && board ? (
-              <Kanban board={board} now={now} />
+              <BoardClient initial={board} viewerEmail={owner} />
             ) : (
               <ListView now={now} owner={owner} customer={customer} />
             )}
