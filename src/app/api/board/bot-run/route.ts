@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { assertInternalNoOrigin } from "@/lib/board-auth";
 import { badRequest, unauthorized } from "../_lib";
 import { runBotPass } from "@/lib/bot-worker/run";
@@ -26,8 +27,11 @@ export async function POST(req: NextRequest) {
     return badRequest("missing itemId or taskRevision");
   }
 
-  // Detached — do NOT await. Worker is self-locking and never throws.
-  void runBotPass(body.itemId, body.taskRevision);
+  // Run AFTER the response via Next's after() so the runtime keeps this
+  // function alive for the full worker pass (maxDuration 300) instead of
+  // suspending it the moment we return 202. Worker is self-locking + never throws.
+  const { itemId, taskRevision } = body;
+  after(() => runBotPass(itemId, taskRevision).catch(() => {}));
 
   return NextResponse.json({ ok: true, accepted: true }, { status: 202 });
 }

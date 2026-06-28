@@ -1,3 +1,4 @@
+import { after as runAfter } from "next/server";
 import { selfBaseUrl, type WorkItemKind } from "@/lib/work-items";
 import type { WorkItem } from "@/lib/schema";
 
@@ -72,22 +73,23 @@ export async function maybeFire(
     const secret = process.env.BOARD_API_SECRET;
     if (!secret) return;
 
-    // Fire-and-forget. keepalive lets the request survive the function returning;
-    // we deliberately do NOT await the body (or even the response on the happy path).
-    void fetch(`${selfBaseUrl()}/api/board/bot-run`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-board-secret": secret,
-      },
-      body: JSON.stringify({
-        itemId: after.id,
-        taskRevision: after.botTaskRevision,
-        origin,
-      }),
-      keepalive: true,
-    }).catch(() => {
-      /* fire-and-forget — bot-run is also re-triggerable on the next mutation */
+    // Send the trigger AFTER the mutation's response via Next's after(), so the
+    // serverless function isn't suspended before the request leaves (a plain
+    // keepalive fire-and-forget gets dropped on Vercel). bot-run acks 202 fast
+    // (it runs the worker on its own after()+maxDuration budget), so this only
+    // keeps the mutation function alive ~1s past the response.
+    const itemId = after.id;
+    const taskRevision = after.botTaskRevision;
+    runAfter(async () => {
+      try {
+        await fetch(`${selfBaseUrl()}/api/board/bot-run`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-board-secret": secret },
+          body: JSON.stringify({ itemId, taskRevision, origin }),
+        });
+      } catch {
+        /* bot-run is also re-triggerable on the next mutation + the backstop cron */
+      }
     });
   } catch {
     /* never let event-firing break a mutation */
