@@ -76,11 +76,12 @@ export function buildTriagePrompt(botId: string): string {
     ``,
     `STEP 2 — EXTRACT THE ACTION ITEMS (real commitments / next-steps / owed deliverables only).`,
     ``,
-    `STEP 3 — GROUND THE NAMES IN HUBSPOT (this is critical — transcripts are noisy and conflate people). You have connected HubSpot tools (search contacts + companies). For every action item that names a PERSON or COMPANY, do a quick HubSpot search to resolve the real record, and use it to DISAMBIGUATE:`,
-    `  - "<First> at <Word>" is ambiguous. Check HubSpot: if <Word> is the COMPANY that contact belongs to → keep as one task ("Call <First Last> (<Company>)"). But if <First> and <Word> are BOTH separate CONTACTS (often at the SAME company), SPLIT into TWO tasks — do not invent a "<First> <Word>" person.`,
-    `    Worked example: "Stanley, I need to try calling Regina today" → HubSpot shows Stanley Vigil AND Regina Houston are BOTH contacts at AT&T → emit TWO items (e.g. "Call Regina Houston (AT&T)" and "Follow up with Stanley Vigil (AT&T)"), NOT "Call Regina at Stanley".`,
-    `  - Put the RESOLVED full name + company in the item title (e.g. "Send NDA to <Full Name> (<Company>)"). If HubSpot has no match, keep the raw name and add note:"unresolved in HubSpot — confirm contact".`,
-    `  - Don't over-search — one lookup per distinct named person/company is enough; skip items with no named entity. Read-only: never write to HubSpot.`,
+    `STEP 3 — DISAMBIGUATE AMBIGUOUS NAMES VIA HUBSPOT (targeted — do NOT look up every name; that wastes time). You have connected HubSpot tools (search contacts + companies). Only when an action item's phrasing is genuinely AMBIGUOUS about who is involved — most often two adjacent names that could be one-person-at-a-company OR two separate people (e.g. "Stanley, I need to call Regina", "follow up with Dana at Pinnacle") — do a quick HubSpot search to resolve it:`,
+    `  - If <Word> is the COMPANY that contact belongs to → keep ONE task ("Call <First Last> (<Company>)").`,
+    `  - If <First> and <Word> are BOTH separate CONTACTS (often at the SAME company) → SPLIT into TWO tasks; never invent a "<First> <Word>" person.`,
+    `    Worked example: "Stanley, I need to try calling Regina today" → HubSpot shows Stanley Vigil AND Regina Houston are BOTH contacts at AT&T → emit TWO items ("Call Regina Houston (AT&T)" and "Follow up with Stanley Vigil (AT&T)"), NOT "Call Regina at Stanley".`,
+    `  - When you resolve a contact, put the full name + company in the title. If HubSpot has no match, keep the raw name and add note:"unresolved in HubSpot — confirm contact".`,
+    `  - HARD CAP: at most ~4 HubSpot lookups total, only for the ambiguous items. CLEAR single names (e.g. "Maureen from Best Buy") need NO lookup — leave them as-is. Read-only: never write to HubSpot.`,
     ``,
     `STEP 4 — ROUTE EACH ITEM TO ITS OWN BOARD (items from one meeting span boards; route by what EACH item is about):`,
     `  - "gtm": ANYTHING sales or marketing — INCLUDING sales-ops. Prospecting, demos, pricing, follow-ups, conferences/CCW, lead lists, CRM/HubSpot cleanup, pipeline-review logistics, marketing. If it's sales-related in any way, it is GTM. This is the default.`,
@@ -202,7 +203,11 @@ async function runOneshot(question: string, userEmail: string, reqId: string): P
     const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-reddy-internal": secret },
-      body: JSON.stringify({ question, userEmail, oneshotRequestId: reqId }),
+      // Triage does read + HubSpot grounding + board_list + JSON; let the
+      // oneshot route poll well past its 240s interactive default (bounded by
+      // its own 800s maxDuration). The poll returns the instant the agent
+      // writes its result, so a generous ceiling only costs us on a true hang.
+      body: JSON.stringify({ question, userEmail, oneshotRequestId: reqId, pollTimeoutMs: 560_000 }),
     });
     const json = (await res.json()) as { ok?: boolean; answer?: string };
     if (json?.ok && typeof json.answer === "string" && json.answer.trim()) return json.answer;

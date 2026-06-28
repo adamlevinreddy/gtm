@@ -37,6 +37,11 @@ type OneshotRequest = {
   question: string;
   userEmail: string;
   customer?: string;
+  // Internal automation (post-meeting triage, bot worker) can request a longer
+  // poll window than the interactive MCP default — heavy multi-tool runs
+  // (grounding + board_list + JSON) routinely exceed 240s. Clamped to the
+  // route's maxDuration headroom below.
+  pollTimeoutMs?: number;
 };
 
 type McpResult = {
@@ -59,10 +64,16 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
-  const { question, userEmail, customer } = body;
+  const { question, userEmail, customer, pollTimeoutMs } = body;
   if (!question || !userEmail) {
     return NextResponse.json({ ok: false, error: "missing question or userEmail" }, { status: 400 });
   }
+  // Effective poll window: default interactive value, overridable by internal
+  // callers up to a ceiling that stays under maxDuration (800s).
+  const pollTimeout =
+    typeof pollTimeoutMs === "number" && pollTimeoutMs > 0
+      ? Math.min(Math.max(pollTimeoutMs, 30_000), 760_000)
+      : POLL_TIMEOUT_MS;
 
   const requestId = randomUUID();
   const sandboxName = sandboxNameForEmail(userEmail);
@@ -210,7 +221,7 @@ export async function POST(req: NextRequest) {
     // Poll the result key until the driver writes it (or timeout).
     const startedAt = Date.now();
     let result: McpResult | null = null;
-    while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+    while (Date.now() - startedAt < pollTimeout) {
       result = await kv.get<McpResult>(resultKey).catch(() => null);
       if (result) break;
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));

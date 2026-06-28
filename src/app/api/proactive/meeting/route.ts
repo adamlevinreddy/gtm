@@ -12,7 +12,9 @@ import { proposeFromMeeting } from "@/lib/post-meeting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// Triage (read + HubSpot grounding + board_list + JSON) can run long; the
+// after() work is bounded by maxDuration, so give it the full headroom.
+export const maxDuration = 800;
 
 export async function POST(req: NextRequest) {
   const secret = process.env.MCP_INTERNAL_SECRET;
