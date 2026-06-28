@@ -18,8 +18,8 @@ importers:
         specifier: 0.106.0
         version: 0.106.0(zod@4.0.0)
       '@composio/core':
-        specifier: 0.6.10
-        version: 0.6.10(ws@8.20.0)(zod@4.0.0)
+        specifier: 0.13.1
+        version: 0.13.1(ws@8.20.0)(zod@4.0.0)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.0.0)
@@ -243,16 +243,16 @@ packages:
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
 
-  '@composio/client@0.1.0-alpha.66':
-    resolution: {integrity: sha512-SDHcTWzz2dgdYAew/gQsRpjHpEzHKm6sW7KM4wCoJWNJuuMuey9Ahje91ZucNjfaqpI8CFW+pXY4nWkZf5LD7Q==}
+  '@composio/client@0.1.0-alpha.74':
+    resolution: {integrity: sha512-/EHJsFxCpWfRxNvXURRrGVZfJSltSpN4Gkd9M9Cl5gPOirG+NpbXf2B8d4B72H87m7cnOguMKjOH42ogQ84/Ww==}
 
-  '@composio/core@0.6.10':
-    resolution: {integrity: sha512-T/9MfYcmPs2EcSXhrJWvm0UFTfa79FcTo1L8vO13d5C5kX8/I4hLYLu+1wc4n7WGBSE9hq7o1g9L3FXJrOrlSQ==}
+  '@composio/core@0.13.1':
+    resolution: {integrity: sha512-bC64PJG3RBeuezihfZV/9qJMd1LyzUEFN1tVHTWh32n/muUMr5I33nN6Mezhtkl4+ffBJ8IZ/mNt9tEQKFB/sw==}
     peerDependencies:
       zod: ^3.25 || ^4
 
-  '@composio/json-schema-to-zod@0.1.20':
-    resolution: {integrity: sha512-d4V34itLrUWG/VBh7ciznKcxF/T22MBLHmuEzHoX0zsBOHsUmjYz5qtDh20S2p3FE+HHvLZxpXiv8yfdd4yI+Q==}
+  '@composio/json-schema-to-zod@0.2.0':
+    resolution: {integrity: sha512-P7ym7+1NCN2cDVlSOGTINY6KjZ/d162uc+0LChYcy3d5RAAacgHiGU7ZJF+5pUJHbIivsfAC/4PdjVdsfmHdeA==}
     peerDependencies:
       zod: '>=3.25.76 <5'
 
@@ -2995,13 +2995,21 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  openai@6.34.0:
-    resolution: {integrity: sha512-yEr2jdGf4tVFYG6ohmr3pF6VJuveP0EA/sS8TBx+4Eq5NT10alu5zg2dmxMXMgqpihRDQlFGpRt2XwsGj+Fyxw==}
-    hasBin: true
+  openai@6.45.0:
+    resolution: {integrity: sha512-5DQVNErssk0afNpTTHUm/qZPU4iKR9OYdNid8Ib4puq4gHNNvGWZht2zY4h9a8JMF949Ik6m8gQutllVPbjdnw==}
     peerDependencies:
+      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
+      '@smithy/hash-node': '>=4.3.0 <5'
+      '@smithy/signature-v4': '>=5.4.0 <6'
       ws: ^8.18.0
       zod: ^3.25 || ^4.0
     peerDependenciesMeta:
+      '@aws-sdk/credential-provider-node':
+        optional: true
+      '@smithy/hash-node':
+        optional: true
+      '@smithy/signature-v4':
+        optional: true
       ws:
         optional: true
       zod:
@@ -3228,6 +3236,11 @@ packages:
 
   semver@7.7.4:
     resolution: {integrity: sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==}
+    engines: {node: '>=10'}
+    hasBin: true
+
+  semver@7.8.5:
+    resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==}
     engines: {node: '>=10'}
     hasBin: true
 
@@ -3853,23 +3866,26 @@ snapshots:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
 
-  '@composio/client@0.1.0-alpha.66': {}
+  '@composio/client@0.1.0-alpha.74': {}
 
-  '@composio/core@0.6.10(ws@8.20.0)(zod@4.0.0)':
+  '@composio/core@0.13.1(ws@8.20.0)(zod@4.0.0)':
     dependencies:
-      '@composio/client': 0.1.0-alpha.66
-      '@composio/json-schema-to-zod': 0.1.20(zod@4.0.0)
+      '@composio/client': 0.1.0-alpha.74
+      '@composio/json-schema-to-zod': 0.2.0(zod@4.0.0)
       '@types/json-schema': 7.0.15
-      chalk: 4.1.2
-      openai: 6.34.0(ws@8.20.0)(zod@4.0.0)
+      openai: 6.45.0(ws@8.20.0)(zod@4.0.0)
+      picocolors: 1.1.1
       pusher-js: 8.5.0
-      semver: 7.7.4
+      semver: 7.8.5
       zod: 4.0.0
       zod-to-json-schema: 3.25.2(zod@4.0.0)
     transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
       - ws
 
-  '@composio/json-schema-to-zod@0.1.20(zod@4.0.0)':
+  '@composio/json-schema-to-zod@0.2.0(zod@4.0.0)':
     dependencies:
       zod: 4.0.0
 
@@ -6501,7 +6517,7 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.34.0(ws@8.20.0)(zod@4.0.0):
+  openai@6.45.0(ws@8.20.0)(zod@4.0.0):
     optionalDependencies:
       ws: 8.20.0
       zod: 4.0.0
@@ -6745,6 +6761,8 @@ snapshots:
   semver@6.3.1: {}
 
   semver@7.7.4: {}
+
+  semver@7.8.5: {}
 
   send@1.2.1:
     dependencies:

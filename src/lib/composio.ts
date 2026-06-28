@@ -86,10 +86,13 @@ export async function initiateConnection(
     allowMultiple: true,
   };
   if (callbackUrl) options.callbackUrl = callbackUrl;
-  const req = await composio().connectedAccounts.initiate(userId, authConfigId, options);
+  // Use link() not initiate(): the legacy initiate() endpoint is being retired
+  // for Composio-managed OAuth (cutover 2026-07-03 for all orgs). link() is the
+  // supported path for every redirectable scheme; same args + return shape.
+  const req = await composio().connectedAccounts.link(userId, authConfigId, options);
   return {
-    redirectUrl: (req as { redirectUrl: string }).redirectUrl,
-    connectedAccountId: (req as { id: string }).id,
+    redirectUrl: req.redirectUrl ?? "",
+    connectedAccountId: req.id,
   };
 }
 
@@ -131,10 +134,14 @@ export async function generateMcpUrl(
     if (id) authConfigs[slug] = id;
   }
   try {
-    const session = await (composio() as unknown as {
-      create: (u: string, opts: { toolkits: string[]; authConfigs?: Record<string, string> }) =>
-        Promise<{ mcp: { url: string; headers?: Record<string, string> } }>;
-    }).create(userId, { toolkits, authConfigs });
+    // sessions.create with { mcp: true } returns a Session carrying the MCP
+    // server config (.mcp.url / .mcp.headers). authConfigs binds the session
+    // to OUR pre-created auth configs so it sees the user's connections.
+    const session = await composio().sessions.create(userId, {
+      toolkits,
+      authConfigs,
+      mcp: true,
+    });
     return {
       url: session.mcp.url,
       headers: session.mcp.headers ?? {},
