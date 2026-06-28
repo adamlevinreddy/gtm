@@ -429,6 +429,7 @@ export default async function BoardPage({
 
             {filters.view === "kanban" && board ? (
               <BoardClient
+                key={filtersHref(filters)}
                 initial={board}
                 viewerEmail={viewer}
                 labelsByItem={Object.fromEntries(labelsByItem)}
