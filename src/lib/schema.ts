@@ -295,7 +295,11 @@ export const warmupStatusEnum = pgEnum("warmup_status", [
   "complete",
 ]);
 
-/** Kind of work item the bot tracks on the board */
+/**
+ * Coarse family ("type"). FROZEN at 4 values — the digest + dedup depend on it.
+ * The fine-grained taxonomy is `kind` (below); KIND_TO_TYPE in work-items.ts
+ * derives this. Never add values here; add kinds instead.
+ */
 export const workItemTypeEnum = pgEnum("work_item_type", [
   "followup",
   "crm_update",
@@ -303,10 +307,42 @@ export const workItemTypeEnum = pgEnum("work_item_type", [
   "task",
 ]);
 
-/** Work item lifecycle. Everything the bot proposes starts as `suggested`. */
+/** The real GTM task taxonomy (rolls up to `type` via KIND_TO_TYPE). */
+export const workItemKindEnum = pgEnum("work_item_kind", [
+  "pricing_proposal",
+  "deck_qbr",
+  "meeting_prep",
+  "prep_custom_demo",
+  "rfp_response",
+  "contract_redline",
+  "followup_email",
+  "book_meeting",
+  "reengage_tickler",
+  "recording_link",
+  "scheduling",
+  "account_research",
+  "enablement_collateral",
+  "crm_update",
+  "log_to_hubspot",
+  "propose_stage_move",
+  "action_items",
+  "generic",
+]);
+
+/**
+ * Lifecycle status (9 values). Columns are a VIEW over this via COLUMN_OF()
+ * in work-items.ts — there is NO stored column field. `triage` = needs scoping
+ * (post-meeting/internal dumps); `suggested` = live bot chat proposals (both
+ * render in Unsorted but stay distinct for the suggest-latency metric).
+ */
 export const workItemStatusEnum = pgEnum("work_item_status", [
+  "triage",
   "suggested",
   "approved",
+  "in_progress",
+  "waiting",
+  "blocked",
+  "ready_for_review",
   "done",
   "dismissed",
 ]);
@@ -316,12 +352,82 @@ export const workItemSourceEnum = pgEnum("work_item_source", [
   "post_meeting",
   "cron",
   "manual",
+  "slack_chat",
+  "gmail",
 ]);
 
 /** Whether the owner is a human teammate or the bot itself */
 export const workItemOwnerKindEnum = pgEnum("work_item_owner_kind", [
   "human",
   "bot",
+]);
+
+/** Who/what performed an activity-ledger entry */
+export const actorKindEnum = pgEnum("actor_kind", ["human", "bot", "system"]);
+
+/** Kinds of entries in the append-only activity ledger */
+export const workItemActivityKindEnum = pgEnum("work_item_activity_kind", [
+  "created",
+  "status_change",
+  "stage_changed",
+  "field_change",
+  "assignment",
+  "comment",
+  "logged_activity",
+  "bot_run",
+  "bot_draft",
+  "artifact",
+  "email_drafted",
+  "email_forwarded",
+  "email_received",
+  "hubspot_sync",
+  "due_change",
+  "conflict",
+  "conflict_resolved",
+  "cascade_deferred",
+  "cascade_skipped",
+]);
+
+/** Reference graph between items (distinct from parent/child containment) */
+export const workItemRelationKindEnum = pgEnum("work_item_relation_kind", [
+  "blocks",
+  "relates_to",
+  "duplicate_of",
+]);
+
+/** Bot first-pass attempt state */
+export const botAttemptStatusEnum = pgEnum("work_item_bot_attempt_status", [
+  "running",
+  "succeeded",
+  "failed",
+]);
+
+/** Per-user notification kinds (the /board/inbox feed) */
+export const notificationKindEnum = pgEnum("notification_kind", [
+  "assigned",
+  "bot_draft_ready",
+  "became_high_priority",
+  "stalled",
+  "mentioned",
+  "comment",
+  "cascade_completed",
+  "stage_changed",
+]);
+
+/** Cadence of a cycle (the weekly pipeline rhythm / CCW daily blitz) */
+export const cycleCadenceEnum = pgEnum("cycle_cadence", [
+  "weekly",
+  "daily",
+  "adhoc",
+]);
+
+/** Project (deal-room) status */
+export const projectStatusEnum = pgEnum("project_status", [
+  "target",
+  "active",
+  "won",
+  "lost",
+  "no_decision",
 ]);
 
 // ============================================================================
@@ -1138,38 +1244,94 @@ export const workItems = pgTable(
   "work_items",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    /** What kind of work this is */
+    /** Coarse family (digest/dedup). Derived from `kind` via KIND_TO_TYPE. */
     type: workItemTypeEnum("type").notNull(),
-    /** One-line human summary -- what the board card and digest render */
+    /** Fine-grained GTM task kind (the real taxonomy) */
+    kind: workItemKindEnum("kind").default("generic").notNull(),
+    /** One-line human summary -- what the board card and list render */
     title: text("title").notNull(),
-    /** Lifecycle state. Bot output always starts at 'suggested'. */
-    status: workItemStatusEnum("status").default("suggested").notNull(),
+    /** Lifecycle status. Columns derive from this via COLUMN_OF(). */
+    status: workItemStatusEnum("status").default("triage").notNull(),
     /** How this item was created */
     source: workItemSourceEnum("source").notNull(),
     /** Whether the owner is a human teammate or the bot */
     ownerKind: workItemOwnerKindEnum("owner_kind").default("human").notNull(),
-    /** Teammate email (enforces the HubSpot ownership rule); null if unassigned */
+    /** Teammate email (assignee + HubSpot ownership rule); null if unassigned */
     ownerEmail: text("owner_email"),
+    /** Bot is a co-owner doing a first pass (acts AS ownerEmail) */
+    botAssigned: boolean("bot_assigned").default(false).notNull(),
 
-    // -- attribution / FKs (all nullable: a suggestion may predate the rows) --
+    // -- attribution / grouping FKs (all nullable) --
     accountId: uuid("account_id").references(() => accounts.id),
     opportunityId: uuid("opportunity_id").references(() => opportunities.id),
     meetingId: uuid("meeting_id").references(() => meetings.id),
+    projectId: uuid("project_id").references(() => projects.id),
+    cycleId: uuid("cycle_id").references(() => cycles.id),
+    templateId: uuid("template_id").references(() => templates.id),
+    /** Subtask containment spine (self-FK); orphan-not-destroy */
+    parentId: uuid("parent_id").references((): AnyPgColumn => workItems.id, {
+      onDelete: "set null",
+    }),
     /** Denormalized recall slug -- survives even with no account row */
     customerSlug: text("customer_slug"),
-    /** Recall botId (post_meeting) / cron run id / null (manual) */
+    /** Recall botId (post_meeting) / cron run id / gmail:{msgId} / null */
     sourceRef: text("source_ref"),
 
-    /** The machine-actionable suggested change, shaped per `type` */
+    /** The machine-actionable payload, shaped per `kind` */
     payload: jsonb("payload").notNull(),
+
+    // -- subtask rollup (denormalized; choke-point-maintained, sweep-reconciled) --
+    childOpenCount: integer("child_open_count").default(0).notNull(),
+    childTotalCount: integer("child_total_count").default(0).notNull(),
+
+    // -- dates + aging --
+    dueAt: timestamp("due_at"),
+    /** First-ever entry to in_progress (total cycle age) */
+    startedAt: timestamp("started_at"),
+    /** Stamped on EVERY column/stage change (per-stage aging / SLA) */
+    stageEnteredAt: timestamp("stage_entered_at"),
+    waitingOn: text("waiting_on"),
+    slaTarget: timestamp("sla_target"),
+
+    // -- priority --
+    /** Manual high-priority flag; OR'd with the derived due<7d rule at read */
+    highPriority: boolean("high_priority").default(false).notNull(),
+    /** Email of a human who pinned priority; auto-bump won't override */
+    priorityLockedBy: text("priority_locked_by"),
+    /** Cron bookkeeping for the "became urgent" ping; never read for color */
+    priorityStampedAt: timestamp("priority_stamped_at"),
+
+    /** LexoRank fractional key for manual within-column ordering */
+    boardRank: text("board_rank"),
+
+    // -- bot first-pass --
+    botTaskRevision: integer("bot_task_revision").default(0).notNull(),
+
+    // -- recurrence (hooks) --
+    recurrenceRule: text("recurrence_rule"),
+    nextRecurAt: timestamp("next_recur_at"),
+    recurrenceParentId: uuid("recurrence_parent_id").references(
+      (): AnyPgColumn => workItems.id,
+      { onDelete: "set null" }
+    ),
+
+    // -- HubSpot sync state (P3 hooks) --
+    hubspotSyncStatus: text("hubspot_sync_status").default("none").notNull(),
+    hubspotObjectType: text("hubspot_object_type"),
+    hubspotObjectId: text("hubspot_object_id"),
+    hubspotSyncedAt: timestamp("hubspot_synced_at"),
+    hubspotSyncKey: text("hubspot_sync_key"),
+    syncError: text("sync_error"),
+
+    // -- concurrency: THE optimistic-lock guard token --
+    version: integer("version").default(1).notNull(),
 
     // -- lifecycle --
     dismissedReason: text("dismissed_reason"),
-    /** Slack user id / email of whoever approved */
     approvedBy: text("approved_by"),
     approvedAt: timestamp("approved_at"),
     completedAt: timestamp("completed_at"),
-    /** 'bot' | 'seed' | slack user id */
+    /** 'bot' | 'seed' | 'system' | slack user id / email */
     createdBy: text("created_by").default("bot").notNull(),
 
     // -- timestamps --
@@ -1178,23 +1340,266 @@ export const workItems = pgTable(
   },
   (table) => [
     index("idx_work_items_status").on(table.status),
+    index("idx_work_items_kind").on(table.kind),
     index("idx_work_items_owner").on(table.ownerEmail),
     index("idx_work_items_account").on(table.accountId),
+    index("idx_work_items_opportunity").on(table.opportunityId),
     index("idx_work_items_meeting").on(table.meetingId),
+    index("idx_work_items_project").on(table.projectId),
+    index("idx_work_items_cycle").on(table.cycleId),
+    index("idx_work_items_parent").on(table.parentId),
+    index("idx_work_items_due").on(table.dueAt),
+    index("idx_work_items_high_priority").on(table.highPriority),
+    index("idx_work_items_bot_assigned").on(table.botAssigned),
+    index("idx_work_items_rank").on(table.status, table.boardRank),
     index("idx_work_items_source_ref").on(table.sourceRef),
     index("idx_work_items_customer_slug").on(table.customerSlug),
-    index("idx_work_items_created").on(table.createdAt),
-    index("idx_work_items_completed").on(table.completedAt),
-    /**
-     * Idempotency: the same meeting reprocessing (webhook retries fire
-     * reconcile multiple times) can't duplicate a suggestion. Partial so
-     * manual items (no sourceRef) are never collapsed together.
-     */
+    /** Idempotency for automation creates (tightened to kind in v2). */
     uniqueIndex("idx_work_items_dedup")
-      .on(table.sourceRef, table.type, table.title)
+      .on(table.sourceRef, table.kind, table.title)
       .where(sql`${table.sourceRef} IS NOT NULL`),
   ]
 );
 
 export type WorkItem = typeof workItems.$inferSelect;
 export type NewWorkItem = typeof workItems.$inferInsert;
+
+// --- Activity ledger (append-only timeline; comments live here too) ---
+
+export const workItemActivities = pgTable(
+  "work_item_activities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    kind: workItemActivityKindEnum("kind").notNull(),
+    actorKind: actorKindEnum("actor_kind").notNull(),
+    actorEmail: text("actor_email"),
+    /** Human-readable timeline line / comment text */
+    body: text("body"),
+    /** Structured per kind (e.g. {field, before, after}) */
+    meta: jsonb("meta"),
+    /** work_items.version AFTER this write (for guarded writes) */
+    resultingVersion: integer("resulting_version"),
+    /** When it really happened; backdatable for logged_activity */
+    occurredAt: timestamp("occurred_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    /** Automation idempotency; NULL for human comments */
+    dedupeKey: text("dedupe_key"),
+  },
+  (t) => [
+    index("idx_wia_item_occurred").on(t.workItemId, t.occurredAt),
+    index("idx_wia_kind").on(t.kind),
+    uniqueIndex("idx_wia_dedupe")
+      .on(t.dedupeKey)
+      .where(sql`${t.dedupeKey} IS NOT NULL`),
+  ]
+);
+export type WorkItemActivity = typeof workItemActivities.$inferSelect;
+export type NewWorkItemActivity = typeof workItemActivities.$inferInsert;
+
+// --- Bot first-pass output (inert drafts) ---
+
+export const workItemDrafts = pgTable(
+  "work_item_drafts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    kind: text("kind"),
+    title: text("title"),
+    body: text("body"),
+    artifactUrl: text("artifact_url"),
+    /** {gmailDraftId?, hubspotProposed?, muxUrl?, calendarSlots?} */
+    externalRef: jsonb("external_ref"),
+    producedBy: text("produced_by").default("bot").notNull(),
+    actedAsEmail: text("acted_as_email"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("idx_wid_item").on(t.workItemId)]
+);
+
+// --- Bot attempt bookkeeping (exactly one non-failed pass per revision) ---
+
+export const workItemBotAttempts = pgTable(
+  "work_item_bot_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    attemptNo: integer("attempt_no").default(1).notNull(),
+    status: botAttemptStatusEnum("status").default("running").notNull(),
+    oneshotRequestId: text("oneshot_request_id"),
+    actedAsEmail: text("acted_as_email").notNull(),
+    taskRevision: integer("task_revision").notNull(),
+    draftId: uuid("draft_id").references(() => workItemDrafts.id),
+    error: text("error"),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (t) => [
+    index("idx_wba_item").on(t.workItemId),
+    /** At most one non-failed attempt per revision */
+    uniqueIndex("idx_wba_one_per_rev")
+      .on(t.workItemId, t.taskRevision)
+      .where(sql`${t.status} <> 'failed'`),
+  ]
+);
+
+// --- Projects (deal rooms) — empty hook until P2 ---
+
+export const projects = pgTable("projects", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  accountId: uuid("account_id").references(() => accounts.id),
+  opportunityId: uuid("opportunity_id").references(() => opportunities.id),
+  dealStage: text("deal_stage"),
+  forecastWeight: real("forecast_weight"),
+  health: text("health"),
+  channelPartner: text("channel_partner"),
+  status: projectStatusEnum("status").default("active").notNull(),
+  ownerEmail: text("owner_email"),
+  customFields: jsonb("custom_fields"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// --- Cycles (weekly cadence / CCW blitz) — empty hook ---
+
+export const cycles = pgTable("cycles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  number: integer("number"),
+  name: text("name"),
+  cadence: cycleCadenceEnum("cadence").default("weekly").notNull(),
+  startsAt: timestamp("starts_at"),
+  endsAt: timestamp("ends_at"),
+  status: text("status").default("active").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// --- Relations graph (blocks / relates / duplicate) — empty hook ---
+
+export const workItemRelations = pgTable(
+  "work_item_relations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    targetId: uuid("target_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    kind: workItemRelationKindEnum("kind").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_wir_source").on(t.sourceId),
+    index("idx_wir_target").on(t.targetId),
+    uniqueIndex("idx_wir_unique").on(t.sourceId, t.targetId, t.kind),
+  ]
+);
+
+// --- Labels + join — empty hook ---
+
+export const labels = pgTable("labels", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  color: text("color"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const workItemLabels = pgTable(
+  "work_item_labels",
+  {
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    labelId: uuid("label_id")
+      .notNull()
+      .references(() => labels.id, { onDelete: "cascade" }),
+  },
+  (t) => [uniqueIndex("idx_wil_unique").on(t.workItemId, t.labelId)]
+);
+
+// --- Watchers — empty hook ---
+
+export const workItemWatchers = pgTable(
+  "work_item_watchers",
+  {
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("idx_wiw_unique").on(t.workItemId, t.email)]
+);
+
+// --- Notifications (the /board/inbox feed) — empty hook ---
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    recipientEmail: text("recipient_email").notNull(),
+    workItemId: uuid("work_item_id").references(() => workItems.id, {
+      onDelete: "cascade",
+    }),
+    kind: notificationKindEnum("kind").notNull(),
+    body: text("body"),
+    readAt: timestamp("read_at"),
+    slackTs: text("slack_ts"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("idx_notif_recipient").on(t.recipientEmail, t.readAt)]
+);
+
+// --- Templates (playbook → subtasks) — empty hook ---
+
+export const templates = pgTable("templates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  scope: text("scope"),
+  spec: jsonb("spec"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// --- Automation rules — empty hook (the 3 v1 rules are hardcoded first) ---
+
+export const automationRules = pgTable("automation_rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name"),
+  trigger: jsonb("trigger"),
+  condition: jsonb("condition"),
+  action: jsonb("action"),
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// --- Saved views — empty hook ---
+
+export const savedViews = pgTable("saved_views", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  ownerEmail: text("owner_email"),
+  shared: boolean("shared").default(false).notNull(),
+  spec: jsonb("spec"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// --- Gmail triage opt-in (P4 hook) ---
+
+export const gmailTriageOptin = pgTable("gmail_triage_optin", {
+  email: text("email").primaryKey(),
+  enabled: boolean("enabled").default(true).notNull(),
+  slots: text("slots").array(),
+  notifyChannel: text("notify_channel"),
+  lastRunAt: timestamp("last_run_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});

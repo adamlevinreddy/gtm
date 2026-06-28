@@ -19,7 +19,7 @@ function buildFocusQuestion(open: DigestItem[]): string {
     ? open
         .map(
           (it, i) =>
-            `${i + 1}. [${it.type}] ${it.title}` +
+            `${i + 1}. [${it.kind}] ${it.title}` +
             `${it.customerSlug ? ` (${it.customerSlug})` : ""}` +
             `${it.ownerEmail ? ` — ${it.ownerEmail.split("@")[0]}` : ""}`
         )

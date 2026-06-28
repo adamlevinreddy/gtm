@@ -1,4 +1,4 @@
-import type { DigestData, DigestItem, WorkItemType } from "./work-items";
+import type { DigestData, DigestItem, WorkItemKind } from "./work-items";
 import type { Focus } from "./digest-focus";
 
 // ============================================================================
@@ -8,17 +8,23 @@ import type { Focus } from "./digest-focus";
 // hook and other signals land they enrich the same DigestData shape.
 // ============================================================================
 
-const TYPE_EMOJI: Record<WorkItemType, string> = {
-  followup: ":email:",
-  crm_update: ":card_index_dividers:",
-  prep: ":clipboard:",
-  task: ":white_square_button:",
+const KIND_EMOJI: Partial<Record<WorkItemKind, string>> = {
+  pricing_proposal: ":moneybag:", deck_qbr: ":bar_chart:", meeting_prep: ":clipboard:",
+  prep_custom_demo: ":tv:", rfp_response: ":memo:", contract_redline: ":pencil2:",
+  followup_email: ":email:", book_meeting: ":calendar:", reengage_tickler: ":alarm_clock:",
+  recording_link: ":movie_camera:", scheduling: ":date:", account_research: ":mag:",
+  enablement_collateral: ":books:", crm_update: ":card_index_dividers:",
+  log_to_hubspot: ":card_index_dividers:", propose_stage_move: ":chart_with_upwards_trend:",
+  action_items: ":white_check_mark:", generic: ":white_square_button:",
 };
+function kindEmoji(k: WorkItemKind): string {
+  return KIND_EMOJI[k] ?? ":white_square_button:";
+}
 
 function line(it: DigestItem): string {
   const who = it.ownerEmail ? ` — ${it.ownerEmail.split("@")[0]}` : "";
   const acct = it.customerSlug ? ` _(${it.customerSlug})_` : "";
-  return `${TYPE_EMOJI[it.type]} ${it.title}${acct}${who}`;
+  return `${kindEmoji(it.kind)} ${it.title}${acct}${who}`;
 }
 
 function bulletList(items: DigestItem[], max = 5): string {
@@ -54,7 +60,7 @@ export function buildDigestBlocks(d: DigestData, focus?: Focus | null): object[]
   const focusBody = focus?.text
     ? focus.text
     : d.focusToday
-      ? `${TYPE_EMOJI[d.focusToday.type]} *${d.focusToday.title}*${
+      ? `${kindEmoji(d.focusToday.kind)} *${d.focusToday.title}*${
           d.focusToday.customerSlug ? ` _(${d.focusToday.customerSlug})_` : ""
         }`
       : "_Board is clear — no open items to prioritize._";
@@ -107,7 +113,7 @@ export function buildDigestBlocks(d: DigestData, focus?: Focus | null): object[]
       elements: [
         {
           type: "mrkdwn",
-          text: `*${d.summary.open} open* · ${d.summary.suggested} suggested · ${d.summary.approved} approved · ${d.summary.done} done`,
+          text: `*${d.summary.open} open* · ${d.summary.byColumn.Unsorted} unsorted · ${d.summary.byColumn["Reddy Working"]} working · ${d.summary.byColumn["Reddy Waiting"]} waiting · ${d.summary.done} done`,
         },
       ],
     },
