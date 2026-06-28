@@ -97,7 +97,8 @@ export function buildTriagePrompt(botId: string): string {
     `  ]`,
     `}`,
     "```",
-    `title = short imperative; ownerEmail = the @reddy.io attendee who clearly owns it (from meta.json), else null. You MAY call board_list (read-only). Do NOT create/update/move any card — the JSON is your entire job.`,
+    `title = short imperative; ownerEmail = the @reddy.io attendee who clearly owns it (from meta.json), else null. You MAY call board_list (read-only). Do NOT create/update/move any card.`,
+    `CRITICAL: your FINAL message must be ONLY the single fenced \`\`\`json block — no summary, no prose before or after it. The JSON is your entire deliverable.`,
   ].join("\n");
 }
 
@@ -110,13 +111,36 @@ export function parseTriage(answer: string | null | undefined): TriageResult | n
   const candidates: string[] = [];
   const fenced = answer.match(/```(?:json)?\s*([\s\S]*?)```/gi);
   if (fenced) for (const b of fenced) candidates.push(b.replace(/```(?:json)?\s*/i, "").replace(/```$/, "").trim());
-  const f = answer.indexOf("{"), l = answer.lastIndexOf("}");
-  if (f !== -1 && l > f) candidates.push(answer.slice(f, l + 1));
+  // Every balanced {...} run — tolerant of prose + embedded board_list tool
+  // output around the real JSON (a naive first-{…last-} slice would merge them).
+  candidates.push(...extractBalancedObjects(answer));
+  // Prefer a candidate that yields real items; fall back to the first that parses.
+  let fallback: TriageResult | null = null;
   for (const c of candidates) {
     const p = tryParse(c);
-    if (p) return p;
+    if (p && p.items.length > 0) return p;
+    if (p && !fallback) fallback = p;
   }
-  return null;
+  return fallback;
+}
+
+// Return every top-level balanced {...} substring (ignores braces inside strings).
+function extractBalancedObjects(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") { if (depth === 0) start = i; depth++; }
+    else if (ch === "}") { depth--; if (depth === 0 && start !== -1) { out.push(text.slice(start, i + 1)); start = -1; } }
+  }
+  return out;
 }
 
 function tryParse(raw: string): TriageResult | null {
