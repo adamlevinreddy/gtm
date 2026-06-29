@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@/lib/kv-client";
+import { detectConeOfSilence, markConeOfSilence } from "@/lib/cone-of-silence";
 
 // NOTE: also exposed at /api/recall/rt/ingest as a fallback path in
 // case Recall's webhook delivery system has marked the original URL
@@ -89,6 +90,16 @@ export async function POST(req: NextRequest) {
     .join(" ")
     .trim();
   if (!text) return NextResponse.json({ ok: true, skipped: "empty text" });
+
+  // Cone of silence — if the trigger phrase is spoken, flag the meeting NOW
+  // (mid-call) so the reconcile webhook suppresses it before any video/Mux work
+  // and the post-meeting triage never fires. Checks finals AND partials so we
+  // catch it as early as possible; the reconcile full-transcript scan is the
+  // backstop if a chunk boundary split the phrase here.
+  if (detectConeOfSilence(text)) {
+    await markConeOfSilence(botId);
+    console.log(`[realtime] cone of silence detected bot=${botId} — meeting flagged confidential`);
+  }
 
   const speaker = inner?.participant?.name ?? null;
   const email = inner?.participant?.email ?? null;

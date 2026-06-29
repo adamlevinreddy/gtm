@@ -18,6 +18,7 @@ import { kv } from "@/lib/kv-client";
 import { postToChannel, salesChannel } from "@/lib/slack";
 import { selfBaseUrl, boardLink, companySlug } from "@/lib/work-items";
 import { isCompanyWritable } from "@/lib/hubspot-guard";
+import { isConeOfSilence } from "@/lib/cone-of-silence";
 import {
   logMeetingToHubSpot,
   updateDealStage,
@@ -169,6 +170,8 @@ export async function proposeCrmFromMeeting(botId: string, opts?: { force?: bool
   const releaseClaim = async () => { if (claimedHere) await kv.del(claimKey).catch(() => {}); };
   try {
     if (!botId) return { ok: false, error: "missing botId" };
+    // Cone of silence — a confidential meeting never gets a CRM card or auto-log.
+    if (await isConeOfSilence(botId)) return { ok: true, skipped: "cone-of-silence" };
     if (!opts?.force) {
       const claimed = await kv.set(claimKey, new Date().toISOString(), { nx: true, ex: CRM_TTL }).catch(() => "errored");
       if (claimed === null) return { ok: true, skipped: "already-posted" };

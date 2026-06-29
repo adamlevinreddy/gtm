@@ -30,6 +30,7 @@ import {
 } from "@/lib/recall-calendar-v2";
 import { getCompanyContacts } from "@/lib/hubspot";
 import { kv } from "@/lib/kv-client";
+import { detectConeOfSilence, isConeOfSilence, markConeOfSilence } from "@/lib/cone-of-silence";
 
 export const maxDuration = 300;
 
@@ -305,6 +306,15 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   const existingMetaText = await readKbFile(pat, `${dir}/meta.json`);
   const existing: ExistingMeta = existingMetaText ? safeJson(existingMetaText) : {};
 
+  // Cone of silence — already flagged (realtime detection mid-meeting, or a
+  // prior reconcile pass)? Suppress now, BEFORE any video/Mux work: purge
+  // whatever already landed and stop. The bot still recorded — we just never
+  // persist or surface this meeting.
+  if (await isConeOfSilence(botId)) {
+    await suppressConeMeeting(pat, dir, existingMetaText, existing, botId, "marker");
+    return;
+  }
+
   const filesToCommit: CommitFile[] = [];
   const reasons: string[] = [];
 
@@ -367,6 +377,14 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   if (transcriptStatus === "done" && transcriptUrl && !existing.has_transcript) {
     const { segments } = await fetchTranscript(botId);
     const transcriptText = transcriptToText(segments);
+    // Cone of silence guarantee: scan the FULL transcript before committing it.
+    // If the trigger was spoken, purge anything that landed (video may have been
+    // committed on an earlier recording.done pass) and suppress — no commit, no
+    // Slack. Discards this pass's pending commits (incl. any just-built video).
+    if (detectConeOfSilence(transcriptText)) {
+      await suppressConeMeeting(pat, dir, existingMetaText, existing, botId, "transcript");
+      return;
+    }
     filesToCommit.push({ path: `${dir}/transcript.txt`, utf8: transcriptText });
     hasTranscript = true;
     reasons.push(`transcript (${transcriptText.length} chars)`);
@@ -447,6 +465,35 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
 }
 
 // ────────── Helpers ──────────
+
+// Cone of silence: flag the meeting and PURGE any artifacts already committed
+// to the KB so it leaves the board/meetings view AND the agent's KB clone. We
+// only delete paths we know exist (GitHub 422s on deleting a missing path):
+// meta.json if it was ever written, and each artifact the existing meta marks
+// present. Never touches the Recall bot — the recording itself is untouched.
+async function suppressConeMeeting(
+  pat: string,
+  dir: string,
+  existingMetaText: string | null,
+  existing: ExistingMeta,
+  botId: string,
+  via: string,
+): Promise<void> {
+  await markConeOfSilence(botId);
+  const deletions: CommitFile[] = [];
+  if (existingMetaText !== null) deletions.push({ path: `${dir}/meta.json`, delete: true });
+  if (existing.has_transcript) deletions.push({ path: `${dir}/transcript.txt`, delete: true });
+  if (existing.has_chat) deletions.push({ path: `${dir}/chat.txt`, delete: true });
+  if (existing.video) deletions.push({ path: `${dir}/video.mp4`, delete: true });
+  if (deletions.length) {
+    try {
+      await commitToKb({ pat, message: `recall: cone of silence — purge ${dir}`, files: deletions });
+    } catch (err) {
+      console.error(`[recall webhook] cone purge failed bot=${botId}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  console.log(`[recall webhook] cone of silence bot=${botId} via=${via}: suppressed (purged ${deletions.length}, no slack)`);
+}
 
 function safeJson(s: string): ExistingMeta {
   try {

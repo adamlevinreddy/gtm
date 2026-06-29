@@ -27,6 +27,7 @@ import {
   type WorkItemKind,
 } from "@/lib/work-items";
 import { canonicalizeCompany, searchCompaniesByName, hubspotCompanyUrl } from "@/lib/hubspot";
+import { isConeOfSilence } from "@/lib/cone-of-silence";
 
 type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
 
@@ -269,6 +270,10 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
   };
   try {
     if (!botId) return { ok: false, proposed: 0, error: "missing botId" };
+
+    // Cone of silence — a confidential meeting is never slacked, even via the
+    // backstop cron or a forced replay.
+    if (await isConeOfSilence(botId)) return { ok: true, proposed: 0, skipped: "cone-of-silence" };
 
     if (!opts?.force) {
       const claimed = await kv

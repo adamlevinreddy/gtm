@@ -39,6 +39,11 @@ export type CommitFile = {
   base64?: string;
   // For LFS: pass the pointer text as utf8 — the actual bytes go via
   // uploadLfsBlob() in lib/github-lfs.ts before this commit lands.
+  //
+  // Set `delete: true` to REMOVE the path instead of writing it (the tree entry
+  // is emitted with sha:null). Only delete paths that exist in the base tree —
+  // GitHub 422s on deleting a missing path.
+  delete?: boolean;
 };
 
 // Atomic commit: writes N files in one commit on `main`. Retries up to
@@ -66,11 +71,13 @@ export async function commitToKb(args: {
       );
       const parentTreeSha = parentCommit.body.tree.sha;
 
-      // 3. Create a blob per file (using base64 to support binary-ish content
-      // safely — the LFS pointer is plain text but going through base64 keeps
-      // a single code path).
+      // 3. Create a blob per file to WRITE (using base64 to support binary-ish
+      // content safely — the LFS pointer is plain text but going through base64
+      // keeps a single code path). Deletions create no blob.
+      const writes = files.filter((f) => !f.delete);
+      const deletes = files.filter((f) => f.delete);
       const blobShas = await Promise.all(
-        files.map(async (f) => {
+        writes.map(async (f) => {
           const content = f.base64 ?? Buffer.from(f.utf8 ?? "", "utf8").toString("base64");
           const res = await gh<{ sha: string }>(pat, "POST", `/git/blobs`, {
             content,
@@ -81,15 +88,14 @@ export async function commitToKb(args: {
       );
 
       // 4. New tree, parented on the existing tree (so we only touch the
-      // listed paths; everything else stays).
+      // listed paths; everything else stays). sha:null removes a path.
+      const treeEntries: Array<{ path: string; mode: string; type: string; sha: string | null }> = [
+        ...blobShas.map((b) => ({ path: b.path, mode: "100644", type: "blob", sha: b.sha })),
+        ...deletes.map((f) => ({ path: f.path, mode: "100644", type: "blob", sha: null })),
+      ];
       const tree = await gh<{ sha: string }>(pat, "POST", `/git/trees`, {
         base_tree: parentTreeSha,
-        tree: blobShas.map((b) => ({
-          path: b.path,
-          mode: "100644",
-          type: "blob",
-          sha: b.sha,
-        })),
+        tree: treeEntries,
       });
 
       // 5. New commit
