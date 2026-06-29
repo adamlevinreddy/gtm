@@ -16,7 +16,7 @@
 
 import { kv } from "@/lib/kv-client";
 import { postToChannel, salesChannel } from "@/lib/slack";
-import { selfBaseUrl, boardLink } from "@/lib/work-items";
+import { selfBaseUrl, boardLink, companySlug } from "@/lib/work-items";
 import { isCompanyWritable } from "@/lib/hubspot-guard";
 import {
   logMeetingToHubSpot,
@@ -384,8 +384,7 @@ function buildCrmMessage(
   logged: boolean
 ): { text: string; blocks: object[] } {
   const text = `CRM updates suggested for ${p.companyName} — ${p.dealName}`;
-  const slug = p.companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const boardUrl = boardLink({ customerSlug: slug || null });
+  const boardUrl = boardLink({ customerSlug: companySlug(p.companyName) });
   const dealLink = dealUrl ? ` · 🔗 <${dealUrl}|Open deal in HubSpot>` : "";
   const blocks: object[] = [
     { type: "header", text: { type: "plain_text", text: "🗂️  CRM updates", emoji: true } },

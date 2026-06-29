@@ -415,7 +415,7 @@ async function main() {
       tool(
         "board_create_subtask",
         "Create a subtask under a parent work item (e.g. a follow-up under an in-flight deal task). Pass {parentId, title, kind, ownerEmail?, dueAt?}. From a post-meeting proposal, set sourceRef to the meeting botId.",
-        { parentId: z.string(), title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), dueAt: z.string().optional(), sourceRef: z.string().optional() },
+        { parentId: z.string(), title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), dueAt: z.string().optional(), sourceRef: z.string().optional(), customerSlug: z.string().optional() },
         async (args) => boardFetch("subtask", args),
       ),
       tool(

@@ -22,6 +22,7 @@ import {
   createSubtask,
   logActivity,
   getItem,
+  companySlug,
   type WorkItemKind,
 } from "@/lib/work-items";
 
@@ -46,6 +47,7 @@ export type TriageItem = {
   title: string;
   kind: WorkItemKind;
   ownerEmail: string | null;
+  company: string | null; // the company/prospect this item is about (HubSpot-resolved when grounded)
   targetId: string | null;
   targetTitle: string | null;
   note: string | null;
@@ -113,11 +115,11 @@ export function buildTriagePrompt(botId: string): string {
     `  "meetingType": "internal" | "prospect" | "signed_customer" | "pilot" | "partner",`,
     `  "meetingTitle": string,`,
     `  "items": [`,
-    `    { "boardKey": "gtm"|"success"|"operations", "disposition": "new"|"subtask"|"update", "title": string, "kind": "<one of: ${VALID_KINDS.join(", ")}>", "ownerEmail": string|null, "targetId": string|null, "targetTitle": string|null, "note": string|null }`,
+    `    { "boardKey": "gtm"|"success"|"operations", "disposition": "new"|"subtask"|"update", "title": string, "kind": "<one of: ${VALID_KINDS.join(", ")}>", "ownerEmail": string|null, "company": string|null, "targetId": string|null, "targetTitle": string|null, "note": string|null }`,
     `  ]`,
     `}`,
     "```",
-    `title = short imperative; ownerEmail = the @reddy.io attendee who clearly owns it (from meta.json), else null. You MAY call board_list (read-only). Do NOT create/update/move any card.`,
+    `title = short imperative; ownerEmail = the @reddy.io attendee who clearly owns it (from meta.json), else null. company = the external customer/prospect this specific item is about (a single meeting's items can span different companies — e.g. a lead-list review). Use the HubSpot-resolved company name when you grounded it in STEP 3, else the company named in the item; null for purely internal items with no external company. You MAY call board_list (read-only). Do NOT create/update/move any card.`,
     `CRITICAL: your FINAL message must be ONLY the single fenced \`\`\`json block — no summary, no prose before or after it. The JSON is your entire deliverable.`,
   ].join("\n");
 }
@@ -185,6 +187,7 @@ function tryParse(raw: string): TriageResult | null {
       title,
       kind: coerceKind(i.kind),
       ownerEmail: typeof i.ownerEmail === "string" && i.ownerEmail.includes("@") ? i.ownerEmail.trim().toLowerCase() : null,
+      company: typeof i.company === "string" && i.company.trim() ? i.company.trim() : null,
       targetId,
       targetTitle: typeof i.targetTitle === "string" && i.targetTitle.trim() ? i.targetTitle.trim() : null,
       note: typeof i.note === "string" && i.note.trim() ? i.note.trim() : null,
@@ -325,6 +328,9 @@ export async function executeProposal(
   for (const it of proposal.items) {
     try {
       const payload = it.note ? { detail: it.note } : undefined;
+      // Tag the card with the company it's about (a meeting spans companies),
+      // so it shows under the board's Company filter + the company board link.
+      const customerSlug = companySlug(it.company);
 
       // update → append to the existing card's activity ledger (no new card).
       if (it.disposition === "update" && it.targetId) {
@@ -355,6 +361,7 @@ export async function executeProposal(
             source: "post_meeting",
             ownerEmail: it.ownerEmail ?? null,
             sourceRef: botId,
+            customerSlug,
             payload,
             createdBy: actorEmail,
           });
@@ -374,6 +381,7 @@ export async function executeProposal(
         boardId: await resolveBoardId(it.boardKey),
         ownerEmail: it.ownerEmail ?? null,
         sourceRef: botId,
+        customerSlug,
         payload,
         createdBy: actorEmail,
       });

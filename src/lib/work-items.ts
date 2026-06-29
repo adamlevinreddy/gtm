@@ -94,6 +94,15 @@ export function itemUrl(id: string): string {
   return `${selfBaseUrl()}/board/${id}`;
 }
 
+// Company name → board customerSlug. One shared definition so post-meeting task
+// tagging and the CRM "open on the board" link produce the SAME slug (else a
+// company's tasks split across two slugs).
+export function companySlug(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const s = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s || null;
+}
+
 // A "go to the board" link for any update: straight to the task if one exists,
 // else the board filtered for the company (board defaults to gtm, customer
 // scopes to that company's cards), else the board home.
