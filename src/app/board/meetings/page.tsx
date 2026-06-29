@@ -3,6 +3,7 @@ import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
 import { recentMeetingIndex, deriveAccountLabel } from "@/lib/recall-index";
+import { resolveLabels, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
 import MeetingsHub, { type HubMeeting } from "./MeetingsHub";
 
 export const dynamic = "force-dynamic";
@@ -43,20 +44,47 @@ export default async function MeetingsPage({
     }
   }
 
-  const data: HubMeeting[] = meetings.map((m) => ({
-    botId: m.bot_id,
-    title: m.title,
-    slug: m.customer_slug,
-    account: deriveAccountLabel(m.title, m.customer_slug),
-    startedAt: m.started_at,
-    platform: m.platform,
-    attendees: m.attendees
-      .map((a) => a.name || a.email || "")
-      .filter((s): s is string => !!s),
-    hasTranscript: m.has_transcript,
-    hasVideo: m.has_video,
-    tasks: tasksByBot[m.bot_id] ?? [],
-  }));
+  // Canon: resolve the messy heuristic label → a canonical HubSpot company,
+  // over DISTINCT labels only (cheap; KV-cached; bot for the hard tail). Falls
+  // back to the raw label if resolution is unavailable, so the hub never regresses.
+  const FREE_DOMAINS = new Set(["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com"]);
+  const rawByBot = new Map<string, string>();
+  const evidence = new Map<string, LabelEvidence>();
+  for (const m of meetings) {
+    const raw = deriveAccountLabel(m.title, m.customer_slug);
+    rawByBot.set(m.bot_id, raw);
+    const e = evidence.get(raw) ?? { rawLabel: raw, sampleTitles: [], emailDomains: [], slugs: [] };
+    if (m.title && e.sampleTitles.length < 3 && !e.sampleTitles.includes(m.title)) e.sampleTitles.push(m.title);
+    for (const a of m.attendees) {
+      const d = a.email?.split("@")[1]?.toLowerCase();
+      if (d && !FREE_DOMAINS.has(d) && !e.emailDomains.includes(d)) e.emailDomains.push(d);
+    }
+    if (!e.slugs.includes(m.customer_slug)) e.slugs.push(m.customer_slug);
+    evidence.set(raw, e);
+  }
+  const resolved = await resolveLabels([...evidence.values()], {
+    userEmail: process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io",
+  }).catch(() => new Map<string, ResolvedCompany>());
+
+  const data: HubMeeting[] = meetings.map((m) => {
+    const raw = rawByBot.get(m.bot_id) ?? deriveAccountLabel(m.title, m.customer_slug);
+    const r = resolved.get(raw);
+    return {
+      botId: m.bot_id,
+      title: m.title,
+      slug: m.customer_slug,
+      account: r?.canonical ?? raw,
+      hubspotCompanyId: r?.hubspotCompanyId ?? null,
+      startedAt: m.started_at,
+      platform: m.platform,
+      attendees: m.attendees
+        .map((a) => a.name || a.email || "")
+        .filter((s): s is string => !!s),
+      hasTranscript: m.has_transcript,
+      hasVideo: m.has_video,
+      tasks: tasksByBot[m.bot_id] ?? [],
+    };
+  });
 
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-7">

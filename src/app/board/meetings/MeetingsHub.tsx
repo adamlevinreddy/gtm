@@ -11,6 +11,7 @@ export type HubMeeting = {
   title: string | null;
   slug: string;
   account: string;
+  hubspotCompanyId: string | null;
   startedAt: string | null;
   platform: string | null;
   attendees: string[];

@@ -11,6 +11,7 @@ import { accounts, contacts, companies, conferenceLists, listContacts } from "@/
 import { eq, ilike } from "drizzle-orm";
 import { enrichContactViaApollo, enrichAccountViaApollo } from "@/lib/enrichment";
 import { isSetupIntent } from "@/lib/composio-connect";
+import { editCrmProposal } from "@/lib/post-meeting-crm";
 import type { ClassificationResult } from "@/lib/types";
 
 export const maxDuration = 60; // Known matching is fast — don't need 5 min
@@ -251,6 +252,23 @@ export async function POST(req: NextRequest) {
         }));
         if (slackFiles.length > 0) {
           console.log(`[slack] forwarding ${slackFiles.length} file(s) to agent: ${slackFiles.map((f) => f.name).join(", ")}`);
+        }
+
+        // CRM-suggestion thread? A reply EDITS the suggestion (stage/fields) via
+        // a oneshot and re-posts with the Apply button — the bot never writes
+        // HubSpot here; only the gated Apply button does. Intercept before the
+        // agent dispatch so CRM edits stay on the gated path.
+        if (event.thread_ts) {
+          try {
+            const crmStored = await kv.get<{ botId?: string }>(`postmeeting:crm:ts:${event.thread_ts}`);
+            if (crmStored?.botId) {
+              editCrmProposal(crmStored.botId, rawText, { channel, threadTs }).catch((err) =>
+                console.error(`[slack] crm edit error: ${err}`)
+              );
+              await new Promise((r) => setTimeout(r, 500));
+              return NextResponse.json({ ok: true });
+            }
+          } catch { /* fall through to normal handling */ }
         }
 
         // Post-meeting confirm: if this mention is a reply in a thread that has

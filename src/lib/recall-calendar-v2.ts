@@ -101,6 +101,10 @@ function authHeader(): string {
 export const kvKeyEmailToCalendar = (email: string) => `recall:cal:user:${email.toLowerCase()}:calendar_id`;
 export const kvKeyCalendarToEmail = (calendarId: string) => `recall:cal:calendar:${calendarId}:user_email`;
 export const kvKeyEventBot = (calendarId: string, eventId: string) => `recall:cal:event:${calendarId}:${eventId}:bot`;
+// Calendar-invite attendees (with emails) captured at schedule time, keyed by
+// bot. Teams strips emails from the in-meeting roster, but the invite carries
+// them — this is the durable source for attendee emails / attribution.
+export const kvKeyBotInvitees = (botId: string) => `recall:cal:bot:${botId}:invitees`;
 // Cross-calendar dedup: a single ical_uid may appear on many teammates'
 // connected calendars (any meeting they're all invited to). We use a
 // "first calendar wins" claim so only one bot gets scheduled regardless

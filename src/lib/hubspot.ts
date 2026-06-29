@@ -115,6 +115,43 @@ export async function canonicalizeCompany(name: string): Promise<CanonCompany | 
   return { id: r.id, name: r.properties?.name ?? name, domain: r.properties?.domain ?? null };
 }
 
+/** Company by exact domain (read-only). Strongest canon signal when attendees
+ * have real emails. */
+export async function findCompanyByDomain(domain: string): Promise<CanonCompany | null> {
+  if (!domain || !domain.includes(".")) return null;
+  const res = await hubspotFetch("/crm/v3/objects/companies/search", {
+    method: "POST",
+    body: JSON.stringify({
+      filterGroups: [{ filters: [{ propertyName: "domain", operator: "EQ", value: domain.toLowerCase() }] }],
+      properties: ["name", "domain"],
+      limit: 1,
+    }),
+  });
+  if (!res.ok) return null;
+  const r = (await res.json()).results?.[0];
+  return r ? { id: r.id, name: r.properties?.name ?? domain, domain: r.properties?.domain ?? domain } : null;
+}
+
+/** Fuzzy company name search (CONTAINS_TOKEN) → candidate shortlist for the
+ * canon bot step. Read-only. */
+export async function searchCompaniesByName(token: string, limit = 10): Promise<CanonCompany[]> {
+  if (!token || !token.trim()) return [];
+  const res = await hubspotFetch("/crm/v3/objects/companies/search", {
+    method: "POST",
+    body: JSON.stringify({
+      filterGroups: [{ filters: [{ propertyName: "name", operator: "CONTAINS_TOKEN", value: token }] }],
+      properties: ["name", "domain"],
+      limit,
+    }),
+  });
+  if (!res.ok) return [];
+  return ((await res.json()).results ?? []).map((r: { id: string; properties?: Record<string, string> }) => ({
+    id: r.id,
+    name: r.properties?.name ?? token,
+    domain: r.properties?.domain ?? null,
+  }));
+}
+
 export type HubSpotDeal = {
   id: string;
   dealname: string | null;
@@ -196,6 +233,28 @@ export async function getCompanyContacts(companyId: string): Promise<HubSpotCont
     email: c.properties?.email ?? null,
     jobtitle: c.properties?.jobtitle ?? null,
   }));
+}
+
+let _portalId: string | null = null;
+
+/** HubSpot portal (hub) id, for building app.hubspot.com record links. Cached. */
+export async function getHubSpotPortalId(): Promise<string | null> {
+  if (_portalId) return _portalId;
+  if (process.env.HUBSPOT_PORTAL_ID) {
+    _portalId = process.env.HUBSPOT_PORTAL_ID;
+    return _portalId;
+  }
+  const res = await hubspotFetch("/account-info/v3/details");
+  if (!res.ok) return null;
+  const d = (await res.json().catch(() => null)) as { portalId?: number } | null;
+  _portalId = d?.portalId ? String(d.portalId) : null;
+  return _portalId;
+}
+
+/** Direct link to a deal record in the HubSpot UI (null if portal id unknown). */
+export async function hubspotDealUrl(dealId: string): Promise<string | null> {
+  const pid = await getHubSpotPortalId();
+  return pid ? `https://app.hubspot.com/contacts/${pid}/record/0-3/${dealId}` : null;
 }
 
 // ============================================================================

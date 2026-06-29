@@ -26,7 +26,9 @@ import {
   kvClaimIcalOwner,
   kvRefreshIcalOwner,
   kvReleaseIcalOwner,
+  kvKeyBotInvitees,
 } from "@/lib/recall-calendar-v2";
+import { getCompanyContacts } from "@/lib/hubspot";
 import { kv } from "@/lib/kv-client";
 
 export const maxDuration = 300;
@@ -231,7 +233,17 @@ async function handleCalendarEvent(
         deduplicationKey: dedupKey,
         joinAt,
       });
-      if (botId) await kv.set(`recall:cal:event:${calendarId}:${e.id}:bot`, botId).catch(() => {});
+      if (botId) {
+        await kv.set(`recall:cal:event:${calendarId}:${e.id}:bot`, botId).catch(() => {});
+        // Capture invite attendee emails now (the invite always carries them,
+        // even when Teams later strips them from the meeting roster).
+        const invitees: RecallParticipant[] = (e.raw?.attendees ?? [])
+          .filter((a) => !!a.email)
+          .map((a) => ({ name: undefined, email: a.email, is_host: a.organizer ?? false }));
+        if (invitees.length) {
+          await kv.set(kvKeyBotInvitees(botId), invitees, { ex: 30 * 24 * 60 * 60 }).catch(() => {});
+        }
+      }
       scheduled += 1;
     } catch (err) {
       console.warn(`[recall webhook] schedule bot for ${e.id} failed: ${err instanceof Error ? err.message : err}`);
@@ -270,9 +282,22 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   const bot = await fetchBot(botId);
   // Pull participants from the artifact (the inline list is empty on
   // current Recall bots); pull title from the recordings[0] location.
-  const liveParticipants = await fetchParticipants(bot);
+  const observed = await fetchParticipants(bot);
+  // Merge calendar-invite attendees (real emails — Teams roster has none) so
+  // attribution + meta.json get domains to work with.
+  const invitees = (await kv.get<RecallParticipant[]>(kvKeyBotInvitees(botId)).catch(() => null)) ?? [];
+  let liveParticipants = mergeParticipants(observed, invitees);
   const liveTitle = bot.recordings?.[0]?.media_shortcuts?.meeting_metadata?.data?.title ?? bot.bot_name ?? null;
   const { slug, attribution } = await customerSlugForBot(bot, liveParticipants, liveTitle);
+  // Runtime safety net: if a company resolved but attendees still lack emails
+  // (older bot with no stored invitees), recover emails from the company's
+  // HubSpot contacts by name. Self-heals existing meetings on re-reconcile.
+  if (attribution.hubspotCompanyId && liveParticipants.some((p) => p.name && !p.email)) {
+    try {
+      const crm = await getCompanyContacts(attribution.hubspotCompanyId);
+      if (crm.length) liveParticipants = backfillEmailsFromContacts(liveParticipants, crm);
+    } catch { /* best-effort */ }
+  }
   const dir = `corpora/success/customers/${slug}/meetings/${botId}`;
 
   // Read existing meta (if any) so we can preserve fields populated by
@@ -462,6 +487,35 @@ async function customerSlugForBot(
     return { slug: kebabCase(attribution.companyName), attribution };
   }
   return { slug: "_unsorted", attribution };
+}
+
+// Union the observed in-meeting roster with calendar invitees, adding invitee
+// emails the roster is missing (dedup by email). Teams rosters are email-less,
+// so invitees supply the domains attribution needs.
+function mergeParticipants(observed: RecallParticipant[], invitees: RecallParticipant[]): RecallParticipant[] {
+  const have = new Set(observed.map((p) => p.email?.toLowerCase()).filter(Boolean) as string[]);
+  const extra = invitees.filter((iv) => iv.email && !have.has(iv.email.toLowerCase()));
+  return [...observed, ...extra];
+}
+
+// Fill missing emails on NAMED attendees by matching a company's HubSpot
+// contacts (handles "Last, First" Teams display via a last-name substring match).
+function backfillEmailsFromContacts(
+  participants: RecallParticipant[],
+  contacts: Array<{ firstname: string | null; lastname: string | null; email: string | null }>,
+): RecallParticipant[] {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
+  return participants.map((p) => {
+    if (p.email || !p.name) return p;
+    const pn = norm(p.name);
+    const match = contacts.find((c) => {
+      if (!c.email) return false;
+      const full = norm(`${c.firstname ?? ""} ${c.lastname ?? ""}`);
+      const last = norm(c.lastname ?? "");
+      return (!!full && full === pn) || (last.length > 2 && pn.includes(last));
+    });
+    return match?.email ? { ...p, email: match.email } : p;
+  });
 }
 
 function mergedMetaJson(opts: {

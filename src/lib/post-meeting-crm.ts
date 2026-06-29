@@ -24,6 +24,7 @@ import {
   updateDealProperties,
   getDealPipelines,
   getCompanyContacts,
+  hubspotDealUrl,
 } from "@/lib/hubspot";
 
 export const CRM_APPLY_ACTION_ID = "pm_crm_apply";
@@ -48,6 +49,8 @@ export type CrmProposal = {
   companyName: string;
   dealId: string;
   dealName: string;
+  pipeline: string;
+  stages: string[];
   currentStageLabel: string | null;
   suggestedStageId: string | null;
   suggestedStageLabel: string | null;
@@ -172,17 +175,23 @@ export async function proposeCrmFromMeeting(botId: string): Promise<CrmProposeRe
       `<p>▶ <a href="${recUrl}">Watch the recording &amp; read the transcript</a></p>`;
     const contacts = await getCompanyContacts(raw.companyId).catch(() => []);
     const contactIds = contacts.slice(0, 10).map((c) => c.id);
-    let loggedMeetingId: string | null = null;
-    try {
-      loggedMeetingId = await logMeetingToHubSpot({
-        companyId: raw.companyId,
-        dealId: raw.dealId,
-        contactIds,
-        title: raw.dealName ? `${raw.companyName ?? "Meeting"} — meeting` : "Meeting",
-        bodyHtml,
-        startISO: new Date().toISOString(),
-      });
-    } catch { /* surfaced below as no meeting id */ }
+    // Idempotent: log the meeting at most once per botId so re-runs (replays,
+    // a retried webhook) don't create duplicate HubSpot meeting engagements.
+    const logKey = `crm:meeting:${botId}`;
+    let loggedMeetingId = await kv.get<string>(logKey).catch(() => null);
+    if (!loggedMeetingId) {
+      try {
+        loggedMeetingId = await logMeetingToHubSpot({
+          companyId: raw.companyId,
+          dealId: raw.dealId,
+          contactIds,
+          title: `${raw.companyName ?? "Meeting"} — meeting`,
+          bodyHtml,
+          startISO: new Date().toISOString(),
+        });
+        if (loggedMeetingId) await kv.set(logKey, loggedMeetingId, { ex: 90 * 24 * 3600 }).catch(() => {});
+      } catch { /* surfaced below as no meeting id */ }
+    }
 
     // Stash the SUGGESTION (stage + fields) for the Apply button / chat-edit.
     const proposal: CrmProposal = {
@@ -191,6 +200,8 @@ export async function proposeCrmFromMeeting(botId: string): Promise<CrmProposeRe
       companyName: raw.companyName ?? "the account",
       dealId: raw.dealId,
       dealName: raw.dealName ?? "the deal",
+      pipeline: raw.pipeline ?? "",
+      stages: Array.isArray(raw.stages) ? raw.stages : [],
       currentStageLabel: raw.currentStageLabel ?? null,
       suggestedStageId,
       suggestedStageLabel: raw.suggestedStageLabel ?? null,
@@ -200,10 +211,11 @@ export async function proposeCrmFromMeeting(botId: string): Promise<CrmProposeRe
     await kv.set(crmProposalKey(botId), proposal, { ex: CRM_TTL }).catch(() => {});
 
     // Post the Slack suggestion.
+    const dealUrl = await hubspotDealUrl(raw.dealId).catch(() => null);
     let slackTs: string | undefined;
     const channel = process.env.SALES_TESTING_CHANNEL_ID;
     if (channel) {
-      const res = await postToChannel(channel, buildCrmMessage(proposal, recUrl, !!loggedMeetingId)).catch(() => ({ ts: undefined }));
+      const res = await postToChannel(channel, buildCrmMessage(proposal, recUrl, dealUrl, !!loggedMeetingId)).catch(() => ({ ts: undefined }));
       slackTs = res.ts;
       if (slackTs) await kv.set(`postmeeting:crm:ts:${slackTs}`, proposal, { ex: CRM_TTL }).catch(() => {});
     }
@@ -261,13 +273,98 @@ export async function executeCrmProposal(proposal: CrmProposal): Promise<CrmAppl
 // Slack message
 // ----------------------------------------------------------------------------
 
-function buildCrmMessage(p: CrmProposal, recUrl: string, logged: boolean): { text: string; blocks: object[] } {
+// ----------------------------------------------------------------------------
+// Chat-to-edit — a reply in the CRM-suggestion thread edits the SUGGESTION
+// (stage/fields) via a oneshot; re-stashes + re-posts with the Apply button.
+// The bot never writes HubSpot here — only the gated Apply button does.
+// ----------------------------------------------------------------------------
+
+type RawCrmEdit = {
+  suggestedStageLabel?: string | null;
+  stageReason?: string | null;
+  fieldSuggestions?: CrmFieldSuggestion[];
+};
+
+function parseCrmEdit(answer: string): RawCrmEdit | null {
+  const blocks: string[] = [];
+  const fenced = answer.match(/```(?:json)?\s*([\s\S]*?)```/gi);
+  if (fenced) for (const b of fenced) blocks.push(b.replace(/```(?:json)?\s*/i, "").replace(/```$/, "").trim());
+  blocks.push(answer);
+  for (const b of blocks) {
+    const start = b.indexOf("{");
+    const end = b.lastIndexOf("}");
+    if (start < 0 || end <= start) continue;
+    try {
+      return JSON.parse(b.slice(start, end + 1)) as RawCrmEdit;
+    } catch { /* next */ }
+  }
+  return null;
+}
+
+export async function editCrmProposal(
+  botId: string,
+  instruction: string,
+  ctx: { channel: string; threadTs: string }
+): Promise<{ ok: boolean; error?: string }> {
+  const proposal = await getStoredCrmProposal(botId);
+  if (!proposal) return { ok: false, error: "no crm proposal for thread" };
+
+  const runnerEmail = process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io";
+  const q = [
+    `You are EDITING a CRM update suggestion per the user's instruction. Do NOT write to HubSpot — only revise the suggestion.`,
+    `Deal: ${proposal.dealName} (${proposal.companyName}). Current deal stage: ${proposal.currentStageLabel ?? "unknown"}.`,
+    `Valid stage labels (pick exactly one for suggestedStageLabel, or null for no change): ${JSON.stringify(proposal.stages)}`,
+    `Current suggestion: ${JSON.stringify({ suggestedStageLabel: proposal.suggestedStageLabel, stageReason: proposal.stageReason, fieldSuggestions: proposal.fieldSuggestions })}`,
+    `User instruction: ${JSON.stringify(instruction)}`,
+    `Apply it. Use ONLY standard HubSpot deal/company properties. Return ONLY a fenced json block:`,
+    "```json",
+    `{ "suggestedStageLabel": string|null, "stageReason": string|null, "fieldSuggestions": [ { "object":"deal"|"company", "property": string, "currentValue": string|null, "suggestedValue": string, "reason": string } ] }`,
+    "```",
+    `Your FINAL message must be ONLY the json block.`,
+  ].join("\n");
+
+  const answer = await runOneshot(q, runnerEmail, `crmedit:${botId}`);
+  if (!answer) return { ok: false, error: "edit agent unavailable" };
+  const edited = parseCrmEdit(answer);
+  if (!edited) return { ok: false, error: "could not parse edit" };
+
+  let suggestedStageId: string | null = null;
+  if (edited.suggestedStageLabel && proposal.pipeline) {
+    const pipelines = await getDealPipelines().catch(() => null);
+    const stages = pipelines?.get(proposal.pipeline) ?? [];
+    suggestedStageId = stages.find((s) => s.label === edited.suggestedStageLabel)?.id ?? null;
+  }
+
+  const updated: CrmProposal = {
+    ...proposal,
+    suggestedStageId,
+    suggestedStageLabel: edited.suggestedStageLabel ?? null,
+    stageReason: edited.stageReason ?? null,
+    fieldSuggestions: Array.isArray(edited.fieldSuggestions) ? edited.fieldSuggestions : [],
+  };
+  await kv.set(crmProposalKey(botId), updated, { ex: CRM_TTL }).catch(() => {});
+  await kv.set(`postmeeting:crm:ts:${ctx.threadTs}`, updated, { ex: CRM_TTL }).catch(() => {});
+
+  const recUrl = recordingUrl(botId);
+  const dealUrl = await hubspotDealUrl(proposal.dealId).catch(() => null);
+  const msg = buildCrmMessage(updated, recUrl, dealUrl, true);
+  await postToChannel(ctx.channel, { text: msg.text, blocks: msg.blocks, threadTs: ctx.threadTs }).catch(() => {});
+  return { ok: true };
+}
+
+function buildCrmMessage(
+  p: CrmProposal,
+  recUrl: string,
+  dealUrl: string | null,
+  logged: boolean
+): { text: string; blocks: object[] } {
   const text = `CRM updates suggested for ${p.companyName} — ${p.dealName}`;
+  const dealLink = dealUrl ? ` · 🔗 <${dealUrl}|Open deal in HubSpot>` : "";
   const blocks: object[] = [
     { type: "header", text: { type: "plain_text", text: "🗂️  CRM updates", emoji: true } },
     {
       type: "context",
-      elements: [{ type: "mrkdwn", text: `*${p.companyName}* · deal *${p.dealName}* · HubSpot is the system of record` }],
+      elements: [{ type: "mrkdwn", text: `*${p.companyName}* · deal *${p.dealName}*${dealLink}` }],
     },
     {
       type: "section",
@@ -275,7 +372,8 @@ function buildCrmMessage(p: CrmProposal, recUrl: string, logged: boolean): { tex
         type: "mrkdwn",
         text:
           `${logged ? "✅" : "⚠️"} *Logged to the deal* (auto): meeting summary + recording link${logged ? "" : " — _logging failed, see logs_"}\n` +
-          `▶ <${recUrl}|Watch recording & read transcript>`,
+          `▶ <${recUrl}|Watch recording & read transcript>` +
+          (dealUrl ? `\n🔗 <${dealUrl}|Open deal in HubSpot>` : ""),
       },
     },
   ];
