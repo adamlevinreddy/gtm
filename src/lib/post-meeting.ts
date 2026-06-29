@@ -23,8 +23,31 @@ import {
   logActivity,
   getItem,
   companySlug,
+  boardLink,
   type WorkItemKind,
 } from "@/lib/work-items";
+import { canonicalizeCompany, searchCompaniesByName, hubspotCompanyUrl } from "@/lib/hubspot";
+
+type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
+
+/**
+ * Resolve the distinct companies named on the triaged items to {HubSpot account
+ * link, board-filtered link}. We want a HubSpot association even when there is
+ * NO deal yet, so we link the COMPANY record: exact-name match first, then a
+ * fuzzy CONTAINS fallback. Best-effort + bounded (≤6 companies) — a miss just
+ * drops the HubSpot link for that company, never blocks the Slack post.
+ */
+async function resolveAccountLinks(companies: Array<string | null>): Promise<AccountLink[]> {
+  const distinct = Array.from(new Set(companies.map((c) => (c ?? "").trim()).filter(Boolean)));
+  return Promise.all(
+    distinct.slice(0, 6).map(async (name): Promise<AccountLink> => {
+      let hit = await canonicalizeCompany(name).catch(() => null);
+      if (!hit) hit = (await searchCompaniesByName(name, 1).catch(() => []))[0] ?? null;
+      const hubspotUrl = hit ? await hubspotCompanyUrl(hit.id).catch(() => null) : null;
+      return { name: hit?.name ?? name, hubspotUrl, boardUrl: boardLink({ customerSlug: companySlug(name) }) };
+    })
+  );
+}
 
 // action_id on the Slack "Confirm & create tasks" button → routed by the
 // interactivity endpoint. The button's value carries the meeting botId.
@@ -266,11 +289,17 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     const slackIds: Record<string, string | null> = {};
     await Promise.all(owners.map(async (e) => { slackIds[e] = await slackIdForEmail(e); }));
 
+    // Enrich the card with the same links the CRM card carries: a direct
+    // recording/transcript link + a per-company HubSpot account link (even with
+    // no deal) and board-filtered link. Best-effort — never blocks the post.
+    const accounts = await resolveAccountLinks(parsed.items.map((i) => i.company)).catch(() => [] as AccountLink[]);
+    const recUrl = `${selfBaseUrl()}/board/meeting/${botId}`;
+
     let slackTs: string | undefined;
     const channel = salesChannel();
     if (channel) {
       try {
-        const res = await postToChannel(channel, buildSuggestionMessage(parsed, slackIds, botId));
+        const res = await postToChannel(channel, buildSuggestionMessage(parsed, slackIds, botId, accounts, recUrl));
         slackTs = res.ts;
       } catch { /* ignore Slack failures */ }
     }
@@ -417,7 +446,9 @@ function rowFor(it: TriageItem, slackIds: Record<string, string | null>): string
 function buildSuggestionMessage(
   parsed: TriageResult,
   slackIds: Record<string, string | null>,
-  botId: string
+  botId: string,
+  accounts: AccountLink[] = [],
+  recUrl?: string
 ): { text: string; blocks: object[] } {
   const title = parsed.meetingTitle ?? "the meeting";
   const boardsWithItems = (VALID_BOARDS as readonly BoardKey[]).filter((b) =>
@@ -428,16 +459,36 @@ function buildSuggestionMessage(
     parsed.items.length === 1 ? "" : "s"
   } across ${boardsWithItems.map((b) => BOARD_LABEL[b]).join(", ") || "—"} (nothing created yet).`;
 
+  const ctx = `From *${title}* · ${parsed.items.length} task${parsed.items.length === 1 ? "" : "s"} · nothing created until you confirm`;
+
   const blocks: object[] = [
     { type: "header", text: { type: "plain_text", text: "📋  Post-meeting suggestions", emoji: true } },
     {
       type: "context",
       elements: [{
         type: "mrkdwn",
-        text: `From *${title}* · ${parsed.items.length} task${parsed.items.length === 1 ? "" : "s"} · nothing created until you confirm`,
+        text: recUrl ? `${ctx}\n▶ <${recUrl}|Watch recording & read transcript>` : ctx,
       }],
     },
   ];
+
+  // Account context — link each company to its HubSpot record (even with no
+  // deal) and to the board filtered for it, mirroring the CRM card's links.
+  if (accounts.length) {
+    blocks.push({
+      type: "context",
+      elements: [{
+        type: "mrkdwn",
+        text: accounts
+          .map((a) =>
+            a.hubspotUrl
+              ? `🏢 *${a.name}* · <${a.hubspotUrl}|HubSpot> · <${a.boardUrl}|board>`
+              : `🏢 *${a.name}* · <${a.boardUrl}|board>`
+          )
+          .join("\n"),
+      }],
+    });
+  }
 
   if (parsed.items.length === 0) {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_No action items found — looks like a pure status meeting._" } });

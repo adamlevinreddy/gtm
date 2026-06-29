@@ -257,6 +257,12 @@ export async function hubspotDealUrl(dealId: string): Promise<string | null> {
   return pid ? `https://app.hubspot.com/contacts/${pid}/record/0-3/${dealId}` : null;
 }
 
+/** Direct link to a COMPANY record in the HubSpot UI (object type 0-2). */
+export async function hubspotCompanyUrl(companyId: string): Promise<string | null> {
+  const pid = await getHubSpotPortalId();
+  return pid ? `https://app.hubspot.com/contacts/${pid}/record/0-2/${companyId}` : null;
+}
+
 // ============================================================================
 // GATED WRITE helpers — every one asserts the target company is allowlisted.
 // ============================================================================
