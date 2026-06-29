@@ -7,7 +7,11 @@ export function composio() {
   if (_client) return _client;
   const apiKey = process.env.COMPOSIO_API_KEY;
   if (!apiKey) throw new Error("COMPOSIO_API_KEY not set");
-  _client = new Composio({ apiKey });
+  // Composio now REQUIRES a toolkit version for manual tools.execute() — without
+  // it every direct tool call (bot-mail send, auth-results fetch) throws
+  // "Toolkit version not specified". "latest" pins to the current version for
+  // all toolkits. (MCP/session tool calls are unaffected; this is for execute().)
+  _client = new Composio({ apiKey, toolkitVersions: "latest" });
   return _client;
 }
 
