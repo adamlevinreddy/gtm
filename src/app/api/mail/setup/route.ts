@@ -73,49 +73,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (step === "diag") {
-      // Temporary: exercise the exact Composio calls sendBotEmail + fetchAuthResults
-      // use, returning raw results/errors so we can see WHY a live send failed.
-      const b = body as { messageId?: string };
-      const msgId = b.messageId ?? "19f158066d325dcb";
-      type ToolRes = { successful?: boolean; error?: unknown; data?: Record<string, unknown> };
-      type ExecExtra = { version?: string; dangerouslySkipVersionCheck?: boolean };
-      const tryTool = async (slug: string, args: Record<string, unknown>, extra: ExecExtra = {}) => {
-        try {
-          const r = (await composio().tools.execute(slug, { userId: BOT_ADDR, arguments: args, ...extra })) as ToolRes;
-          return { ok: r?.successful ?? null, error: r?.error ?? null };
-        } catch (e) {
-          return { threw: e instanceof Error ? e.message : String(e) };
-        }
-      };
-      const out: Record<string, unknown> = {};
-      try {
-        const list = (await composio().connectedAccounts.list({ userIds: [BOT_ADDR], toolkitSlugs: ["gmail"] })) as {
-          items?: Array<{ id?: string; status?: string }>;
-        };
-        out.connections = (list.items ?? []).map((a) => ({ id: a.id, status: a.status }));
-      } catch (e) {
-        out.connections_error = e instanceof Error ? e.message : String(e);
-      }
-      // Probe version strategies on a READ-ONLY fetch (no emails) to find which
-      // clears "Toolkit version not specified": (a) constructor global "latest",
-      // (b) per-call version "latest", (c) dangerouslySkipVersionCheck.
-      const fa = { message_id: msgId, format: "minimal" };
-      out.fetch_skipcheck = await tryTool("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", fa, { dangerouslySkipVersionCheck: true });
-      // Confirm the SEND path end-to-end (delivers a proof email to adam@reddy.io).
-      out.send_skipcheck = await tryTool(
-        "GMAIL_SEND_EMAIL",
-        {
-          recipient_email: "adam@reddy.io",
-          subject: "Reddy-GTM bot — send path confirmed ✅",
-          body: "If you're reading this, bot@reddy.io can send mail again. Reply to the bot or send it a new request anytime.",
-          is_html: false,
-        },
-        { dangerouslySkipVersionCheck: true },
-      );
-      return NextResponse.json({ ok: true, step, out });
-    }
-
     return NextResponse.json({ ok: false, error: `unknown step '${step}'` }, { status: 400 });
   } catch (err) {
     return NextResponse.json(
