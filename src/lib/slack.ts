@@ -6,6 +6,12 @@ function getSlackClient() {
   return new WebClient(process.env.SLACK_BOT_TOKEN);
 }
 
+/** The channel proactive bot updates post to. Prefers SALES_CHANNEL_ID (the
+ * real #sales channel) and falls back to the testing channel during rollout. */
+export function salesChannel(): string | undefined {
+  return process.env.SALES_CHANNEL_ID || process.env.SALES_TESTING_CHANNEL_ID;
+}
+
 /**
  * Verify a Slack request signature (Events API / interactivity). Slack signs
  * `v0:${timestamp}:${rawBody}` with the app's signing secret and sends the hex

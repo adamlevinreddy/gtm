@@ -13,7 +13,7 @@ import {
   itemUrl,
   selfBaseUrl,
 } from "@/lib/work-items";
-import { postToChannel } from "@/lib/slack";
+import { postToChannel, salesChannel } from "@/lib/slack";
 
 // ---------------------------------------------------------------------------
 // First-pass prompts per kind. Every prompt is DRAFT-ONLY: the worker runs
@@ -267,7 +267,7 @@ export async function runBotPass(
         .set({ status: "succeeded", draftId, finishedAt: new Date() })
         .where(eq(workItemBotAttempts.id, attemptId));
 
-      const channel = process.env.SALES_TESTING_CHANNEL_ID;
+      const channel = salesChannel();
       if (channel) {
         await postToChannel(channel, {
           text: `First pass ready on ${item.title} — review at ${itemUrl(

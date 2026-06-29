@@ -15,8 +15,8 @@
 // ============================================================================
 
 import { kv } from "@/lib/kv-client";
-import { postToChannel } from "@/lib/slack";
-import { selfBaseUrl } from "@/lib/work-items";
+import { postToChannel, salesChannel } from "@/lib/slack";
+import { selfBaseUrl, boardLink } from "@/lib/work-items";
 import { isCompanyWritable } from "@/lib/hubspot-guard";
 import {
   logMeetingToHubSpot,
@@ -235,7 +235,7 @@ export async function proposeCrmFromMeeting(botId: string, opts?: { force?: bool
     // Post the Slack suggestion.
     const dealUrl = await hubspotDealUrl(raw.dealId).catch(() => null);
     let slackTs: string | undefined;
-    const channel = process.env.SALES_TESTING_CHANNEL_ID;
+    const channel = salesChannel();
     if (channel) {
       const res = await postToChannel(channel, buildCrmMessage(proposal, recUrl, dealUrl, !!loggedMeetingId)).catch(() => ({ ts: undefined }));
       slackTs = res.ts;
@@ -384,6 +384,8 @@ function buildCrmMessage(
   logged: boolean
 ): { text: string; blocks: object[] } {
   const text = `CRM updates suggested for ${p.companyName} — ${p.dealName}`;
+  const slug = p.companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const boardUrl = boardLink({ customerSlug: slug || null });
   const dealLink = dealUrl ? ` · 🔗 <${dealUrl}|Open deal in HubSpot>` : "";
   const blocks: object[] = [
     { type: "header", text: { type: "plain_text", text: "🗂️  CRM updates", emoji: true } },
@@ -398,7 +400,8 @@ function buildCrmMessage(
         text:
           `${logged ? "✅" : "⚠️"} *Logged to the deal* (auto): meeting summary + recording link${logged ? "" : " — _logging failed, see logs_"}\n` +
           `▶ <${recUrl}|Watch recording & read transcript>` +
-          (dealUrl ? `\n🔗 <${dealUrl}|Open deal in HubSpot>` : ""),
+          (dealUrl ? `\n🔗 <${dealUrl}|Open deal in HubSpot>` : "") +
+          `\n📋 <${boardUrl}|Open on the board>`,
       },
     },
   ];

@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { kv } from "@/lib/kv-client";
-import { postToChannel, slackIdForEmail } from "@/lib/slack";
+import { postToChannel, slackIdForEmail, salesChannel } from "@/lib/slack";
 import {
   boardUrl,
   selfBaseUrl,
@@ -264,7 +264,7 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     await Promise.all(owners.map(async (e) => { slackIds[e] = await slackIdForEmail(e); }));
 
     let slackTs: string | undefined;
-    const channel = process.env.SALES_TESTING_CHANNEL_ID;
+    const channel = salesChannel();
     if (channel) {
       try {
         const res = await postToChannel(channel, buildSuggestionMessage(parsed, slackIds, botId));

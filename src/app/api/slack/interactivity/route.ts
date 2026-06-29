@@ -17,6 +17,7 @@ import {
   executeCrmProposal,
   crmProposalKey,
 } from "@/lib/post-meeting-crm";
+import { boardLink } from "@/lib/work-items";
 import { kv } from "@/lib/kv-client";
 
 // Slack Interactivity Request URL. Slack POSTs button clicks here as
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest) {
       // Reply in-thread with the outcome.
       if (channel) {
         await postToChannel(channel, {
-          text: `✅ Created on the board — ${summary}. (${who})${
+          text: `✅ Created on the board — ${summary}. (${who})\n📋 <${boardLink({})}|View on the board>${
             res.errors.length ? `\n⚠️ ${res.errors.length} error(s): ${res.errors.slice(0, 3).join("; ")}` : ""
           }`,
           threadTs,

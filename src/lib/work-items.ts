@@ -94,6 +94,18 @@ export function itemUrl(id: string): string {
   return `${selfBaseUrl()}/board/${id}`;
 }
 
+// A "go to the board" link for any update: straight to the task if one exists,
+// else the board filtered for the company (board defaults to gtm, customer
+// scopes to that company's cards), else the board home.
+export function boardLink(opts: { taskId?: string | null; customerSlug?: string | null; boardKey?: string | null }): string {
+  if (opts.taskId) return itemUrl(opts.taskId);
+  const params = new URLSearchParams();
+  if (opts.boardKey) params.set("board", opts.boardKey);
+  if (opts.customerSlug) params.set("customer", opts.customerSlug);
+  const qs = params.toString();
+  return qs ? `${boardUrl()}?${qs}` : boardUrl();
+}
+
 // ---------------------------------------------------------------------------
 // PT date helpers (digest)
 // ---------------------------------------------------------------------------
