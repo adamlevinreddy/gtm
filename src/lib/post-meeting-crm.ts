@@ -134,6 +134,20 @@ async function runOneshot(question: string, userEmail: string, reqId: string): P
   return null;
 }
 
+// Resolve a stage LABEL → internal id by searching ALL deal pipelines.
+// getDealPipelines() is keyed by internal pipeline id (not label); the agent
+// emits labels — so we scan every pipeline's stages for the label.
+async function resolveStageIdByLabel(label: string | null): Promise<string | null> {
+  if (!label) return null;
+  const pipelines = await getDealPipelines().catch(() => null);
+  if (!pipelines) return null;
+  for (const stages of pipelines.values()) {
+    const hit = stages.find((s) => s.label === label);
+    if (hit) return hit.id;
+  }
+  return null;
+}
+
 export type CrmProposeResult = {
   ok: boolean;
   skipped?: string;
@@ -146,27 +160,35 @@ export type CrmProposeResult = {
 };
 
 // Orchestrator: generate → auto-log meeting+recording → post Slack suggestion.
-export async function proposeCrmFromMeeting(botId: string): Promise<CrmProposeResult> {
+export async function proposeCrmFromMeeting(botId: string, opts?: { force?: boolean }): Promise<CrmProposeResult> {
+  // Post-once per botId: the recall webhook re-fires on every reconcile once a
+  // transcript exists, so without this claim each retry re-runs the oneshot and
+  // posts a duplicate CRM card. Released only on transient failure so it can retry.
+  const claimKey = `postmeeting:crm:claim:${botId}`;
+  let claimedHere = false;
+  const releaseClaim = async () => { if (claimedHere) await kv.del(claimKey).catch(() => {}); };
   try {
     if (!botId) return { ok: false, error: "missing botId" };
+    if (!opts?.force) {
+      const claimed = await kv.set(claimKey, new Date().toISOString(), { nx: true, ex: CRM_TTL }).catch(() => "errored");
+      if (claimed === null) return { ok: true, skipped: "already-posted" };
+      if (claimed !== "errored") claimedHere = true;
+    }
     const runnerEmail = process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io";
     const answer = await runOneshot(buildCrmPrompt(botId), runnerEmail, `crm:${botId}`);
-    if (!answer) return { ok: false, error: "crm agent unavailable or empty" };
+    if (!answer) { await releaseClaim(); return { ok: false, error: "crm agent unavailable or empty" }; }
     const raw = parseCrm(answer);
-    if (!raw || !raw.companyId || !raw.dealId) return { ok: false, error: "could not parse crm JSON" };
+    if (!raw || !raw.companyId || !raw.dealId) { await releaseClaim(); return { ok: false, error: "could not parse crm JSON" }; }
 
     // GATE: only allowlisted companies get any write (auto-log included).
     if (!isCompanyWritable(raw.companyId)) {
       return { ok: true, skipped: `company ${raw.companyId} not writable (allowlist)`, companyName: raw.companyName };
     }
 
-    // Resolve the suggested stage label → internal id within the deal's pipeline.
-    let suggestedStageId: string | null = null;
-    if (raw.suggestedStageLabel && raw.pipeline) {
-      const pipelines = await getDealPipelines().catch(() => null);
-      const stages = pipelines?.get(raw.pipeline) ?? [];
-      suggestedStageId = stages.find((s) => s.label === raw.suggestedStageLabel)?.id ?? null;
-    }
+    // Resolve the suggested stage label → internal id (searches all pipelines;
+    // getDealPipelines is keyed by internal pipeline id, and the agent reports
+    // human labels, so we match by label across pipelines).
+    const suggestedStageId = await resolveStageIdByLabel(raw.suggestedStageLabel ?? null);
 
     // AUTO-LOG (no approval): meeting summary + direct recording link.
     const recUrl = recordingUrl(botId);
@@ -306,8 +328,16 @@ export async function editCrmProposal(
   instruction: string,
   ctx: { channel: string; threadTs: string }
 ): Promise<{ ok: boolean; error?: string }> {
+  const fail = async (msg: string) => {
+    await postToChannel(ctx.channel, {
+      text: `⚠️ Couldn't update that CRM suggestion — ${msg}. Try rephrasing, or click *Apply* to use the current suggestion.`,
+      threadTs: ctx.threadTs,
+    }).catch(() => {});
+    return { ok: false, error: msg };
+  };
+
   const proposal = await getStoredCrmProposal(botId);
-  if (!proposal) return { ok: false, error: "no crm proposal for thread" };
+  if (!proposal) return fail("the suggestion expired");
 
   const runnerEmail = process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io";
   const q = [
@@ -324,16 +354,11 @@ export async function editCrmProposal(
   ].join("\n");
 
   const answer = await runOneshot(q, runnerEmail, `crmedit:${botId}`);
-  if (!answer) return { ok: false, error: "edit agent unavailable" };
+  if (!answer) return fail("the assistant didn't respond");
   const edited = parseCrmEdit(answer);
-  if (!edited) return { ok: false, error: "could not parse edit" };
+  if (!edited) return fail("couldn't parse the revised suggestion");
 
-  let suggestedStageId: string | null = null;
-  if (edited.suggestedStageLabel && proposal.pipeline) {
-    const pipelines = await getDealPipelines().catch(() => null);
-    const stages = pipelines?.get(proposal.pipeline) ?? [];
-    suggestedStageId = stages.find((s) => s.label === edited.suggestedStageLabel)?.id ?? null;
-  }
+  const suggestedStageId = await resolveStageIdByLabel(edited.suggestedStageLabel ?? null);
 
   const updated: CrmProposal = {
     ...proposal,

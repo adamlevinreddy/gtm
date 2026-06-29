@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const mode = body.mode ?? "both";
 
   const tasks = mode === "crm" ? null : await proposeFromMeeting(botId, { force: true });
-  const crm = mode === "tasks" ? null : await proposeCrmFromMeeting(botId);
+  const crm = mode === "tasks" ? null : await proposeCrmFromMeeting(botId, { force: true });
   const ok = (tasks?.ok ?? true) && (crm?.ok ?? true);
   return NextResponse.json({ ok, tasks, crm }, { status: ok ? 200 : 502 });
 }

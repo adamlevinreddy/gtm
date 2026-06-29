@@ -113,7 +113,9 @@ export async function POST(req: NextRequest) {
         }
         await markApplied(`✅ *Applied to HubSpot* — ${summary}. (${who})`);
         await kv.del(crmProposalKey(botId)).catch(() => {});
-        if (messageTs) await kv.del(`postmeeting:crm:ts:${messageTs}`).catch(() => {});
+        // The proposal is stashed under the THREAD-ROOT ts; delete that (not the
+        // clicked message's ts, which may be a re-posted edit reply).
+        if (threadTs) await kv.del(`postmeeting:crm:ts:${threadTs}`).catch(() => {});
       } catch (err) {
         if (channel) await postToChannel(channel, { text: `⚠️ Couldn't apply the CRM updates: ${err instanceof Error ? err.message : String(err)}`, threadTs }).catch(() => {});
       }

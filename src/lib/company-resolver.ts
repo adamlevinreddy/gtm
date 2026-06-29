@@ -82,7 +82,9 @@ async function runOneshot(question: string, userEmail: string): Promise<string |
     const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-reddy-internal": secret },
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 240_000 }),
+      // Short poll: canon picks are quick classifications and run in the
+      // background warm (capped); don't hold the budget for a slow/cold sandbox.
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 45_000 }),
     });
     const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
     return json?.ok && json.answer ? json.answer : null;
@@ -124,47 +126,52 @@ async function botPickCanonical(
   return { canonical: picked.name, hubspotCompanyId: picked.id, domain: picked.domain, source: "bot-pick", confidence: conf };
 }
 
-// Resolve a batch of DISTINCT labels. Deterministic+cache for all; bot only for
-// the hard tail, capped per render. Never throws.
-export async function resolveLabels(
-  evidence: LabelEvidence[],
-  opts: { userEmail: string }
-): Promise<Map<string, ResolvedCompany>> {
+// RENDER path: KV cache reads ONLY (parallel, fast). Uncached labels are absent
+// from the map → the caller falls back to the raw label. Never blocks on HubSpot
+// or the bot, so the hub page stays well under its time budget.
+export async function readCachedLabels(evidence: LabelEvidence[]): Promise<Map<string, ResolvedCompany>> {
   const out = new Map<string, ResolvedCompany>();
+  await Promise.all(
+    evidence.map(async (ev) => {
+      const cached = await kv.get<ResolvedCompany>(canonKey(ev)).catch(() => null);
+      if (cached) out.set(ev.rawLabel, { ...cached, source: "cache" });
+    })
+  );
+  return out;
+}
+
+// WARM path (run in the background via after()): resolve uncached labels with
+// the full ladder and write the cache so the NEXT render is canonical. Bounded
+// deterministic work + a capped, short-poll bot step. Never throws.
+export async function warmLabels(evidence: LabelEvidence[], opts: { userEmail: string }): Promise<void> {
   const needBot: LabelEvidence[] = [];
 
-  // Pass 1: cache + deterministic (parallel, bounded).
+  // Deterministic + cache (parallel, bounded).
   const CONCURRENCY = 8;
   for (let i = 0; i < evidence.length; i += CONCURRENCY) {
     const chunk = evidence.slice(i, i + CONCURRENCY);
     await Promise.all(
       chunk.map(async (ev) => {
-        const cached = await kv.get<ResolvedCompany>(canonKey(ev)).catch(() => null);
-        if (cached) { out.set(ev.rawLabel, { ...cached, source: "cache" }); return; }
+        if (await kv.get<ResolvedCompany>(canonKey(ev)).catch(() => null)) return; // already warmed
         const det = await resolveDeterministic(ev).catch(() => null);
-        if (det) {
-          out.set(ev.rawLabel, det);
-          await kv.set(canonKey(ev), det, { ex: CANON_TTL }).catch(() => {});
-        } else {
-          needBot.push(ev);
-        }
+        if (det) await kv.set(canonKey(ev), det, { ex: CANON_TTL }).catch(() => {});
+        else needBot.push(ev);
       })
     );
   }
 
-  // Pass 2: bot for the hard tail, capped. Unresolved → fallback (cached low).
+  // Bot for the hard tail — cap ATTEMPTS (not successes) to bound latency.
+  let botCalls = 0;
   for (const ev of needBot) {
     let resolved: ResolvedCompany | null = null;
-    if (out.size >= 0 && [...out.values()].filter((r) => r.source === "bot-pick").length < MAX_BOT_CALLS_PER_RENDER) {
+    if (botCalls < MAX_BOT_CALLS_PER_RENDER) {
+      botCalls += 1;
       const shortlist = await shortlistCandidates(ev).catch(() => []);
       resolved = await botPickCanonical(ev, shortlist, opts.userEmail).catch(() => null);
     }
     const final: ResolvedCompany =
       resolved ?? { canonical: ev.rawLabel, hubspotCompanyId: null, domain: null, source: "fallback", confidence: "low" };
-    out.set(ev.rawLabel, final);
-    // Cache bot-picks for 7d; cache fallbacks short so a new CRM company is picked up soon.
+    // Bot-picks cached 7d; fallbacks short so a new CRM company is picked up soon.
     await kv.set(canonKey(ev), final, { ex: final.source === "fallback" ? 24 * 3600 : CANON_TTL }).catch(() => {});
   }
-
-  return out;
 }

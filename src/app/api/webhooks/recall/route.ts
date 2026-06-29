@@ -494,25 +494,31 @@ async function customerSlugForBot(
 // so invitees supply the domains attribution needs.
 function mergeParticipants(observed: RecallParticipant[], invitees: RecallParticipant[]): RecallParticipant[] {
   const have = new Set(observed.map((p) => p.email?.toLowerCase()).filter(Boolean) as string[]);
-  const extra = invitees.filter((iv) => iv.email && !have.has(iv.email.toLowerCase()));
+  const extra: RecallParticipant[] = [];
+  for (const iv of invitees) {
+    const e = iv.email?.toLowerCase();
+    if (e && !have.has(e)) { have.add(e); extra.push(iv); } // dedup invitees vs roster AND each other
+  }
   return [...observed, ...extra];
 }
 
 // Fill missing emails on NAMED attendees by matching a company's HubSpot
-// contacts (handles "Last, First" Teams display via a last-name substring match).
+// contacts. Requires BOTH the contact's first name AND every last-name token to
+// appear as whole tokens in the participant name (handles "Last, First" Teams
+// format) — avoids assigning the wrong contact's email when surnames collide.
 function backfillEmailsFromContacts(
   participants: RecallParticipant[],
   contacts: Array<{ firstname: string | null; lastname: string | null; email: string | null }>,
 ): RecallParticipant[] {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
+  const tok = (s: string) => new Set(s.toLowerCase().replace(/[^a-z ]+/g, " ").split(/\s+/).filter(Boolean));
   return participants.map((p) => {
     if (p.email || !p.name) return p;
-    const pn = norm(p.name);
+    const pn = tok(p.name);
     const match = contacts.find((c) => {
-      if (!c.email) return false;
-      const full = norm(`${c.firstname ?? ""} ${c.lastname ?? ""}`);
-      const last = norm(c.lastname ?? "");
-      return (!!full && full === pn) || (last.length > 2 && pn.includes(last));
+      if (!c.email || !c.firstname || !c.lastname) return false;
+      const fn = c.firstname.toLowerCase().replace(/[^a-z]+/g, "");
+      const lastTokens = [...tok(c.lastname)];
+      return fn.length > 1 && pn.has(fn) && lastTokens.length > 0 && lastTokens.every((t) => pn.has(t));
     });
     return match?.email ? { ...p, email: match.email } : p;
   });

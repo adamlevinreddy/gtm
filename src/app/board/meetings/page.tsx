@@ -2,13 +2,16 @@ import Link from "next/link";
 import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
+import { after } from "next/server";
 import { recentMeetingIndex, deriveAccountLabel } from "@/lib/recall-index";
-import { resolveLabels, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
+import { readCachedLabels, warmLabels, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
 import MeetingsHub, { type HubMeeting } from "./MeetingsHub";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Render returns fast (canon = cache reads only); the background warm runs in
+// after() within this budget.
+export const maxDuration = 300;
 
 const PLUM = "#773D72";
 
@@ -62,9 +65,19 @@ export default async function MeetingsPage({
     if (!e.slugs.includes(m.customer_slug)) e.slugs.push(m.customer_slug);
     evidence.set(raw, e);
   }
-  const resolved = await resolveLabels([...evidence.values()], {
-    userEmail: process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io",
-  }).catch(() => new Map<string, ResolvedCompany>());
+  // Render: read the canon cache only (fast). Warm uncached labels in the
+  // background so the NEXT render is canonical — never block the page on
+  // HubSpot/bot resolution.
+  const allEvidence = [...evidence.values()];
+  const resolved = await readCachedLabels(allEvidence).catch(() => new Map<string, ResolvedCompany>());
+  const uncached = allEvidence.filter((e) => !resolved.has(e.rawLabel));
+  if (uncached.length > 0) {
+    after(async () => {
+      await warmLabels(uncached, {
+        userEmail: process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io",
+      }).catch(() => {});
+    });
+  }
 
   const data: HubMeeting[] = meetings.map((m) => {
     const raw = rawByBot.get(m.bot_id) ?? deriveAccountLabel(m.title, m.customer_slug);
