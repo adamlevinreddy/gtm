@@ -1,5 +1,6 @@
 import type { ScoredContact } from "./scoring";
 import { logSync } from "./sync";
+import { assertWritableCompany } from "./hubspot-guard";
 
 const PERSONA_MAP: Record<string, string> = {
   cx_leadership: "CX Leadership",
@@ -86,20 +87,200 @@ export async function findHubSpotContactByNameCompany(
  * Returns the HubSpot company ID if found, null otherwise.
  */
 export async function findHubSpotCompanyByName(name: string): Promise<string | null> {
+  const c = await canonicalizeCompany(name);
+  return c?.id ?? null;
+}
+
+// ============================================================================
+// READ helpers for CRM-as-system-of-record (canon + deals + pipeline + contacts)
+// ============================================================================
+
+export type CanonCompany = { id: string; name: string; domain: string | null };
+
+/** Resolve a company name → canonical {id, name, domain} (read-only). */
+export async function canonicalizeCompany(name: string): Promise<CanonCompany | null> {
+  if (!name || !name.trim()) return null;
   const res = await hubspotFetch("/crm/v3/objects/companies/search", {
     method: "POST",
     body: JSON.stringify({
-      filterGroups: [{
-        filters: [{ propertyName: "name", operator: "EQ", value: name }],
-      }],
-      properties: ["name"],
+      filterGroups: [{ filters: [{ propertyName: "name", operator: "EQ", value: name }] }],
+      properties: ["name", "domain"],
       limit: 1,
     }),
   });
-
   if (!res.ok) return null;
   const data = await res.json();
-  return data.results?.[0]?.id ?? null;
+  const r = data.results?.[0];
+  if (!r) return null;
+  return { id: r.id, name: r.properties?.name ?? name, domain: r.properties?.domain ?? null };
+}
+
+export type HubSpotDeal = {
+  id: string;
+  dealname: string | null;
+  dealstage: string | null;
+  pipeline: string | null;
+  amount: string | null;
+  closedate: string | null;
+};
+
+/** Read a single deal by id (read-only). */
+export async function getDeal(dealId: string): Promise<HubSpotDeal | null> {
+  const res = await hubspotFetch(
+    `/crm/v3/objects/deals/${dealId}?properties=dealname,dealstage,pipeline,amount,closedate`
+  );
+  if (!res.ok) return null;
+  const d = await res.json();
+  const p = d.properties ?? {};
+  return {
+    id: d.id,
+    dealname: p.dealname ?? null,
+    dealstage: p.dealstage ?? null,
+    pipeline: p.pipeline ?? null,
+    amount: p.amount ?? null,
+    closedate: p.closedate ?? null,
+  };
+}
+
+/** Deal ids associated with a company (read-only). */
+export async function getCompanyDealIds(companyId: string): Promise<string[]> {
+  const res = await hubspotFetch(`/crm/v3/objects/companies/${companyId}/associations/deals?limit=100`);
+  if (!res.ok) return [];
+  const d = await res.json();
+  return (d.results ?? []).map((r: { id?: string; toObjectId?: string }) => String(r.id ?? r.toObjectId)).filter(Boolean);
+}
+
+type StageInfo = { id: string; label: string; displayOrder: number };
+let _dealStagesCache: Map<string, StageInfo[]> | null = null;
+
+/** Pipeline → ordered stages (id+label). Cached per process. Read-only. */
+export async function getDealPipelines(): Promise<Map<string, StageInfo[]>> {
+  if (_dealStagesCache) return _dealStagesCache;
+  const res = await hubspotFetch("/crm/v3/pipelines/deals");
+  const map = new Map<string, StageInfo[]>();
+  if (res.ok) {
+    const d = await res.json();
+    for (const pl of d.results ?? []) {
+      const stages: StageInfo[] = (pl.stages ?? [])
+        .map((s: { id: string; label: string; displayOrder: number }) => ({
+          id: s.id, label: s.label, displayOrder: s.displayOrder,
+        }))
+        .sort((a: StageInfo, b: StageInfo) => a.displayOrder - b.displayOrder);
+      map.set(pl.id, stages);
+    }
+  }
+  _dealStagesCache = map;
+  return map;
+}
+
+export type HubSpotContactRow = { id: string; firstname: string | null; lastname: string | null; email: string | null; jobtitle: string | null };
+
+/** Contacts associated with a company (read-only) — used to recover Teams
+ * attendee emails by matching meeting attendee names against CRM contacts. */
+export async function getCompanyContacts(companyId: string): Promise<HubSpotContactRow[]> {
+  const assoc = await hubspotFetch(`/crm/v3/objects/companies/${companyId}/associations/contacts?limit=100`);
+  if (!assoc.ok) return [];
+  const ad = await assoc.json();
+  const ids = (ad.results ?? []).map((r: { id?: string; toObjectId?: string }) => String(r.id ?? r.toObjectId)).filter(Boolean);
+  if (ids.length === 0) return [];
+  const res = await hubspotFetch("/crm/v3/objects/contacts/batch/read", {
+    method: "POST",
+    body: JSON.stringify({ properties: ["firstname", "lastname", "email", "jobtitle"], inputs: ids.map((id: string) => ({ id })) }),
+  });
+  if (!res.ok) return [];
+  const d = await res.json();
+  return (d.results ?? []).map((c: { id: string; properties?: Record<string, string> }) => ({
+    id: c.id,
+    firstname: c.properties?.firstname ?? null,
+    lastname: c.properties?.lastname ?? null,
+    email: c.properties?.email ?? null,
+    jobtitle: c.properties?.jobtitle ?? null,
+  }));
+}
+
+// ============================================================================
+// GATED WRITE helpers — every one asserts the target company is allowlisted.
+// ============================================================================
+
+async function assertDealBelongsToCompany(dealId: string, companyId: string): Promise<void> {
+  const ids = await getCompanyDealIds(companyId);
+  if (!ids.includes(String(dealId))) {
+    throw new Error(`Deal ${dealId} is not associated with allowlisted company ${companyId} — refusing write.`);
+  }
+}
+
+async function associateDefault(fromType: string, fromId: string, toType: string, toId: string): Promise<void> {
+  await hubspotFetch(`/crm/v4/objects/${fromType}/${fromId}/associations/default/${toType}/${toId}`, {
+    method: "PUT",
+  }).catch(() => {});
+}
+
+/** Log a meeting engagement on a company (+ optional deal/contacts). GATED. */
+export async function logMeetingToHubSpot(input: {
+  companyId: string;
+  dealId?: string | null;
+  contactIds?: string[];
+  title: string;
+  bodyHtml: string;
+  startISO: string;
+  endISO?: string | null;
+}): Promise<string | null> {
+  assertWritableCompany(input.companyId);
+  if (input.dealId) await assertDealBelongsToCompany(input.dealId, input.companyId);
+
+  const startMs = Date.parse(input.startISO);
+  const res = await hubspotFetch("/crm/v3/objects/meetings", {
+    method: "POST",
+    body: JSON.stringify({
+      properties: {
+        hs_timestamp: Number.isFinite(startMs) ? startMs : Date.now(),
+        hs_meeting_title: input.title,
+        hs_meeting_body: input.bodyHtml,
+        hs_meeting_start_time: input.startISO,
+        ...(input.endISO ? { hs_meeting_end_time: input.endISO } : {}),
+      },
+    }),
+  });
+  if (!res.ok) {
+    const errorMessage = `logMeeting ${res.status}: ${(await res.text()).slice(0, 200)}`;
+    await logSync({ system: "hubspot", direction: "outbound", entityType: "meeting", entityId: input.companyId, operation: "log_meeting", success: false, errorMessage }).catch(() => {});
+    return null;
+  }
+  const created = await res.json();
+  const meetingId = created.id as string;
+  await associateDefault("meetings", meetingId, "companies", input.companyId);
+  if (input.dealId) await associateDefault("meetings", meetingId, "deals", input.dealId);
+  for (const cId of input.contactIds ?? []) await associateDefault("meetings", meetingId, "contacts", cId);
+  await logSync({ system: "hubspot", direction: "outbound", entityType: "meeting", entityId: input.companyId, externalId: meetingId, operation: "log_meeting", success: true }).catch(() => {});
+  return meetingId;
+}
+
+/** Move a deal's stage. GATED + verifies the deal belongs to the company. */
+export async function updateDealStage(companyId: string, dealId: string, stageId: string): Promise<boolean> {
+  assertWritableCompany(companyId);
+  await assertDealBelongsToCompany(dealId, companyId);
+  const res = await hubspotFetch(`/crm/v3/objects/deals/${dealId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties: { dealstage: stageId } }),
+  });
+  await logSync({ system: "hubspot", direction: "outbound", entityType: "deal", entityId: dealId, operation: "update_stage", changeset: { dealstage: stageId }, success: res.ok, errorMessage: res.ok ? undefined : `${res.status}` }).catch(() => {});
+  return res.ok;
+}
+
+/** Patch arbitrary (standard) deal properties. GATED. */
+export async function updateDealProperties(
+  companyId: string,
+  dealId: string,
+  properties: Record<string, string>
+): Promise<boolean> {
+  assertWritableCompany(companyId);
+  await assertDealBelongsToCompany(dealId, companyId);
+  const res = await hubspotFetch(`/crm/v3/objects/deals/${dealId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  });
+  await logSync({ system: "hubspot", direction: "outbound", entityType: "deal", entityId: dealId, operation: "update_props", changeset: properties, success: res.ok, errorMessage: res.ok ? undefined : `${res.status}` }).catch(() => {});
+  return res.ok;
 }
 
 /**
