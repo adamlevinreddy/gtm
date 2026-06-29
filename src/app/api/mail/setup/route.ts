@@ -73,6 +73,45 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (step === "repro") {
+      // Temporary: reproduce the inbound send for a real message id, isolating
+      // the untested GMAIL_REPLY_TO_THREAD path (Fwd/threaded mail uses it).
+      const b = body as { messageId?: string; to?: string };
+      const msgId = b.messageId ?? "19f15aec2e0e9b99";
+      const to = b.to ?? "adam@reddy.io";
+      type ToolRes = { successful?: boolean; error?: unknown; data?: Record<string, unknown> };
+      const out: Record<string, unknown> = {};
+      let threadId: string | null = null;
+      try {
+        const r = (await composio().tools.execute("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", {
+          userId: BOT_ADDR,
+          arguments: { message_id: msgId, format: "full" },
+          dangerouslySkipVersionCheck: true,
+        })) as ToolRes;
+        const d = (r?.data ?? {}) as Record<string, unknown>;
+        threadId =
+          (d.threadId as string) ?? (d.thread_id as string) ?? (d.threadId as string) ?? null;
+        out.fetch = { ok: r?.successful ?? null, error: r?.error ?? null, dataKeys: Object.keys(d), threadId };
+      } catch (e) {
+        out.fetch = { threw: e instanceof Error ? e.message : String(e) };
+      }
+      if (threadId) {
+        try {
+          const r = (await composio().tools.execute("GMAIL_REPLY_TO_THREAD", {
+            userId: BOT_ADDR,
+            arguments: { thread_id: threadId, recipient_email: to, message_body: "REPLY_TO_THREAD test from repro — if you got this, threaded replies work.", is_html: false },
+            dangerouslySkipVersionCheck: true,
+          })) as ToolRes;
+          out.reply_to_thread = { ok: r?.successful ?? null, error: r?.error ?? null };
+        } catch (e) {
+          out.reply_to_thread = { threw: e instanceof Error ? e.message : String(e) };
+        }
+      } else {
+        out.reply_to_thread = "skipped — no threadId resolved";
+      }
+      return NextResponse.json({ ok: true, step, out });
+    }
+
     return NextResponse.json({ ok: false, error: `unknown step '${step}'` }, { status: 400 });
   } catch (err) {
     return NextResponse.json(
