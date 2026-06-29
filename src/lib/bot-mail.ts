@@ -46,6 +46,70 @@ export function isAllowedSender(addr: string | null): addr is string {
   return new RegExp(`^[^@\\s]+@${ALLOWED_DOMAIN.replace(".", "\\.")}$`, "i").test(addr);
 }
 
+// org-domain (relaxed) alignment to reddy.io: reddy.io or any subdomain of it.
+const REDDY_ALIGNED_RE = /(^|\.)reddy\.io$/i;
+
+/**
+ * Decide whether Gmail's Authentication-Results verdict PROVES the message
+ * genuinely came from reddy.io (vs. a forged `From: someone@reddy.io`).
+ *
+ * Primary: `dmarc=pass` — DMARC pass requires SPF or DKIM to pass AND be aligned
+ * to the From domain, so it's the real proof of origin. Google evaluates this on
+ * every inbound message regardless of the domain's *published* DMARC policy, so
+ * we get reject-grade certainty even while reddy.io is at p=quarantine.
+ * Defensive fallback: `dkim=pass` with `header.d` aligned to reddy.io.
+ * A bare `dkim=pass` (unaligned) is NOT trusted — a spoofer can DKIM-sign from
+ * their own domain while forging the From.
+ */
+export function authResultsTrusted(authRes: string | null | undefined): boolean {
+  if (!authRes) return false;
+  const a = authRes.toLowerCase();
+  if (/\bdmarc=pass\b/.test(a)) return true;
+  if (/\bdkim=pass\b/.test(a)) {
+    const m = a.match(/header\.d=([a-z0-9.\-]+)/);
+    if (m && REDDY_ALIGNED_RE.test(m[1])) return true;
+  }
+  return false;
+}
+
+// Recursively find a header value by name in an arbitrary Composio/Gmail
+// response shape (e.g. {data:{payload:{headers:[{name,value}]}}}).
+function findHeaderValue(obj: unknown, headerName: string): string | null {
+  const target = headerName.toLowerCase();
+  let found: string | null = null;
+  const visit = (v: unknown): void => {
+    if (found != null || v == null || typeof v !== "object") return;
+    if (Array.isArray(v)) { for (const x of v) visit(x); return; }
+    const o = v as Record<string, unknown>;
+    if (typeof o.name === "string" && o.name.toLowerCase() === target && typeof o.value === "string") {
+      found = o.value;
+      return;
+    }
+    for (const k of Object.keys(o)) visit(o[k]);
+  };
+  visit(obj);
+  return found;
+}
+
+/**
+ * Pull the stored message's Authentication-Results header — the trigger payload
+ * usually omits it, so we read it straight from the bot mailbox. Best-effort:
+ * null on any failure (the webhook decides whether a null verdict fails open).
+ */
+export async function fetchAuthResults(messageId: string): Promise<string | null> {
+  if (!messageId) return null;
+  try {
+    const res = await composio().tools.execute("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", {
+      userId: BOT_ADDR,
+      arguments: { message_id: messageId, format: "full" },
+    });
+    return findHeaderValue(res, "Authentication-Results");
+  } catch (err) {
+    console.warn(`[bot-mail] fetchAuthResults failed for ${messageId}: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
 function buildEmailPrompt(m: InboundMail): string {
   return [
     `You are Reddy-GTM, answering an internal email. This run is acting AS ${m.from} —`,

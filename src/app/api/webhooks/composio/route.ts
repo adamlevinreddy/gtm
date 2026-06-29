@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { composio } from "@/lib/composio";
 import { kv } from "@/lib/kv-client";
-import { parseFromAddress, isAllowedSender, looksAutomated, processInboundMail, type InboundMail } from "@/lib/bot-mail";
+import { parseFromAddress, isAllowedSender, looksAutomated, authResultsTrusted, fetchAuthResults, processInboundMail, type InboundMail } from "@/lib/bot-mail";
 
 // Composio trigger webhook — Gmail "new message" events for bot@reddy.io land
 // here. Composio signs them (Svix); triggers.parse() verifies + parses. We gate
@@ -54,17 +54,10 @@ export async function POST(req: NextRequest) {
   const subject = s("subject");
   const body = s("message_text", "messageText", "preview", "snippet", "body");
 
-  // 3) Sender gate — only REAL @reddy.io senders (the From is spoofable; this lane
-  // also relies on Workspace DMARC p=reject for reddy.io rejecting spoofed inbound
-  // before it reaches the mailbox — see setup docs). Best-effort: if the payload
-  // surfaces an auth verdict, require DKIM pass.
+  // 3) Sender gate — only addresses that CLAIM to be @reddy.io get past here
+  // (the From is spoofable; the authenticity gate in step 6.5 proves it's real).
   const from = parseFromAddress(fromRaw);
   if (!isAllowedSender(from)) return NextResponse.json({ ok: true, ignored: "sender" });
-  const authRes = s("authentication_results", "auth_results") || String(headers["Authentication-Results"] ?? "");
-  if (authRes && !/dkim=pass/i.test(authRes)) {
-    console.warn(`[composio-webhook] dropped ${from}: DKIM not pass (${authRes.slice(0, 120)})`);
-    return NextResponse.json({ ok: true, ignored: "dkim" });
-  }
 
   // 4) Loop suppression — never auto-reply to auto-replies / lists / bounces.
   if (looksAutomated(headers, subject)) return NextResponse.json({ ok: true, ignored: "automated" });
@@ -85,6 +78,36 @@ export async function POST(req: NextRequest) {
   }
   const claimed = await kv.set(`bot-mail:seen:${messageId}`, "1", { nx: true, ex: 7 * 24 * 3600 }).catch(() => "err");
   if (claimed === null) return NextResponse.json({ ok: true, dedup: true });
+
+  // 6.5) Authenticity — prove the @reddy.io From is REAL, not forged. Google
+  // stamps an SPF/DKIM/DMARC verdict on every inbound message regardless of our
+  // PUBLISHED DMARC policy, so we require dmarc=pass (or DKIM aligned to
+  // reddy.io). The trigger payload usually omits it → fall back to reading the
+  // stored message's Authentication-Results header. Done here (post-dedup) so we
+  // only fetch for genuinely-new mail.
+  //   present-but-failing verdict → DROP (a real spoof signal).
+  //   missing verdict → governed by BOT_MAIL_AUTH_FAIL_OPEN: default fail-OPEN
+  //     (Google Workspace inbound-spoofing protection is the upstream backstop);
+  //     set it to "false" for hard fail-closed once a live email confirms we're
+  //     reading the verdict correctly.
+  let authRes = s("authentication_results", "auth_results")
+    || String(headers["Authentication-Results"] ?? headers["authentication-results"] ?? "");
+  let authVia = authRes ? "payload" : "none";
+  if (!authRes) {
+    const fetched = await fetchAuthResults(messageId);
+    if (fetched) { authRes = fetched; authVia = "fetch"; }
+  }
+  const trusted = authResultsTrusted(authRes);
+  console.log(`[composio-webhook] auth from=${from} msg=${messageId} via=${authVia} trusted=${trusted} verdict="${authRes.slice(0, 220)}"`);
+  if (authRes && !trusted) {
+    console.warn(`[composio-webhook] DROPPED ${from}: auth verdict not trusted (possible spoof)`);
+    return NextResponse.json({ ok: true, ignored: "auth-fail" });
+  }
+  if (!authRes) {
+    const failOpen = process.env.BOT_MAIL_AUTH_FAIL_OPEN !== "false";
+    console.warn(`[composio-webhook] no auth verdict for ${from} (msg=${messageId}); ${failOpen ? "ALLOWING (fail-open; Workspace backstop)" : "DROPPING (strict)"}`);
+    if (!failOpen) return NextResponse.json({ ok: true, ignored: "auth-unknown" });
+  }
 
   // 7) Ack fast; run the agent + reply out of band.
   const mail: InboundMail = { from, subject, body, messageId, threadId };
