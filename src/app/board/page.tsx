@@ -247,6 +247,7 @@ export default async function BoardPage({
   let labelOptions: { id: string; name: string; color: string | null }[] = [];
   let savedViews: { id: string; name: string; shared: boolean; spec: unknown }[] = [];
   let owners: string[] = [];
+  let customers: string[] = [];
   let unread = 0;
   let error: string | null = null;
 
@@ -337,6 +338,10 @@ export default async function BoardPage({
     const ownerPool = await listWorkItems({ boardId: boardId ?? undefined });
     owners = Array.from(
       new Set(ownerPool.map((i) => i.ownerEmail).filter((e): e is string => !!e))
+    ).sort((a, b) => a.localeCompare(b));
+    // distinct companies on this board → the Company filter dropdown.
+    customers = Array.from(
+      new Set(ownerPool.map((i) => i.customerSlug).filter((c): c is string => !!c))
     ).sort((a, b) => a.localeCompare(b));
 
     labelsByItem = await labelsFor(rendered.map((i) => i.id));
@@ -429,6 +434,7 @@ export default async function BoardPage({
             <FilterBar
               filters={filters}
               owners={owners}
+              customers={customers}
               labels={labelOptions}
               views={savedViews}
               viewer={viewer}

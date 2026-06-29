@@ -24,12 +24,14 @@ export type SavedViewOption = {
 export default function FilterBar({
   filters,
   owners,
+  customers,
   labels,
   views,
   viewer,
 }: {
   filters: BoardFilters;
   owners: string[];
+  customers: string[];
   labels: LabelOption[];
   views: SavedViewOption[];
   viewer: string;
@@ -82,6 +84,27 @@ export default function FilterBar({
         </select>
         <Caret />
       </label>
+
+      {/* Company */}
+      {customers.length > 0 && (
+        <label className="relative inline-flex">
+          <select
+            aria-label="Filter by company"
+            value={filters.customer ?? ""}
+            onChange={(e) => patch({ customer: e.target.value || undefined })}
+            className="cursor-pointer appearance-none rounded-md border py-1 pl-2.5 pr-7 text-xs font-medium"
+            style={pill(!!filters.customer)}
+          >
+            <option value="">Company: any</option>
+            {customers.map((c) => (
+              <option key={c} value={c}>
+                {prettyCompany(c)}
+              </option>
+            ))}
+          </select>
+          <Caret />
+        </label>
+      )}
 
       {/* Kind */}
       <label className="relative inline-flex">
@@ -167,6 +190,11 @@ export default function FilterBar({
       </div>
     </div>
   );
+}
+
+function prettyCompany(slug: string): string {
+  if (slug === "_unsorted") return "Unsorted";
+  return slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
 function Caret() {
