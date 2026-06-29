@@ -101,9 +101,18 @@ export async function POST(req: NextRequest) {
       // clears "Toolkit version not specified": (a) constructor global "latest",
       // (b) per-call version "latest", (c) dangerouslySkipVersionCheck.
       const fa = { message_id: msgId, format: "minimal" };
-      out.fetch_global = await tryTool("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", fa);
-      out.fetch_version_latest = await tryTool("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", fa, { version: "latest" });
       out.fetch_skipcheck = await tryTool("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", fa, { dangerouslySkipVersionCheck: true });
+      // Confirm the SEND path end-to-end (delivers a proof email to adam@reddy.io).
+      out.send_skipcheck = await tryTool(
+        "GMAIL_SEND_EMAIL",
+        {
+          recipient_email: "adam@reddy.io",
+          subject: "Reddy-GTM bot — send path confirmed ✅",
+          body: "If you're reading this, bot@reddy.io can send mail again. Reply to the bot or send it a new request anytime.",
+          is_html: false,
+        },
+        { dangerouslySkipVersionCheck: true },
+      );
       return NextResponse.json({ ok: true, step, out });
     }
 

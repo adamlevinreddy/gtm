@@ -102,6 +102,10 @@ export async function fetchAuthResults(messageId: string): Promise<string | null
     const res = await composio().tools.execute("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", {
       userId: BOT_ADDR,
       arguments: { message_id: messageId, format: "full" },
+      // Composio requires a toolkit version on manual execute(); "latest" is
+      // rejected as not-specific, so we skip the pin and run the current version
+      // (fine for stable Gmail ops — see the same flag on the send calls below).
+      dangerouslySkipVersionCheck: true,
     });
     return findHeaderValue(res, "Authentication-Results");
   } catch (err) {
@@ -181,6 +185,7 @@ export async function sendBotEmail(opts: {
           message_body: opts.bodyText,
           is_html: false,
         },
+        dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
     } else {
       await composio().tools.execute("GMAIL_SEND_EMAIL", {
@@ -191,6 +196,7 @@ export async function sendBotEmail(opts: {
           body: opts.bodyText,
           is_html: false,
         },
+        dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
     }
     return true;
