@@ -73,6 +73,51 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (step === "diag") {
+      // Temporary: exercise the exact Composio calls sendBotEmail + fetchAuthResults
+      // use, returning raw results/errors so we can see WHY a live send failed.
+      const b = body as { messageId?: string; to?: string };
+      const msgId = b.messageId ?? "19f158066d325dcb";
+      const to = b.to ?? "adam@reddy.io";
+      type ToolRes = { successful?: boolean; error?: unknown; data?: Record<string, unknown> };
+      const tryTool = async (slug: string, args: Record<string, unknown>) => {
+        try {
+          const r = (await composio().tools.execute(slug, { userId: BOT_ADDR, arguments: args })) as ToolRes;
+          return { ok: r?.successful ?? null, error: r?.error ?? null, dataKeys: r?.data ? Object.keys(r.data) : null };
+        } catch (e) {
+          return { threw: e instanceof Error ? e.message : String(e) };
+        }
+      };
+      const out: Record<string, unknown> = {};
+      try {
+        const list = (await composio().connectedAccounts.list({ userIds: [BOT_ADDR], toolkitSlugs: ["gmail"] })) as {
+          items?: Array<{ id?: string; status?: string }>;
+        };
+        out.connections = (list.items ?? []).map((a) => ({ id: a.id, status: a.status }));
+      } catch (e) {
+        out.connections_error = e instanceof Error ? e.message : String(e);
+      }
+      // fetch the original message (tests fetchAuthResults' slug) + pull thread id
+      let threadId: string | null = null;
+      try {
+        const r = (await composio().tools.execute("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", {
+          userId: BOT_ADDR,
+          arguments: { message_id: msgId, format: "full" },
+        })) as ToolRes;
+        const s = JSON.stringify(r ?? {});
+        const d = (r?.data ?? {}) as Record<string, unknown>;
+        threadId = (d.threadId as string) ?? (d.thread_id as string) ?? null;
+        out.fetch = { ok: r?.successful ?? null, error: r?.error ?? null, hasAuthResults: /authentication-results/i.test(s), threadId };
+      } catch (e) {
+        out.fetch = { threw: e instanceof Error ? e.message : String(e) };
+      }
+      out.send_email = await tryTool("GMAIL_SEND_EMAIL", { recipient_email: to, subject: "Re: bot send test", body: "Direct GMAIL_SEND_EMAIL test from /api/mail/setup diag.", is_html: false });
+      if (threadId) {
+        out.reply_to_thread = await tryTool("GMAIL_REPLY_TO_THREAD", { thread_id: threadId, recipient_email: to, message_body: "Direct GMAIL_REPLY_TO_THREAD test from diag.", is_html: false });
+      }
+      return NextResponse.json({ ok: true, step, out });
+    }
+
     return NextResponse.json({ ok: false, error: `unknown step '${step}'` }, { status: 400 });
   } catch (err) {
     return NextResponse.json(
