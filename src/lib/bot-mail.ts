@@ -14,6 +14,7 @@
 
 import { composio } from "@/lib/composio";
 import { selfBaseUrl } from "@/lib/work-items";
+import { postToChannel, salesChannel } from "@/lib/slack";
 
 export const BOT_ADDR = (process.env.BOT_MAIL_ADDRESS || "bot@reddy.io").toLowerCase();
 const ALLOWED_DOMAIN = "reddy.io";
@@ -26,11 +27,15 @@ export type InboundMail = {
   threadId: string | null;
 };
 
-/** Extract the bare address from a From header ("Name <a@b>" or "a@b"). */
+/** Extract the bare address from a From header. The REAL addr-spec is the LAST
+ * <...> group; the display name is attacker-controlled and may inject a quoted
+ * "<a@reddy.io>" to fake the gate — so strip quoted display names first, then
+ * take the last bracket. ('Name <a@b>'→a@b, 'a@b'→a@b, spoofed name-addr→real). */
 export function parseFromAddress(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const m = raw.match(/<([^>]+)>/);
-  const addr = (m ? m[1] : raw).trim().toLowerCase();
+  const noQuotes = raw.replace(/"(?:[^"\\]|\\.)*"/g, " "); // drop quoted display names
+  const m = [...noQuotes.matchAll(/<([^>]+)>/g)];
+  const addr = (m.length ? m[m.length - 1][1] : noQuotes).trim().toLowerCase();
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr) ? addr : null;
 }
 
@@ -48,17 +53,21 @@ function buildEmailPrompt(m: InboundMail): string {
     `board (board_* tools) are scoped to ${m.from}'s connections and permissions, and`,
     `any board/HubSpot write is attributed to them.`,
     ``,
-    `DELIVERY: you are NOT in Slack — there is no Slack channel here. Do the work and`,
-    `put your COMPLETE final answer in your last message; it is emailed back to`,
-    `${m.from} verbatim. Write it as a clear, self-contained email reply (greeting`,
-    `optional, no internal reasoning). For a file deliverable, link to the artifact.`,
+    `DELIVERY: you are NOT in Slack — there is no Slack channel. Put your COMPLETE`,
+    `final answer in a SINGLE post_slack_message call (it is captured and emailed back`,
+    `to ${m.from} verbatim — do NOT split it between a tool call and a trailing message,`,
+    `and do not assume it posts to Slack). Write it as a clear, self-contained email`,
+    `reply (greeting optional, no internal reasoning). For a file deliverable, link to`,
+    `the artifact (you cannot attach files).`,
     ``,
     `If the email asks you to UPDATE something — HubSpot, the board (create/update a`,
     `task), or their calendar — do it with your tools, following the usual guardrails:`,
     `customer-facing content is draft/suggest-only (never auto-send email on their`,
     `behalf); before board_create, board_list first and update a near-duplicate`,
     `instead of duplicating; confirm-first for risky/destructive changes. Then state`,
-    `exactly what you did in your reply.`,
+    `exactly what you did in your reply. If a request needs a tool you can't see`,
+    `(not connected), say so in the reply and tell them to reply "connect <tool>" —`,
+    `do NOT reference Slack commands; this person is on email.`,
     ``,
     `From: ${m.from}`,
     `Subject: ${m.subject}`,
@@ -67,20 +76,25 @@ function buildEmailPrompt(m: InboundMail): string {
   ].join("\n");
 }
 
-async function runOneshot(question: string, userEmail: string): Promise<string | null> {
+async function runOneshot(
+  question: string,
+  userEmail: string
+): Promise<{ ok: boolean; answer: string | null }> {
   const secret = process.env.MCP_INTERNAL_SECRET;
-  if (!secret) return null;
+  if (!secret) return { ok: false, answer: null };
   try {
     const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-reddy-internal": secret },
-      // Leave headroom under the route's 800s maxDuration for the reply send.
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 650_000 }),
+      // Budget so the reply send is GUARANTEED to run inside the webhook's 800s:
+      // poll ≤600s, hard-abort at 680s — never let the agent eat the whole window.
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 600_000 }),
+      signal: AbortSignal.timeout(680_000),
     });
     const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
-    return json?.ok && json.answer ? json.answer : null;
+    return { ok: !!json?.ok, answer: (json?.ok && json.answer) ? json.answer : null };
   } catch {
-    return null;
+    return { ok: false, answer: null };
   }
 }
 
@@ -122,18 +136,45 @@ export async function sendBotEmail(opts: {
   }
 }
 
+// Auto-reply / mailing-list / bounce detection from the inbound headers, to
+// stop mail loops with other auto-responders (the per-sender rate limit in the
+// webhook is the hard backstop; this avoids even one needless round-trip).
+export function looksAutomated(headers: Record<string, unknown> | undefined, subject: string): boolean {
+  const h = (k: string) => String(headers?.[k] ?? headers?.[k.toLowerCase()] ?? "").toLowerCase();
+  if (/auto/.test(h("Auto-Submitted"))) return true;
+  if (/(bulk|auto_reply|auto-reply|junk|list)/.test(h("Precedence"))) return true;
+  if (h("X-Auto-Response-Suppress") || h("List-Id") || h("List-Unsubscribe")) return true;
+  if (/^(auto(matic)?[- ]?reply|out of office|undeliverable|delivery status|mailer-daemon)/i.test(subject)) return true;
+  return false;
+}
+
 // Full inbound flow: run the agent as the sender, email the result back from the
-// bot mailbox. Runs in the webhook's after() (or a worker). Never throws.
+// bot mailbox. Runs in the webhook's after(). Never throws.
 export async function processInboundMail(m: InboundMail): Promise<void> {
   const subject = m.subject || "(no subject)";
-  let answer: string | null = null;
+  let result: { ok: boolean; answer: string | null } = { ok: false, answer: null };
   try {
-    answer = await runOneshot(buildEmailPrompt(m), m.from);
+    result = await runOneshot(buildEmailPrompt(m), m.from);
   } catch {
     /* fall through to failure reply */
   }
-  const bodyText =
-    answer ??
-    "I couldn't complete that in time — reply to retry, or ping @Reddy-GTM in Slack.";
-  await sendBotEmail({ to: m.from, subject, bodyText, threadId: m.threadId });
+  // Three outcomes: answered · ran-but-no-text (may have made writes — don't
+  // invite a blind retry) · failed/timed-out (retry is fine).
+  const bodyText = result.answer
+    ? result.answer
+    : result.ok
+      ? "I worked on this but didn't capture a written summary — any changes I made are on the board / in HubSpot. Reply if you'd like the details."
+      : "I couldn't finish that in time. Reply to retry, or ping @Reddy-GTM in Slack.";
+
+  const sent = await sendBotEmail({ to: m.from, subject, bodyText, threadId: m.threadId });
+  if (!sent) {
+    // The sender can't be reached by definition — surface the dropped reply so
+    // it's observable instead of silently lost.
+    const ch = salesChannel();
+    if (ch) {
+      await postToChannel(ch, {
+        text: `⚠️ bot@reddy.io couldn't email a reply to ${m.from} (re: ${subject}). Check the bot's Gmail connection.`,
+      }).catch(() => {});
+    }
+  }
 }
