@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { proposeFromMeeting } from "@/lib/post-meeting";
+import { proposeCrmFromMeeting } from "@/lib/post-meeting-crm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,7 +37,11 @@ export async function POST(req: NextRequest) {
 
   after(async () => {
     const result = await proposeFromMeeting(botId);
-    console.log(`[proactive/meeting] ${botId}: ${JSON.stringify(result)}`);
+    console.log(`[proactive/meeting] tasks ${botId}: ${JSON.stringify(result)}`);
+    // CRM sync (auto-logs meeting+recording; suggests stage/fields). No-ops for
+    // non-allowlisted companies via the gated helpers.
+    const crm = await proposeCrmFromMeeting(botId);
+    console.log(`[proactive/meeting] crm ${botId}: ${JSON.stringify(crm)}`);
   });
 
   return NextResponse.json({ ok: true, accepted: true, botId }, { status: 202 });

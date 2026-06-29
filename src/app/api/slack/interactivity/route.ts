@@ -11,6 +11,12 @@ import {
   executeProposal,
   proposalKeyForBot,
 } from "@/lib/post-meeting";
+import {
+  CRM_APPLY_ACTION_ID,
+  getStoredCrmProposal,
+  executeCrmProposal,
+  crmProposalKey,
+} from "@/lib/post-meeting-crm";
 import { kv } from "@/lib/kv-client";
 
 // Slack Interactivity Request URL. Slack POSTs button clicks here as
@@ -56,12 +62,13 @@ export async function POST(req: NextRequest) {
   }
 
   const action = payload.actions?.[0];
-  // Only the post-meeting confirm button is handled here; ack everything else.
-  if (payload.type !== "block_actions" || action?.action_id !== CONFIRM_ACTION_ID) {
+  const actionId = action?.action_id;
+  // Only the post-meeting buttons are handled here; ack everything else.
+  if (payload.type !== "block_actions" || (actionId !== CONFIRM_ACTION_ID && actionId !== CRM_APPLY_ACTION_ID)) {
     return NextResponse.json({});
   }
 
-  const botId = action.value ?? "";
+  const botId = action?.value ?? "";
   const channel = payload.channel?.id ?? null;
   const messageTs = payload.message?.ts ?? null;
   const threadTs = payload.message?.thread_ts ?? messageTs ?? undefined;
@@ -69,8 +76,51 @@ export async function POST(req: NextRequest) {
   const slackUserId = payload.user?.id ?? "";
   const originalBlocks = payload.message?.blocks ?? [];
 
+  // Helper to swap a message's action button for an "applied/created" note.
+  const markApplied = async (note: string) => {
+    if (!responseUrl) return;
+    const kept = originalBlocks
+      .map((b) => (b.type === "actions" ? { type: "actions", elements: (b.elements ?? []).filter((e) => e.url) } : b))
+      .filter((b) => !(b.type === "actions" && (!b.elements || b.elements.length === 0)));
+    if (kept.length && kept[kept.length - 1].type === "context") kept.pop();
+    kept.push({ type: "context", elements: [{ type: "mrkdwn", text: note }] } as SlackBlock);
+    await postToResponseUrl(responseUrl, { replace_original: true, text: note.replace(/[*<>]/g, ""), blocks: kept });
+  };
+
   // Do the work after acking (DB writes + Slack posts exceed the 3s deadline).
   after(async () => {
+    // ---- CRM apply (HubSpot stage/field updates; gated to the allowlist) ----
+    if (actionId === CRM_APPLY_ACTION_ID) {
+      try {
+        const proposal = await getStoredCrmProposal(botId);
+        if (!proposal) {
+          if (channel) await postToChannel(channel, { text: "⚠️ That CRM suggestion expired — re-run the meeting sync.", threadTs }).catch(() => {});
+          return;
+        }
+        const who = `<@${slackUserId}>`;
+        const result = await executeCrmProposal(proposal);
+        const parts: string[] = [];
+        if (result.stageMoved && proposal.suggestedStageLabel) parts.push(`stage → *${proposal.suggestedStageLabel}*`);
+        if (result.fieldsUpdated) parts.push(`${result.fieldsUpdated} field${result.fieldsUpdated === 1 ? "" : "s"} updated`);
+        const summary = parts.length ? parts.join(" · ") : "no changes applied";
+        if (channel) {
+          await postToChannel(channel, {
+            text: `✅ HubSpot updated on *${proposal.companyName}* — ${summary}. (${who})${
+              result.errors.length ? `\n⚠️ ${result.errors.slice(0, 3).join("; ")}` : ""
+            }`,
+            threadTs,
+          }).catch(() => {});
+        }
+        await markApplied(`✅ *Applied to HubSpot* — ${summary}. (${who})`);
+        await kv.del(crmProposalKey(botId)).catch(() => {});
+        if (messageTs) await kv.del(`postmeeting:crm:ts:${messageTs}`).catch(() => {});
+      } catch (err) {
+        if (channel) await postToChannel(channel, { text: `⚠️ Couldn't apply the CRM updates: ${err instanceof Error ? err.message : String(err)}`, threadTs }).catch(() => {});
+      }
+      return;
+    }
+
+    // ---- Task confirm (board creation) ----
     try {
       const proposal = await getStoredProposal(botId);
       if (!proposal) {

@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { proposeFromMeeting } from "@/lib/post-meeting";
+import { proposeCrmFromMeeting } from "@/lib/post-meeting-crm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,9 +18,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let body: { botId?: string };
+  let body: { botId?: string; mode?: "tasks" | "crm" | "both" };
   try {
-    body = (await req.json()) as { botId?: string };
+    body = (await req.json()) as { botId?: string; mode?: "tasks" | "crm" | "both" };
   } catch {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
@@ -28,7 +29,10 @@ export async function POST(req: NextRequest) {
   if (!botId) {
     return NextResponse.json({ ok: false, error: "missing botId" }, { status: 400 });
   }
+  const mode = body.mode ?? "both";
 
-  const result = await proposeFromMeeting(botId, { force: true });
-  return NextResponse.json(result, { status: result.ok ? 200 : 502 });
+  const tasks = mode === "crm" ? null : await proposeFromMeeting(botId, { force: true });
+  const crm = mode === "tasks" ? null : await proposeCrmFromMeeting(botId);
+  const ok = (tasks?.ok ?? true) && (crm?.ok ?? true);
+  return NextResponse.json({ ok, tasks, crm }, { status: ok ? 200 : 502 });
 }
