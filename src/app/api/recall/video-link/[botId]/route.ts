@@ -16,7 +16,7 @@ import { readKbFile, KB_REPO } from "@/lib/github-kb";
 //      LFS proxy URL — `/api/recall/video/{botId}?token=…`. Same TTL
 //      semantics; the proxy streams from GitHub LFS.
 //
-// Default TTL: 7 days. Pass ?ttl=NNN to override. Capped at 7 days.
+// Default TTL: 30 days. Pass ?ttl=NNN to override. Capped at 30 days.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: string }> }) {
   const { botId } = await ctx.params;
   const secret = process.env.RECALL_VIDEO_FETCH_SECRET;
