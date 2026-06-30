@@ -25,7 +25,7 @@ const ALLOWED_DOMAIN = "reddy.io";
 // deliver-on-completion cron (/api/cron/bot-mail) can finish the job even if the
 // agent outruns the inline wait or this function dies. Keyed by the agent run id
 // → the answer lands at `mcp:result:{id}`.
-type PendingMail = { to: string; subject: string; threadId: string | null; createdAt: number };
+type PendingMail = { to: string; cc?: string[]; subject: string; threadId: string | null; createdAt: number };
 const pendingKey = (id: string) => `botmail:pending:${id}`;
 const PENDING_TTL_SECONDS = 2 * 60 * 60;
 // Inline wait before we hand off to the cron (snappy replies for normal asks;
@@ -191,10 +191,15 @@ async function runOneshot(
 // the original thread when a threadId is known, else a fresh email.
 export async function sendBotEmail(opts: {
   to: string;
+  cc?: string[];
   subject: string;
   bodyText: string;
   threadId?: string | null;
 }): Promise<boolean> {
+  // Reply-all: keep the original @reddy.io participants in the loop. Only set cc
+  // when non-empty so we never send an empty/invalid arg.
+  const cc = (opts.cc ?? []).filter(Boolean);
+  const ccArg = cc.length ? { cc } : {};
   try {
     if (opts.threadId) {
       await composio().tools.execute("GMAIL_REPLY_TO_THREAD", {
@@ -204,6 +209,7 @@ export async function sendBotEmail(opts: {
           recipient_email: opts.to,
           message_body: opts.bodyText,
           is_html: false,
+          ...ccArg,
         },
         dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
@@ -215,6 +221,7 @@ export async function sendBotEmail(opts: {
           subject: opts.subject.startsWith("Re:") ? opts.subject : `Re: ${opts.subject}`,
           body: opts.bodyText,
           is_html: false,
+          ...ccArg,
         },
         dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
@@ -223,6 +230,41 @@ export async function sendBotEmail(opts: {
   } catch (err) {
     console.error(`[bot-mail] send failed to ${opts.to}: ${err instanceof Error ? err.message : err}`);
     return false;
+  }
+}
+
+// Pull every email address out of a To/Cc header value
+// ("Name <a@x>, b@y" → ["a@x","b@y"]). Lower-cased + deduped.
+function parseAddressList(header: string): string[] {
+  const out = new Set<string>();
+  for (const m of header.matchAll(/<([^>]+)>|([^\s,<>]+@[^\s,<>]+)/g)) {
+    const a = (m[1] ?? m[2] ?? "").trim().toLowerCase();
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) out.add(a);
+  }
+  return [...out];
+}
+
+// Resolve who else (besides the sender) should stay on the reply: the original
+// To + Cc recipients, restricted to @reddy.io (the bot is internal-only, so any
+// external CC is intentionally dropped) and minus the bot itself + the sender.
+// Reads the stored message's headers; best-effort (empty on any failure).
+async function replyAllCc(messageId: string, sender: string): Promise<string[]> {
+  if (!messageId) return [];
+  try {
+    const res = await composio().tools.execute("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", {
+      userId: BOT_ADDR,
+      arguments: { message_id: messageId, format: "full" },
+      dangerouslySkipVersionCheck: true,
+    });
+    const recips = [
+      ...parseAddressList(findHeaderValue(res, "To") ?? ""),
+      ...parseAddressList(findHeaderValue(res, "Cc") ?? ""),
+    ];
+    return [...new Set(recips)].filter(
+      (a) => /@reddy\.io$/i.test(a) && a !== BOT_ADDR && a !== sender,
+    );
+  } catch {
+    return [];
   }
 }
 
@@ -258,8 +300,11 @@ async function alertSendFailure(to: string, subject: string): Promise<void> {
 export async function processInboundMail(m: InboundMail): Promise<void> {
   const subject = m.subject || "(no subject)";
   const requestId = randomUUID();
+  // Reply-all: keep the original @reddy.io participants on the thread.
+  const cc = await replyAllCc(m.messageId, m.from);
+  if (cc.length) console.log(`[bot-mail] reply-all cc for ${m.from}: ${cc.join(", ")}`);
   await kv
-    .set(pendingKey(requestId), { to: m.from, subject, threadId: m.threadId, createdAt: Date.now() } as PendingMail, {
+    .set(pendingKey(requestId), { to: m.from, cc, subject, threadId: m.threadId, createdAt: Date.now() } as PendingMail, {
       ex: PENDING_TTL_SECONDS,
     })
     .catch(() => {});
@@ -276,7 +321,7 @@ export async function processInboundMail(m: InboundMail): Promise<void> {
   // so the cron retries (and we alert).
   if (result.answer || result.ok) {
     const bodyText = result.answer ?? NO_SUMMARY_NOTE;
-    const sent = await sendBotEmail({ to: m.from, subject, bodyText, threadId: m.threadId });
+    const sent = await sendBotEmail({ to: m.from, cc, subject, bodyText, threadId: m.threadId });
     if (sent) {
       await kv.del(pendingKey(requestId)).catch(() => {});
     } else {
@@ -315,7 +360,7 @@ export async function deliverPendingMail(): Promise<{ delivered: number; timedOu
       .catch(() => null);
     if (result) {
       const bodyText = result.answer ? result.answer : result.ok ? NO_SUMMARY_NOTE : TIMEOUT_NOTE;
-      const sent = await sendBotEmail({ to: p.to, subject: p.subject, bodyText, threadId: p.threadId });
+      const sent = await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText, threadId: p.threadId });
       if (sent) {
         await kv.del(key).catch(() => {});
         delivered += 1;
@@ -324,7 +369,7 @@ export async function deliverPendingMail(): Promise<{ delivered: number; timedOu
         waiting += 1;
       }
     } else if (Date.now() - p.createdAt > MAX_DELIVER_WAIT_MS) {
-      await sendBotEmail({ to: p.to, subject: p.subject, bodyText: TIMEOUT_NOTE, threadId: p.threadId });
+      await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText: TIMEOUT_NOTE, threadId: p.threadId });
       await kv.del(key).catch(() => {});
       timedOut += 1;
     } else {

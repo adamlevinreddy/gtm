@@ -73,6 +73,29 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (step === "toolschema") {
+      // Read-only: confirm the exact input param names (cc / attachment) for the
+      // Gmail send tools so reply-all + future attachments use the right keys.
+      const tools = composio().tools as unknown as {
+        getRawComposioToolBySlug: (slug: string, opts?: unknown) => Promise<{
+          inputParameters?: { properties?: Record<string, unknown>; required?: string[] };
+        }>;
+      };
+      const out: Record<string, unknown> = {};
+      for (const slug of ["GMAIL_SEND_EMAIL", "GMAIL_REPLY_TO_THREAD"]) {
+        try {
+          const t = await tools.getRawComposioToolBySlug(slug);
+          out[slug] = {
+            params: Object.keys(t?.inputParameters?.properties ?? {}),
+            required: t?.inputParameters?.required ?? [],
+          };
+        } catch (e) {
+          out[slug] = { threw: e instanceof Error ? e.message : String(e) };
+        }
+      }
+      return NextResponse.json({ ok: true, step, out });
+    }
+
     return NextResponse.json({ ok: false, error: `unknown step '${step}'` }, { status: 400 });
   } catch (err) {
     return NextResponse.json(
