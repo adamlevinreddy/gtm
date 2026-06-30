@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/morning-digest",
+      "schedule": "0 14,15 * * 1-5"
+    },
+    {
+      "path": "/api/cron/bot-worker",
+      "schedule": "*/15 14-23 * * 1-5"
+    },
+    {
+      "path": "/api/cron/post-meeting",
+      "schedule": "*/15 14-23 * * 1-5"
+    },
+    {
+      "path": "/api/cron/bot-mail",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

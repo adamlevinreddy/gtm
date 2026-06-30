@@ -1,0 +1,25 @@
+{
+  "companies": [
+    {
+      "name": "AT&T",
+      "aliases": [],
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025",
+      "note": ""
+    },
+    {
+      "name": "Matrix Networks",
+      "aliases": [],
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025",
+      "note": ""
+    },
+    {
+      "name": "Spencer Tech",
+      "aliases": [],
+      "added": "2026-03-28",
+      "source": "CCW Las Vegas 2025",
+      "note": ""
+    }
+  ]
+}
