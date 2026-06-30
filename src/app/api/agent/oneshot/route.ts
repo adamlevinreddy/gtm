@@ -42,6 +42,11 @@ type OneshotRequest = {
   // (grounding + board_list + JSON) routinely exceed 240s. Clamped to the
   // route's maxDuration headroom below.
   pollTimeoutMs?: number;
+  // Caller-supplied run id. The result lands at `mcp:result:{requestId}` whether
+  // or not the caller is still polling — so a caller that knows the id up front
+  // (e.g. the email lane) can deliver the answer later from a cron even if the
+  // agent outran its poll window. Must be a uuid; ignored otherwise.
+  requestId?: string;
 };
 
 type McpResult = {
@@ -75,7 +80,10 @@ export async function POST(req: NextRequest) {
       ? Math.min(Math.max(pollTimeoutMs, 30_000), 720_000)
       : POLL_TIMEOUT_MS;
 
-  const requestId = randomUUID();
+  const requestId =
+    typeof body.requestId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.requestId)
+      ? body.requestId
+      : randomUUID();
   const sandboxName = sandboxNameForEmail(userEmail);
   const resultKey = `mcp:result:${requestId}`;
 

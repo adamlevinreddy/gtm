@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/post-meeting",
       "schedule": "*/15 14-23 * * 1-5"
+    },
+    {
+      "path": "/api/cron/bot-mail",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -12,12 +12,30 @@
 // "resolve a human, run as them" pattern.
 // ============================================================================
 
+import { randomUUID } from "node:crypto";
 import { composio } from "@/lib/composio";
+import { kv } from "@/lib/kv-client";
 import { selfBaseUrl } from "@/lib/work-items";
 import { postToChannel, salesChannel } from "@/lib/slack";
 
 export const BOT_ADDR = (process.env.BOT_MAIL_ADDRESS || "bot@reddy.io").toLowerCase();
 const ALLOWED_DOMAIN = "reddy.io";
+
+// A reply we still owe the sender. Recorded the moment we kick the agent so the
+// deliver-on-completion cron (/api/cron/bot-mail) can finish the job even if the
+// agent outruns the inline wait or this function dies. Keyed by the agent run id
+// → the answer lands at `mcp:result:{id}`.
+type PendingMail = { to: string; subject: string; threadId: string | null; createdAt: number };
+const pendingKey = (id: string) => `botmail:pending:${id}`;
+const PENDING_TTL_SECONDS = 2 * 60 * 60;
+// Inline wait before we hand off to the cron (snappy replies for normal asks;
+// heavy multi-tool runs like proposals deliver via the cron when they finish).
+const INLINE_POLL_MS = 300_000;
+// Cron gives up and sends a timeout note after this if no result ever lands.
+const MAX_DELIVER_WAIT_MS = 30 * 60 * 1000;
+const NO_SUMMARY_NOTE =
+  "I worked on this but didn't capture a written summary — any changes I made are on the board / in HubSpot. Reply if you'd like the details.";
+const TIMEOUT_NOTE = "I couldn't finish that in time. Reply to retry, or ping @Reddy-GTM in Slack.";
 
 export type InboundMail = {
   from: string; // bare lower-cased address
@@ -146,7 +164,8 @@ function buildEmailPrompt(m: InboundMail): string {
 
 async function runOneshot(
   question: string,
-  userEmail: string
+  userEmail: string,
+  requestId: string,
 ): Promise<{ ok: boolean; answer: string | null }> {
   const secret = process.env.MCP_INTERNAL_SECRET;
   if (!secret) return { ok: false, answer: null };
@@ -154,10 +173,11 @@ async function runOneshot(
     const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-reddy-internal": secret },
-      // Budget so the reply send is GUARANTEED to run inside the webhook's 800s:
-      // poll ≤600s, hard-abort at 680s — never let the agent eat the whole window.
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 600_000 }),
-      signal: AbortSignal.timeout(680_000),
+      // Pass our own requestId so the answer lands at a key we already know — if
+      // the agent outruns this inline poll, the deliver cron picks it up. Abort a
+      // bit past the poll so we stay inside the webhook's maxDuration.
+      body: JSON.stringify({ question, userEmail, requestId, pollTimeoutMs: INLINE_POLL_MS }),
+      signal: AbortSignal.timeout(INLINE_POLL_MS + 40_000),
     });
     const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
     return { ok: !!json?.ok, answer: (json?.ok && json.answer) ? json.answer : null };
@@ -218,33 +238,98 @@ export function looksAutomated(headers: Record<string, unknown> | undefined, sub
   return false;
 }
 
+async function alertSendFailure(to: string, subject: string): Promise<void> {
+  const ch = salesChannel();
+  if (ch) {
+    await postToChannel(ch, {
+      text: `⚠️ bot@reddy.io couldn't email a reply to ${to} (re: ${subject}). Check the bot's Gmail connection.`,
+    }).catch(() => {});
+  }
+}
+
 // Full inbound flow: run the agent as the sender, email the result back from the
 // bot mailbox. Runs in the webhook's after(). Never throws.
+//
+// Deliver-on-completion: we record a PENDING reply (keyed by a run id we mint)
+// BEFORE kicking the agent, then wait inline only for the snappy case. If the
+// agent outruns the inline wait, we leave the pending record — the deliver cron
+// finishes the job when `mcp:result:{id}` lands. This is why a heavy proposal no
+// longer gets a premature "couldn't finish" reply.
 export async function processInboundMail(m: InboundMail): Promise<void> {
   const subject = m.subject || "(no subject)";
+  const requestId = randomUUID();
+  await kv
+    .set(pendingKey(requestId), { to: m.from, subject, threadId: m.threadId, createdAt: Date.now() } as PendingMail, {
+      ex: PENDING_TTL_SECONDS,
+    })
+    .catch(() => {});
+
   let result: { ok: boolean; answer: string | null } = { ok: false, answer: null };
   try {
-    result = await runOneshot(buildEmailPrompt(m), m.from);
+    result = await runOneshot(buildEmailPrompt(m), m.from, requestId);
   } catch {
-    /* fall through to failure reply */
+    /* inline run failed/aborted — the agent may still be running; cron delivers */
   }
-  // Three outcomes: answered · ran-but-no-text (may have made writes — don't
-  // invite a blind retry) · failed/timed-out (retry is fine).
-  const bodyText = result.answer
-    ? result.answer
-    : result.ok
-      ? "I worked on this but didn't capture a written summary — any changes I made are on the board / in HubSpot. Reply if you'd like the details."
-      : "I couldn't finish that in time. Reply to retry, or ping @Reddy-GTM in Slack.";
 
-  const sent = await sendBotEmail({ to: m.from, subject, bodyText, threadId: m.threadId });
-  if (!sent) {
-    // The sender can't be reached by definition — surface the dropped reply so
-    // it's observable instead of silently lost.
-    const ch = salesChannel();
-    if (ch) {
-      await postToChannel(ch, {
-        text: `⚠️ bot@reddy.io couldn't email a reply to ${m.from} (re: ${subject}). Check the bot's Gmail connection.`,
-      }).catch(() => {});
+  // Fast path: a written answer (or a no-summary "ran-but-no-text") came back in
+  // time → reply now and clear the pending record. A failed SEND leaves pending
+  // so the cron retries (and we alert).
+  if (result.answer || result.ok) {
+    const bodyText = result.answer ?? NO_SUMMARY_NOTE;
+    const sent = await sendBotEmail({ to: m.from, subject, bodyText, threadId: m.threadId });
+    if (sent) {
+      await kv.del(pendingKey(requestId)).catch(() => {});
+    } else {
+      await alertSendFailure(m.from, subject);
+    }
+    return;
+  }
+
+  // Inline wait elapsed and no result yet — the agent is likely still working.
+  // Do NOT send a premature failure; the deliver cron will email the answer when
+  // it lands (or a timeout note if it never does).
+  console.log(`[bot-mail] inline wait elapsed for ${m.from} (req=${requestId}); deferred to deliver cron`);
+}
+
+// Called by /api/cron/bot-mail. Finishes any reply whose agent run has completed
+// (or times it out after MAX_DELIVER_WAIT_MS). Never throws.
+export async function deliverPendingMail(): Promise<{ delivered: number; timedOut: number; waiting: number }> {
+  let delivered = 0;
+  let timedOut = 0;
+  let waiting = 0;
+  let keys: string[] = [];
+  try {
+    keys = await kv.keys("botmail:pending:*");
+  } catch {
+    keys = [];
+  }
+  for (const key of keys.slice(0, 25)) {
+    const p = await kv.get<PendingMail>(key).catch(() => null);
+    if (!p) {
+      await kv.del(key).catch(() => {});
+      continue;
+    }
+    const id = key.slice("botmail:pending:".length);
+    const result = await kv
+      .get<{ ok?: boolean; answer?: string }>(`mcp:result:${id}`)
+      .catch(() => null);
+    if (result) {
+      const bodyText = result.answer ? result.answer : result.ok ? NO_SUMMARY_NOTE : TIMEOUT_NOTE;
+      const sent = await sendBotEmail({ to: p.to, subject: p.subject, bodyText, threadId: p.threadId });
+      if (sent) {
+        await kv.del(key).catch(() => {});
+        delivered += 1;
+      } else {
+        await alertSendFailure(p.to, p.subject);
+        waiting += 1;
+      }
+    } else if (Date.now() - p.createdAt > MAX_DELIVER_WAIT_MS) {
+      await sendBotEmail({ to: p.to, subject: p.subject, bodyText: TIMEOUT_NOTE, threadId: p.threadId });
+      await kv.del(key).catch(() => {});
+      timedOut += 1;
+    } else {
+      waiting += 1;
     }
   }
+  return { delivered, timedOut, waiting };
 }
