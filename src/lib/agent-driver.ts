@@ -160,7 +160,16 @@ const TRACE_KEY = THREAD_KEY + ":trace:" + TURN_NUMBER;
 // /api/agent/oneshot endpoint to pick up.
 const MCP_REQUEST_ID = META.mcpRequestId;
 const MCP_MODE = !!MCP_REQUEST_ID;
-const mcpBuffer = { answer: [], references: [] };
+// The email lane (bot@reddy.io) is a flavor of MCP mode that CAN deliver file
+// attachments: the agent persists a generated file to the KB and bot-mail (which
+// has the Composio key the sandbox lacks) reads it back + attaches it. Gate the
+// attach behavior on this, NOT on MCP_MODE — the Claude Desktop MCP path is also
+// MCP_MODE and has nothing to deliver an attachment.
+const EMAIL_LANE = process.env.AGENT_LANE === "email";
+const mcpBuffer = { answer: [], references: [], attachments: [] };
+const attachHint = EMAIL_LANE
+  ? "You are on the EMAIL lane: to attach a file you generate (PDF/xlsx/etc.) to your reply, call upload_slack_pdf(filePath, title) — it becomes a real email attachment (NOT a Slack upload). Prefer attaching the file over linking to it. Still end the turn with one post_slack_message for the email body text."
+  : "upload_slack_pdf errors here; for builds tell them to do it from Slack.";
 function mcpAppendAnswer(text) { mcpBuffer.answer.push(text); }
 function mcpAppendReference(label, url, type) {
   mcpBuffer.references.push({ label, url, type: type || "link" });
@@ -202,6 +211,33 @@ async function uploadPdfToSlack(filePath, title) {
   const c = await complete.json();
   if (!c.ok) throw new Error("completeUploadExternal failed: " + JSON.stringify(c));
   return c;
+}
+
+// Email lane: persist a generated file to the KB (Contents API PUT — one call,
+// single new unique path, no tree dance) so bot-mail can read its bytes back and
+// attach it. Returns the repo-relative path. bot-mail deletes it after sending.
+function attachMimeType(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  const map = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", csv: "text/csv", txt: "text/plain", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+  return map[ext] || "application/octet-stream";
+}
+async function persistAttachmentToKb(filePath) {
+  const buf = await readFile(filePath);
+  if (buf.length > 20 * 1024 * 1024) throw new Error("attachment too large (" + buf.length + " bytes; Gmail cap ~25MB)");
+  // Sanitize the agent-chosen filename (no fixed convention in this lane).
+  let name = path.basename(filePath).replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "attachment";
+  if (!name.includes(".")) name += ".pdf";
+  // Unique per (run, name) so two files in one turn don't collide.
+  const idx = mcpBuffer.attachments.length;
+  const repoPath = "mail-attachments/" + MCP_REQUEST_ID + "/" + idx + "-" + name;
+  const res = await fetch("https://api.github.com/repos/ReddySolutions/reddy-gtm/contents/" + repoPath.split("/").map(encodeURIComponent).join("/"), {
+    method: "PUT",
+    headers: { Authorization: "Bearer " + PAT, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    body: JSON.stringify({ message: "mail attachment " + MCP_REQUEST_ID, content: buf.toString("base64"), branch: "main" }),
+  });
+  if (!res.ok) throw new Error("kb attachment PUT " + res.status + " " + (await res.text()).slice(0, 200));
+  mcpBuffer.attachments.push({ name, mimetype: attachMimeType(name), kbPath: repoPath });
+  return { name, repoPath, bytes: buf.length };
 }
 
 // ────────── KV helpers ──────────
@@ -345,13 +381,24 @@ async function main() {
           title: z.string().describe("Short title shown above the file in Slack."),
         },
         async ({ filePath, title }) => {
+          const abs = path.isAbsolute(filePath) ? filePath : path.join("/vercel/sandbox", filePath);
+          if (EMAIL_LANE) {
+            // Email lane: persist to the KB + buffer it; bot-mail attaches it to
+            // the reply. (The answer text still rides via post_slack_message.)
+            try {
+              const r = await persistAttachmentToKb(abs);
+              trace("tool_call", { name: "upload_slack_pdf", mode: "email-attach", kbPath: r.repoPath, bytes: r.bytes });
+              slackPosted = true; // counts as "the agent produced a deliverable"
+              return { content: [{ type: "text", text: "Attached " + r.name + " to the email reply." }] };
+            } catch (e) {
+              return { content: [{ type: "text", text: "ERROR attaching file: " + (e instanceof Error ? e.message : String(e)) + ". Post a link or summary via post_slack_message instead." }], isError: true };
+            }
+          }
           if (MCP_MODE) {
-            // Q&A endpoint — file deliverables don't fit a sync MCP response.
-            // Tell the agent to provide a link instead. The PDF builds belong
-            // in Slack where the user can iterate + 🔒 to save.
+            // Non-email MCP (Claude Desktop) — file deliverables don't fit a sync
+            // response and nothing downstream delivers them. Tell the agent to link.
             return { content: [{ type: "text", text: "ERROR: upload_slack_pdf is not available in MCP mode. Either (a) post a link to the artifact via post_slack_message + reference URL, or (b) tell the user this is a build task best done by mentioning @Reddy-GTM in Slack." }], isError: true };
           }
-          const abs = path.isAbsolute(filePath) ? filePath : path.join("/vercel/sandbox", filePath);
           await uploadPdfToSlack(abs, title);
           trace("tool_call", { name: "upload_slack_pdf", filePath: abs, title });
           slackPosted = true;
@@ -441,7 +488,7 @@ async function main() {
       ? \`Connected services for this user (\${META.slackUserEmail}): \${connectedServices.join(", ")}. Tools from these are live on the corresponding MCP (composio for Gmail/HubSpot/etc., granola for meetings); use them without asking.\`
       : \`No external services are connected yet for \${META.slackUserEmail || "this user"}. If the user's ask needs Gmail / Calendar / Drive / Sheets / Docs / HubSpot / LinkedIn / Apollo / Granola, tell them to \\\`@Reddy-GTM set me up\\\` first.\`;
   const mcpModeBlock = MCP_MODE
-    ? \` [MODE: MCP one-shot — Claude Desktop/Code via the reddy-gtm MCP server, NOT Slack. Same answer-discipline as Slack (brief, cite precedent, link out instead of inlining raw artifacts). \\\`upload_slack_pdf\\\` errors here; for builds tell them to do it from Slack. Skip 🔒/save prompts. End the turn with one \\\`post_slack_message\\\`. CRITICAL FOR MEETING/TRANSCRIPT/RECORDING QUERIES: a kb meeting index is pre-injected at the top of this user message — it has bot_id, customer_slug, attendees, transcript/video flags, AND pre-minted \\\`video_url\\\` for every meeting that has a video. If the user asks for a video link, JUST RETURN THE \\\`video_url\\\` from the index — no need to curl \\\`/api/recall/video-link\\\`. If you do need to glob the kb for transcript content, use \\\`ls corpora/success/customers/*/meetings/*/transcript.txt\\\` (note the wildcard — \\\`_unsorted/\\\` is a real slug). Do NOT call Granola tools (\\\`mcp__composio__GRANOLA_*\\\`, \\\`list_meetings\\\`, etc.) for transcript queries unless the kb glob returns zero AND the index shows nothing.]\`
+    ? \` [MODE: MCP one-shot — Claude Desktop/Code via the reddy-gtm MCP server, NOT Slack. Same answer-discipline as Slack (brief, cite precedent, link out instead of inlining raw artifacts). \${attachHint} Skip 🔒/save prompts. End the turn with one \\\`post_slack_message\\\`. CRITICAL FOR MEETING/TRANSCRIPT/RECORDING QUERIES: a kb meeting index is pre-injected at the top of this user message — it has bot_id, customer_slug, attendees, transcript/video flags, AND pre-minted \\\`video_url\\\` for every meeting that has a video. If the user asks for a video link, JUST RETURN THE \\\`video_url\\\` from the index — no need to curl \\\`/api/recall/video-link\\\`. If you do need to glob the kb for transcript content, use \\\`ls corpora/success/customers/*/meetings/*/transcript.txt\\\` (note the wildcard — \\\`_unsorted/\\\` is a real slug). Do NOT call Granola tools (\\\`mcp__composio__GRANOLA_*\\\`, \\\`list_meetings\\\`, etc.) for transcript queries unless the kb glob returns zero AND the index shows nothing.]\`
     : "";
 
   // Download any Slack-attached files into the sandbox so the agent can
@@ -622,9 +669,10 @@ async function main() {
       ok: true,
       answer: finalAnswer,
       references: mcpBuffer.references,
+      attachments: mcpBuffer.attachments,
       finishedAt: new Date().toISOString(),
-    }, 60 * 60).catch(() => {});
-    console.log("[agent-driver] MCP run " + MCP_REQUEST_ID + " complete (" + finalAnswer.length + " chars)");
+    }, 3 * 60 * 60).catch(() => {});
+    console.log("[agent-driver] MCP run " + MCP_REQUEST_ID + " complete (" + finalAnswer.length + " chars, " + mcpBuffer.attachments.length + " attachments)");
     return;
   }
 

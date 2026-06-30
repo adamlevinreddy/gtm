@@ -47,12 +47,16 @@ type OneshotRequest = {
   // (e.g. the email lane) can deliver the answer later from a cron even if the
   // agent outran its poll window. Must be a uuid; ignored otherwise.
   requestId?: string;
+  // Lane the request came from. "email" unlocks file attachments in the driver.
+  lane?: string;
 };
 
 type McpResult = {
   ok: boolean;
   answer?: string;
   references?: Array<{ label: string; url: string; type: string }>;
+  // Email lane: files the agent persisted to the KB for bot-mail to attach.
+  attachments?: Array<{ name: string; mimetype: string; kbPath: string }>;
   error?: string;
   finishedAt?: string;
 };
@@ -207,6 +211,8 @@ export async function POST(req: NextRequest) {
         PRICING_LIBRARY_GITHUB_PAT: process.env.PRICING_LIBRARY_GITHUB_PAT ?? "",
         AGENT_THREAD_KEY: meta.threadKey,
         AGENT_SESSION_ID: meta.sessionId,
+        // Lane signal — only "email" unlocks the driver's attach-file behavior.
+        AGENT_LANE: typeof body.lane === "string" ? body.lane : "",
         APOLLO_API_KEY: process.env.APOLLO_API_KEY ?? "",
         ENRICHLAYER_API_KEY: process.env.ENRICHLAYER_API_KEY ?? "",
         HUBSPOT_API_KEY: process.env.HUBSPOT_API_KEY ?? "",

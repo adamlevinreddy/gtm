@@ -138,4 +138,17 @@ export async function readKbFile(pat: string, repoPath: string): Promise<string 
   return Buffer.from(body.content, (body.encoding ?? "base64") as BufferEncoding).toString("utf8");
 }
 
+// Read a file's RAW BYTES from main. Unlike readKbFile (which .toString("utf8")s
+// and corrupts binary), this returns a Buffer via the raw-content Accept header —
+// use it for PDFs/images/any binary (verified byte-exact for a 256-value probe).
+export async function readKbFileBytes(pat: string, repoPath: string): Promise<Buffer | null> {
+  const res = await fetch(
+    `${GH_API}/repos/${REPO.owner}/${REPO.name}/contents/${encodeURI(repoPath)}?ref=${BRANCH}`,
+    { headers: { ...ghHeaders(pat), Accept: "application/vnd.github.raw" } },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`readKbFileBytes ${repoPath} -> ${res.status} ${await res.text()}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export const KB_REPO = REPO;

@@ -15,8 +15,11 @@
 import { randomUUID } from "node:crypto";
 import { composio } from "@/lib/composio";
 import { kv } from "@/lib/kv-client";
+import { readKbFileBytes, commitToKb } from "@/lib/github-kb";
 import { selfBaseUrl } from "@/lib/work-items";
 import { postToChannel, salesChannel } from "@/lib/slack";
+
+type MailAttachment = { name: string; mimetype: string; kbPath: string };
 
 export const BOT_ADDR = (process.env.BOT_MAIL_ADDRESS || "bot@reddy.io").toLowerCase();
 const ALLOWED_DOMAIN = "reddy.io";
@@ -143,8 +146,9 @@ function buildEmailPrompt(m: InboundMail): string {
     `final answer in a SINGLE post_slack_message call (it is captured and emailed back`,
     `to ${m.from} verbatim — do NOT split it between a tool call and a trailing message,`,
     `and do not assume it posts to Slack). Write it as a clear, self-contained email`,
-    `reply (greeting optional, no internal reasoning). For a file deliverable, link to`,
-    `the artifact (you cannot attach files).`,
+    `reply (greeting optional, no internal reasoning). For a FILE deliverable (a PDF`,
+    `you generate, etc.), call upload_slack_pdf(filePath, title) — on this email lane`,
+    `it becomes a real email ATTACHMENT on the reply. Prefer attaching over linking.`,
     ``,
     `If the email asks you to UPDATE something — HubSpot, the board (create/update a`,
     `task), or their calendar — do it with your tools, following the usual guardrails:`,
@@ -166,21 +170,28 @@ async function runOneshot(
   question: string,
   userEmail: string,
   requestId: string,
-): Promise<{ ok: boolean; answer: string | null }> {
+): Promise<{ ok: boolean; answer: string | null; attachments?: MailAttachment[] }> {
   const secret = process.env.MCP_INTERNAL_SECRET;
   if (!secret) return { ok: false, answer: null };
   try {
     const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-reddy-internal": secret },
-      // Pass our own requestId so the answer lands at a key we already know — if
-      // the agent outruns this inline poll, the deliver cron picks it up. Abort a
-      // bit past the poll so we stay inside the webhook's maxDuration.
-      body: JSON.stringify({ question, userEmail, requestId, pollTimeoutMs: INLINE_POLL_MS }),
+      // lane:"email" unlocks file attachments in the driver. Pass our own
+      // requestId so the answer lands at a key we already know — if the agent
+      // outruns this inline poll, the deliver cron picks it up. Abort a bit past
+      // the poll so we stay inside the webhook's maxDuration.
+      body: JSON.stringify({ question, userEmail, requestId, lane: "email", pollTimeoutMs: INLINE_POLL_MS }),
       signal: AbortSignal.timeout(INLINE_POLL_MS + 40_000),
     });
-    const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
-    return { ok: !!json?.ok, answer: (json?.ok && json.answer) ? json.answer : null };
+    const json = (await res.json().catch(() => null)) as
+      | { ok?: boolean; answer?: string; attachments?: MailAttachment[] }
+      | null;
+    return {
+      ok: !!json?.ok,
+      answer: json?.ok && json.answer ? json.answer : null,
+      attachments: json?.attachments,
+    };
   } catch {
     return { ok: false, answer: null };
   }
@@ -195,11 +206,47 @@ export async function sendBotEmail(opts: {
   subject: string;
   bodyText: string;
   threadId?: string | null;
+  attachments?: MailAttachment[];
 }): Promise<boolean> {
   // Reply-all: keep the original @reddy.io participants in the loop. Only set cc
   // when non-empty so we never send an empty/invalid arg.
   const cc = (opts.cc ?? []).filter(Boolean);
   const ccArg = cc.length ? { cc } : {};
+
+  // Stage attachments into Composio's S3 (the backend rejects raw bytes — it
+  // needs a {name,mimetype,s3key} descriptor from files.upload). Bytes come from
+  // the KB (binary-safe reader). A staging failure must NEVER drop the email —
+  // we send the text + a note and leave the KB copy for a retry.
+  let bodyText = opts.bodyText;
+  let attachmentArg: Record<string, unknown> = {};
+  const deliveredPaths: string[] = [];
+  if (opts.attachments?.length) {
+    const pat = process.env.PRICING_LIBRARY_GITHUB_PAT ?? "";
+    const filesApi = (composio() as unknown as {
+      files: { upload: (a: { file: File; toolSlug: string; toolkitSlug: string }) => Promise<{ name: string; mimetype: string; s3key: string }> };
+    }).files;
+    const staged: Array<{ name: string; mimetype: string; s3key: string }> = [];
+    for (const a of opts.attachments) {
+      try {
+        const bytes = pat ? await readKbFileBytes(pat, a.kbPath) : null;
+        if (!bytes) { console.warn(`[bot-mail] attachment bytes missing for ${a.kbPath}`); continue; }
+        if (bytes.length > 24 * 1024 * 1024) { console.warn(`[bot-mail] attachment ${a.name} too large (${bytes.length}b) — skipping`); continue; }
+        // Copy into a fresh ArrayBuffer-backed view (Buffer's ArrayBufferLike
+        // isn't assignable to BlobPart under strict lib types).
+        const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        const file = new File([ab], a.name, { type: a.mimetype });
+        const up = await filesApi.upload({ file, toolSlug: "GMAIL_SEND_EMAIL", toolkitSlug: "gmail" });
+        staged.push(up);
+        deliveredPaths.push(a.kbPath);
+      } catch (err) {
+        console.error(`[bot-mail] stage attachment failed (${a.name}): ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    if (staged.length) attachmentArg = { attachment: staged.length === 1 ? staged[0] : staged };
+    const missed = opts.attachments.length - staged.length;
+    if (missed > 0) bodyText += `\n\n(Note: ${missed} file${missed === 1 ? "" : "s"} couldn't be attached — reply and I'll resend.)`;
+  }
+
   try {
     if (opts.threadId) {
       await composio().tools.execute("GMAIL_REPLY_TO_THREAD", {
@@ -207,9 +254,10 @@ export async function sendBotEmail(opts: {
         arguments: {
           thread_id: opts.threadId,
           recipient_email: opts.to,
-          message_body: opts.bodyText,
+          message_body: bodyText,
           is_html: false,
           ...ccArg,
+          ...attachmentArg,
         },
         dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
@@ -219,12 +267,21 @@ export async function sendBotEmail(opts: {
         arguments: {
           recipient_email: opts.to,
           subject: opts.subject.startsWith("Re:") ? opts.subject : `Re: ${opts.subject}`,
-          body: opts.bodyText,
+          body: bodyText,
           is_html: false,
           ...ccArg,
+          ...attachmentArg,
         },
         dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
+    }
+    // Sent OK — drop the transient KB copies so mail-attachments/ doesn't bloat
+    // the cold-start clone every sandbox does. Best-effort.
+    if (deliveredPaths.length) {
+      const pat = process.env.PRICING_LIBRARY_GITHUB_PAT ?? "";
+      if (pat) {
+        await commitToKb({ pat, message: "mail attachment delivered — purge", files: deliveredPaths.map((p) => ({ path: p, delete: true })) }).catch(() => {});
+      }
     }
     return true;
   } catch (err) {
@@ -309,7 +366,7 @@ export async function processInboundMail(m: InboundMail): Promise<void> {
     })
     .catch(() => {});
 
-  let result: { ok: boolean; answer: string | null } = { ok: false, answer: null };
+  let result: { ok: boolean; answer: string | null; attachments?: MailAttachment[] } = { ok: false, answer: null };
   try {
     result = await runOneshot(buildEmailPrompt(m), m.from, requestId);
   } catch {
@@ -321,7 +378,7 @@ export async function processInboundMail(m: InboundMail): Promise<void> {
   // so the cron retries (and we alert).
   if (result.answer || result.ok) {
     const bodyText = result.answer ?? NO_SUMMARY_NOTE;
-    const sent = await sendBotEmail({ to: m.from, cc, subject, bodyText, threadId: m.threadId });
+    const sent = await sendBotEmail({ to: m.from, cc, subject, bodyText, threadId: m.threadId, attachments: result.attachments });
     if (sent) {
       await kv.del(pendingKey(requestId)).catch(() => {});
     } else {
@@ -356,11 +413,11 @@ export async function deliverPendingMail(): Promise<{ delivered: number; timedOu
     }
     const id = key.slice("botmail:pending:".length);
     const result = await kv
-      .get<{ ok?: boolean; answer?: string }>(`mcp:result:${id}`)
+      .get<{ ok?: boolean; answer?: string; attachments?: MailAttachment[] }>(`mcp:result:${id}`)
       .catch(() => null);
     if (result) {
       const bodyText = result.answer ? result.answer : result.ok ? NO_SUMMARY_NOTE : TIMEOUT_NOTE;
-      const sent = await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText, threadId: p.threadId });
+      const sent = await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText, threadId: p.threadId, attachments: result.attachments });
       if (sent) {
         await kv.del(key).catch(() => {});
         delivered += 1;
