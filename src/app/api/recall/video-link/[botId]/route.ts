@@ -33,8 +33,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
   const customer = req.nextUrl.searchParams.get("customer");
   const ttlRaw = req.nextUrl.searchParams.get("ttl");
   const ttlSeconds = Math.min(
-    Math.max(60, ttlRaw ? Number.parseInt(ttlRaw, 10) || 7 * 86400 : 7 * 86400),
-    7 * 24 * 60 * 60,
+    Math.max(60, ttlRaw ? Number.parseInt(ttlRaw, 10) || 30 * 86400 : 30 * 86400),
+    30 * 24 * 60 * 60,
   );
 
   // Try Mux first.

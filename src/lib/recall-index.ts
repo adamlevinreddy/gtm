@@ -152,7 +152,7 @@ export async function recentMeetingIndex(
     .slice(0, limit);
 
   if (videoLinkOpts) {
-    const ttl = videoLinkOpts.ttlSeconds ?? 7 * 86400;
+    const ttl = videoLinkOpts.ttlSeconds ?? 30 * 86400;
     const muxConfigured = !!process.env.MUX_SIGNING_KEY_ID && !!process.env.MUX_SIGNING_KEY_PRIVATE;
     for (const m of filtered) {
       if (!m.bot_id) continue;
