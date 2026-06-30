@@ -51,6 +51,7 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
   - \`corpora/security/\` — canonical answer bank (\`POSTURE.md\`) + per-customer completed questionnaires.
   - \`corpora/rfps/\` — response playbook + per-customer RFP response artifacts.
   - \`corpora/marketing/\` — channel strategy + per-campaign artifacts.
+  - \`corpora/deliverables/{slug}/\` — files previously generated + emailed via the bot (proposals, decks, etc.), kept for cross-surface pickup. When asked to "pull up / resend / find" a past deliverable, \`git pull\` then glob here (e.g. \`ls corpora/deliverables/*\` and grep the slug) — and re-share it (Slack: \`upload_slack_pdf\` that path; email: same).
   - \`design-system/\` — Reddy visual design tokens (FlechaS + Inter fonts, color palette). Embedded in every PDF we generate.
 - You have \`Read\`, \`Write\`, \`Edit\`, \`Bash\`, \`Glob\`, \`Grep\`, \`WebFetch\`, \`TodoWrite\`, \`Task\` tools available, plus the \`reddy-gtm\` MCP server with three Slack-specific tools:
   - \`post_slack_message(text)\` — reply in the current thread (mrkdwn)
@@ -168,7 +169,7 @@ const MCP_MODE = !!MCP_REQUEST_ID;
 const EMAIL_LANE = process.env.AGENT_LANE === "email";
 const mcpBuffer = { answer: [], references: [], attachments: [] };
 const attachHint = EMAIL_LANE
-  ? "You are on the EMAIL lane: to attach a file you generate (PDF/xlsx/etc.) to your reply, call upload_slack_pdf(filePath, title) — it becomes a real email attachment (NOT a Slack upload). Prefer attaching the file over linking to it. Still end the turn with one post_slack_message for the email body text."
+  ? "You are on the EMAIL lane: to attach a file you generate (PDF/xlsx/etc.) to your reply, call upload_slack_pdf(filePath, title) — it becomes a real email attachment (NOT a Slack upload) AND is saved to the cross-surface library at corpora/deliverables/{slug-of-title}/ so it can be pulled up later from Slack/email. Give a descriptive title (e.g. 'Advensus pricing proposal'). Prefer attaching over linking. Still end the turn with one post_slack_message for the email body text."
   : "upload_slack_pdf errors here; for builds tell them to do it from Slack.";
 function mcpAppendAnswer(text) { mcpBuffer.answer.push(text); }
 function mcpAppendReference(label, url, type) {
@@ -213,29 +214,36 @@ async function uploadPdfToSlack(filePath, title) {
   return c;
 }
 
-// Email lane: persist a generated file to the KB (Contents API PUT — one call,
-// single new unique path, no tree dance) so bot-mail can read its bytes back and
-// attach it. Returns the repo-relative path. bot-mail deletes it after sending.
+// Email lane: persist a generated file to the KB DELIVERABLES LIBRARY (Contents
+// API PUT — one call, unique path so no 409/tree-dance) so bot-mail can read its
+// bytes to attach AND any surface's agent can glob + re-share it later. KEPT (not
+// purged): this is the cross-surface library, organized by a title slug.
 function attachMimeType(name) {
   const ext = (name.split(".").pop() || "").toLowerCase();
   const map = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", csv: "text/csv", txt: "text/plain", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
   return map[ext] || "application/octet-stream";
 }
-async function persistAttachmentToKb(filePath) {
+function librarySlug(title, fallbackName) {
+  const base = String(title || fallbackName || "deliverable").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return base || "deliverable";
+}
+async function persistAttachmentToKb(filePath, title) {
   const buf = await readFile(filePath);
   if (buf.length > 20 * 1024 * 1024) throw new Error("attachment too large (" + buf.length + " bytes; Gmail cap ~25MB)");
   // Sanitize the agent-chosen filename (no fixed convention in this lane).
   let name = path.basename(filePath).replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "attachment";
   if (!name.includes(".")) name += ".pdf";
-  // Unique per (run, name) so two files in one turn don't collide.
-  const idx = mcpBuffer.attachments.length;
-  const repoPath = "mail-attachments/" + MCP_REQUEST_ID + "/" + idx + "-" + name;
+  // corpora/deliverables/{title-slug}/{shortRunId}-{name}: discoverable by slug,
+  // unique by run id (so re-runs never 409 against an existing path).
+  const slug = librarySlug(title, name);
+  const shortId = String(MCP_REQUEST_ID).slice(0, 8);
+  const repoPath = "corpora/deliverables/" + slug + "/" + shortId + "-" + name;
   const res = await fetch("https://api.github.com/repos/ReddySolutions/reddy-gtm/contents/" + repoPath.split("/").map(encodeURIComponent).join("/"), {
     method: "PUT",
     headers: { Authorization: "Bearer " + PAT, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-    body: JSON.stringify({ message: "mail attachment " + MCP_REQUEST_ID, content: buf.toString("base64"), branch: "main" }),
+    body: JSON.stringify({ message: "deliverable: " + slug + " (" + MCP_REQUEST_ID + ")", content: buf.toString("base64"), branch: "main" }),
   });
-  if (!res.ok) throw new Error("kb attachment PUT " + res.status + " " + (await res.text()).slice(0, 200));
+  if (!res.ok) throw new Error("kb deliverable PUT " + res.status + " " + (await res.text()).slice(0, 200));
   mcpBuffer.attachments.push({ name, mimetype: attachMimeType(name), kbPath: repoPath });
   return { name, repoPath, bytes: buf.length };
 }
@@ -386,10 +394,10 @@ async function main() {
             // Email lane: persist to the KB + buffer it; bot-mail attaches it to
             // the reply. (The answer text still rides via post_slack_message.)
             try {
-              const r = await persistAttachmentToKb(abs);
+              const r = await persistAttachmentToKb(abs, title);
               trace("tool_call", { name: "upload_slack_pdf", mode: "email-attach", kbPath: r.repoPath, bytes: r.bytes });
               slackPosted = true; // counts as "the agent produced a deliverable"
-              return { content: [{ type: "text", text: "Attached " + r.name + " to the email reply." }] };
+              return { content: [{ type: "text", text: "Attached " + r.name + " to the email reply (saved to the library at " + r.repoPath + ")." }] };
             } catch (e) {
               return { content: [{ type: "text", text: "ERROR attaching file: " + (e instanceof Error ? e.message : String(e)) + ". Post a link or summary via post_slack_message instead." }], isError: true };
             }

@@ -15,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { composio } from "@/lib/composio";
 import { kv } from "@/lib/kv-client";
-import { readKbFileBytes, commitToKb } from "@/lib/github-kb";
+import { readKbFileBytes } from "@/lib/github-kb";
 import { selfBaseUrl } from "@/lib/work-items";
 import { postToChannel, salesChannel } from "@/lib/slack";
 
@@ -235,7 +235,6 @@ export async function sendBotEmail(opts: {
   // we send the text + a note and leave the KB copy for a retry.
   let bodyText = opts.bodyText;
   let attachmentArg: Record<string, unknown> = {};
-  const deliveredPaths: string[] = [];
   if (opts.attachments?.length) {
     const pat = process.env.PRICING_LIBRARY_GITHUB_PAT ?? "";
     const filesApi = (composio() as unknown as {
@@ -253,7 +252,6 @@ export async function sendBotEmail(opts: {
         const file = new File([ab], a.name, { type: a.mimetype });
         const up = await filesApi.upload({ file, toolSlug: "GMAIL_SEND_EMAIL", toolkitSlug: "gmail" });
         staged.push(up);
-        deliveredPaths.push(a.kbPath);
       } catch (err) {
         console.error(`[bot-mail] stage attachment failed (${a.name}): ${err instanceof Error ? err.message : err}`);
       }
@@ -291,14 +289,8 @@ export async function sendBotEmail(opts: {
         dangerouslySkipVersionCheck: true, // run current toolkit version (see fetchAuthResults)
       });
     }
-    // Sent OK — drop the transient KB copies so mail-attachments/ doesn't bloat
-    // the cold-start clone every sandbox does. Best-effort.
-    if (deliveredPaths.length) {
-      const pat = process.env.PRICING_LIBRARY_GITHUB_PAT ?? "";
-      if (pat) {
-        await commitToKb({ pat, message: "mail attachment delivered — purge", files: deliveredPaths.map((p) => ({ path: p, delete: true })) }).catch(() => {});
-      }
-    }
+    // The KB copy (corpora/deliverables/…) is intentionally KEPT — it's the
+    // cross-surface library so the deliverable can be pulled up later from Slack.
     return true;
   } catch (err) {
     console.error(`[bot-mail] send failed to ${opts.to}: ${err instanceof Error ? err.message : err}`);
