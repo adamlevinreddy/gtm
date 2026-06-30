@@ -30,12 +30,28 @@ const ALLOWED_DOMAIN = "reddy.io";
 // → the answer lands at `mcp:result:{id}`.
 type PendingMail = { to: string; cc?: string[]; subject: string; threadId: string | null; createdAt: number };
 const pendingKey = (id: string) => `botmail:pending:${id}`;
-const PENDING_TTL_SECONDS = 2 * 60 * 60;
+// Pending ≥ result TTL (3h, set in the driver) so a live pending record always
+// has its result available; both comfortably exceed MAX_DELIVER_WAIT_MS.
+const PENDING_TTL_SECONDS = 3 * 60 * 60;
 // Inline wait before we hand off to the cron (snappy replies for normal asks;
 // heavy multi-tool runs like proposals deliver via the cron when they finish).
 const INLINE_POLL_MS = 300_000;
 // Cron gives up and sends a timeout note after this if no result ever lands.
-const MAX_DELIVER_WAIT_MS = 30 * 60 * 1000;
+const MAX_DELIVER_WAIT_MS = 40 * 60 * 1000;
+
+// Exactly-once delivery claim. The inline path AND the cron can both observe a
+// completed result for the same run (e.g. a cron tick fires while the inline
+// poll is finishing, or the inline kv.del(pending) failed). Whoever wins this
+// nx claim sends; the loser stands down — so the sender never double-emails.
+// Released on a send FAILURE so a retry can re-claim.
+const sentKey = (id: string) => `botmail:sent:${id}`;
+async function claimDelivery(id: string): Promise<boolean> {
+  const r = await kv.set(sentKey(id), new Date().toISOString(), { nx: true, ex: 24 * 60 * 60 }).catch(() => null);
+  return r !== null;
+}
+async function releaseDelivery(id: string): Promise<void> {
+  await kv.del(sentKey(id)).catch(() => {});
+}
 const NO_SUMMARY_NOTE =
   "I worked on this but didn't capture a written summary — any changes I made are on the board / in HubSpot. Reply if you'd like the details.";
 const TIMEOUT_NOTE = "I couldn't finish that in time. Reply to retry, or ping @Reddy-GTM in Slack.";
@@ -377,11 +393,17 @@ export async function processInboundMail(m: InboundMail): Promise<void> {
   // time → reply now and clear the pending record. A failed SEND leaves pending
   // so the cron retries (and we alert).
   if (result.answer || result.ok) {
+    // Exactly-once: stand down if the cron already delivered this run.
+    if (!(await claimDelivery(requestId))) {
+      await kv.del(pendingKey(requestId)).catch(() => {});
+      return;
+    }
     const bodyText = result.answer ?? NO_SUMMARY_NOTE;
     const sent = await sendBotEmail({ to: m.from, cc, subject, bodyText, threadId: m.threadId, attachments: result.attachments });
     if (sent) {
       await kv.del(pendingKey(requestId)).catch(() => {});
     } else {
+      await releaseDelivery(requestId); // allow the cron to retry
       await alertSendFailure(m.from, subject);
     }
     return;
@@ -416,17 +438,28 @@ export async function deliverPendingMail(): Promise<{ delivered: number; timedOu
       .get<{ ok?: boolean; answer?: string; attachments?: MailAttachment[] }>(`mcp:result:${id}`)
       .catch(() => null);
     if (result) {
+      // Exactly-once: if the inline path already delivered this run, just clean
+      // up the (orphaned) pending record instead of sending again.
+      if (!(await claimDelivery(id))) {
+        await kv.del(key).catch(() => {});
+        continue;
+      }
       const bodyText = result.answer ? result.answer : result.ok ? NO_SUMMARY_NOTE : TIMEOUT_NOTE;
       const sent = await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText, threadId: p.threadId, attachments: result.attachments });
       if (sent) {
         await kv.del(key).catch(() => {});
         delivered += 1;
       } else {
+        await releaseDelivery(id); // allow a later tick to retry
         await alertSendFailure(p.to, p.subject);
         waiting += 1;
       }
     } else if (Date.now() - p.createdAt > MAX_DELIVER_WAIT_MS) {
-      await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText: TIMEOUT_NOTE, threadId: p.threadId });
+      // Gave up waiting — send the timeout note once (claim guards against a
+      // late inline send racing it).
+      if (await claimDelivery(id)) {
+        await sendBotEmail({ to: p.to, cc: p.cc, subject: p.subject, bodyText: TIMEOUT_NOTE, threadId: p.threadId });
+      }
       await kv.del(key).catch(() => {});
       timedOut += 1;
     } else {

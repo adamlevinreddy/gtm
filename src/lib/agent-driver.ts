@@ -719,7 +719,7 @@ main().catch(async (err) => {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
       finishedAt: new Date().toISOString(),
-    }, 60 * 60).catch(() => {});
+    }, 3 * 60 * 60).catch(() => {});
     process.exit(1);
   }
   const header = \`:rotating_light: *Reddy-GTM driver crashed* · sandbox=\\\`\${META.sandboxName}\\\` · trace=\\\`\${TRACE_KEY}\\\`\\nError: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`;
