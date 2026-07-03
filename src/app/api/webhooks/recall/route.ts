@@ -31,6 +31,7 @@ import {
 import { getCompanyContacts } from "@/lib/hubspot";
 import { kv } from "@/lib/kv-client";
 import { detectConeOfSilence, isConeOfSilence, markConeOfSilence } from "@/lib/cone-of-silence";
+import { getBlockChecker } from "@/lib/meeting-optout";
 
 export const maxDuration = 300;
 
@@ -180,9 +181,13 @@ async function handleCalendarEvent(
   // schedule/reschedule/delete bots accordingly.
   const cursor = lastUpdatedTs ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const events = await listCalendarEventsSince({ calendarId, updatedAtGte: cursor });
+  // Board-managed opt-outs ("bot must never join this meeting/series").
+  // Loaded once per sync; checked per event below.
+  const blockedBy = events.length > 0 ? await getBlockChecker() : () => null;
   let scheduled = 0;
   let deleted = 0;
   let skippedDup = 0;
+  let skippedBlocked = 0;
   for (const e of events) {
     const dedupKey = `cal_${calendarId}_evt_${e.id}`;
     if (e.is_deleted || e.raw?.status === "cancelled") {
@@ -200,6 +205,23 @@ async function handleCalendarEvent(
       continue;
     }
     if (!shouldRecordEvent(e, ownerEmail)) continue;
+
+    // Opt-out check BEFORE the dedup claim: blocked events must not claim
+    // (or refresh) series ownership. Tear down any bot that was scheduled
+    // before the block existed.
+    const block = blockedBy(e);
+    if (block) {
+      skippedBlocked += 1;
+      if ((e.bots?.length ?? 0) > 0) {
+        try {
+          await deleteBotForEvent(e.id);
+        } catch (err) {
+          console.warn(`[recall webhook] delete blocked bot for ${e.id} failed: ${err instanceof Error ? err.message : err}`);
+        }
+        await kv.del(`recall:cal:event:${calendarId}:${e.id}:bot`).catch(() => {});
+      }
+      continue;
+    }
 
     // Cross-calendar dedup. Same meeting can land on multiple connected
     // calendars (any meeting where two teammates accept). First calendar
@@ -251,7 +273,7 @@ async function handleCalendarEvent(
     }
   }
   console.log(
-    `[recall webhook] ${eventName} cal=${calendarId} owner=${ownerEmail} events=${events.length} scheduled=${scheduled} deleted=${deleted} skipped_dup=${skippedDup}`,
+    `[recall webhook] ${eventName} cal=${calendarId} owner=${ownerEmail} events=${events.length} scheduled=${scheduled} deleted=${deleted} skipped_dup=${skippedDup} skipped_blocked=${skippedBlocked}`,
   );
 }
 

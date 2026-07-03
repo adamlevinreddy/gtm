@@ -125,6 +125,12 @@ export default async function MeetingsPage({
             >
               Meetings
             </span>
+            <Link
+              href="/board/meetings/schedule"
+              className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
+            >
+              Bot schedule
+            </Link>
           </div>
         </header>
 

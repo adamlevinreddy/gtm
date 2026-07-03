@@ -274,6 +274,16 @@ export type CalendarEventAttendee = {
   responseStatus?: string;
 };
 
+// Bots Recall has pre-scheduled for this event (present on list/detail
+// responses) — lets callers see "will the notetaker join?" without a
+// separate lookup.
+export type CalendarEventBot = {
+  bot_id: string;
+  start_time?: string;
+  deduplication_key?: string;
+  meeting_url?: string;
+};
+
 export type CalendarEvent = {
   id: string;
   start_time?: string;
@@ -281,6 +291,7 @@ export type CalendarEvent = {
   meeting_url?: string | null;
   is_deleted?: boolean;
   ical_uid?: string;
+  bots?: CalendarEventBot[];
   raw?: {
     summary?: string;
     attendees?: CalendarEventAttendee[];
@@ -290,16 +301,7 @@ export type CalendarEvent = {
   };
 };
 
-// List calendar events updated since the cursor. Paginates via the
-// returned `next` URL (full URL — we follow as-is per Recall's docs).
-export async function listCalendarEventsSince(opts: {
-  calendarId: string;
-  updatedAtGte: string;
-}): Promise<CalendarEvent[]> {
-  const params = new URLSearchParams({
-    calendar_id: opts.calendarId,
-    updated_at__gte: opts.updatedAtGte,
-  });
+async function listCalendarEventsPaginated(params: URLSearchParams): Promise<CalendarEvent[]> {
   let url: string | null = `${RECALL_BASE}/calendar-events/?${params.toString()}`;
   const events: CalendarEvent[] = [];
   while (url) {
@@ -312,6 +314,61 @@ export async function listCalendarEventsSince(opts: {
     url = body.next ?? null;
   }
   return events;
+}
+
+// List calendar events updated since the cursor. Paginates via the
+// returned `next` URL (full URL — we follow as-is per Recall's docs).
+export async function listCalendarEventsSince(opts: {
+  calendarId: string;
+  updatedAtGte: string;
+}): Promise<CalendarEvent[]> {
+  return listCalendarEventsPaginated(
+    new URLSearchParams({
+      calendar_id: opts.calendarId,
+      updated_at__gte: opts.updatedAtGte,
+    }),
+  );
+}
+
+// List calendar events by start-time window — the "what's coming up"
+// view for the board's bot-schedule page and for eagerly applying
+// opt-out blocks to already-scheduled bots.
+export async function listCalendarEventsByStart(opts: {
+  calendarId: string;
+  startGte: string;
+  startLte?: string;
+  /** Narrow to one meeting/series — Recall filters on exact ical_uid. */
+  icalUid?: string;
+}): Promise<CalendarEvent[]> {
+  const params = new URLSearchParams({
+    calendar_id: opts.calendarId,
+    start_time__gte: opts.startGte,
+  });
+  if (opts.startLte) params.set("start_time__lte", opts.startLte);
+  if (opts.icalUid) params.set("ical_uid", opts.icalUid);
+  return listCalendarEventsPaginated(params);
+}
+
+// All calendars connected to this Recall account (one per teammate who
+// completed the OAuth flow). platform_email identifies the teammate.
+export async function listAllCalendars(): Promise<
+  Array<{ id: string; platform: string; platform_email: string | null; status: string }>
+> {
+  let url: string | null = `${RECALL_BASE}/calendars/`;
+  const calendars: Array<{ id: string; platform: string; platform_email: string | null; status: string }> = [];
+  while (url) {
+    const res = await fetch(url, { headers: { Authorization: authHeader() } });
+    if (!res.ok) {
+      throw new Error(`recall list calendars -> ${res.status} ${await res.text()}`);
+    }
+    const body = (await res.json()) as {
+      results?: Array<{ id: string; platform: string; platform_email: string | null; status: string }>;
+      next?: string | null;
+    };
+    if (Array.isArray(body.results)) calendars.push(...body.results);
+    url = body.next ?? null;
+  }
+  return calendars;
 }
 
 // Decide whether we should record this calendar event.
