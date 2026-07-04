@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { after } from "next/server";
-import { cookies } from "next/headers";
+import type { Metadata } from "next";
 import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
-import { listBoards, getBoardSummary, OPEN_STATUSES } from "@/lib/work-items";
+import { OPEN_STATUSES } from "@/lib/work-items";
 import { labeledMeetings, accountRollup, type LabeledMeeting } from "@/lib/meeting-accounts";
 import { warmLabels } from "@/lib/company-resolver";
 import {
@@ -13,15 +13,30 @@ import {
   type CalendarEvent,
 } from "@/lib/recall-calendar-v2";
 import { getBlockChecker, eventUid } from "@/lib/meeting-optout";
-import { VIEWER_COOKIE } from "@/lib/team";
+import { personName } from "./board/ui-shared";
+import AppShell, { resolveViewer } from "./AppShell";
 import MeetingChatStream from "./board/meeting/MeetingChatStream";
-import ViewerPicker from "./board/ViewerPicker";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+export const metadata: Metadata = { title: "Home" };
+
 const PLUM = "#773D72";
+
+function greetingPT(): string {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date()),
+  );
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
 
 // ---------------------------------------------------------------------------
 // Home — the single place to start. Built from a week of real Slack usage:
@@ -112,20 +127,15 @@ async function upcomingMeetings(): Promise<UpcomingRow[]> {
 }
 
 export default async function HomePage() {
-  const cookieStore = await cookies();
-  const viewer =
-    cookieStore.get(VIEWER_COOKIE)?.value ||
-    process.env.BOARD_DEFAULT_VIEWER ||
-    "adam@reddy.io";
+  const viewer = await resolveViewer();
 
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
 
-  const [labeled, upcoming, boards] = await Promise.all([
+  const [labeled, upcoming] = await Promise.all([
     pat
       ? labeledMeetings(pat, 30, 400)
       : Promise.resolve({ meetings: [] as LabeledMeeting[], uncachedEvidence: [] }),
     upcomingMeetings(),
-    listBoards().catch(() => []),
   ]);
 
   // Canon labels for anything uncached warm in the background — the next
@@ -159,11 +169,6 @@ export default async function HomePage() {
 
   const recentCustomer = recentCustomerMeetings(labeled.meetings);
 
-  const boardSummaries = await Promise.all(
-    boards.map(async (b) => ({ key: b.key, name: b.name, summary: await getBoardSummary(b.id) })),
-  ).catch(() => [] as Array<{ key: string; name: string; summary: { open: number } }>);
-  const totalOpen = boardSummaries.reduce((n, b) => n + b.summary.open, 0);
-
   // Suggested prompts mirroring the week's REAL Slack asks (meeting recall,
   // pipeline sweep, assets, drafting) — personalized with live account names.
   const topAccount = accounts[0]?.account ?? "our latest customer";
@@ -178,38 +183,13 @@ export default async function HomePage() {
   ];
 
   return (
-    <main className="min-h-screen bg-zinc-50 px-6 py-7">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-5 flex flex-wrap items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg text-lg" style={{ background: "#F0E8EF" }}>
-            🏠
-          </div>
-          <div className="mr-2">
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Reddy GTM</h1>
-            <p className="text-sm text-zinc-500">
-              Ask anything across meetings, HubSpot, and the library — same brain as the Slack bot.
-            </p>
-          </div>
-          <div className="ml-auto flex items-center gap-3">
-            <ViewerPicker viewer={viewer} />
-            <nav className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
-              <span className="rounded-md px-2.5 py-1 text-sm font-medium text-white" style={{ background: PLUM }}>
-                Home
-              </span>
-              <Link href="/board/meetings" className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50">
-                Meetings
-              </Link>
-              <Link href="/board/meetings/schedule" className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50">
-                Bot schedule
-              </Link>
-              <Link href="/board" className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50">
-                Board{totalOpen > 0 ? ` (${totalOpen})` : ""}
-              </Link>
-            </nav>
-          </div>
-        </header>
-
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+    <AppShell
+      active="home"
+      viewer={viewer}
+      title={`${greetingPT()}, ${personName(viewer).split(" ")[0]}`}
+      subtitle="Ask anything across meetings, HubSpot, and the library — same brain as the Slack bot."
+    >
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
           {/* Chat hero */}
           <div className="lg:col-span-3">
             <div
@@ -349,7 +329,6 @@ export default async function HomePage() {
             </table>
           </div>
         </section>
-      </div>
-    </main>
+    </AppShell>
   );
 }

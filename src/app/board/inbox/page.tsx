@@ -1,11 +1,15 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { listNotifications } from "@/lib/board-world";
 import { PLUM, relTime } from "../ui-shared";
+import AppShell from "@/app/AppShell";
 import MarkAllRead from "./MarkAllRead";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+export const metadata: Metadata = { title: "Inbox" };
 
 const VIEWER_COOKIE = "board_viewer";
 
@@ -45,45 +49,35 @@ export default async function InboxPage({
   }
   const unread = notifications.filter((n) => !n.readAt).length;
 
-  const backHref = "/board";
-
   return (
-    <main className="min-h-screen bg-zinc-50 px-6 py-7">
-      <div className="mx-auto max-w-3xl">
-        <header className="mb-5 flex flex-wrap items-center gap-3">
-          <Link
-            href={backHref}
-            className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
-          >
-            ← Board
-          </Link>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Inbox</h1>
-            <p className="text-sm text-zinc-500">
-              Notifications for {viewer.split("@")[0]}
-            </p>
+    <AppShell
+      active="inbox"
+      viewer={viewer}
+      title="Inbox"
+      subtitle={`Notifications for ${viewer.split("@")[0]}`}
+      maxWidth="max-w-3xl"
+      actions={
+        <>
+          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
+            <Link
+              href="/board/inbox"
+              className="rounded-md px-2.5 py-1 text-sm no-underline"
+              style={!onlyUnread ? { background: PLUM, color: "#fff" } : { color: "#574B59" }}
+            >
+              All
+            </Link>
+            <Link
+              href="/board/inbox?filter=unread"
+              className="rounded-md px-2.5 py-1 text-sm no-underline"
+              style={onlyUnread ? { background: PLUM, color: "#fff" } : { color: "#574B59" }}
+            >
+              Unread
+            </Link>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
-              <Link
-                href="/board/inbox"
-                className="rounded-md px-2.5 py-1 text-sm no-underline"
-                style={!onlyUnread ? { background: PLUM, color: "#fff" } : { color: "#574B59" }}
-              >
-                All
-              </Link>
-              <Link
-                href="/board/inbox?filter=unread"
-                className="rounded-md px-2.5 py-1 text-sm no-underline"
-                style={onlyUnread ? { background: PLUM, color: "#fff" } : { color: "#574B59" }}
-              >
-                Unread
-              </Link>
-            </div>
-            <MarkAllRead viewer={viewer} unread={unread} />
-          </div>
-        </header>
-
+          <MarkAllRead viewer={viewer} unread={unread} />
+        </>
+      }
+    >
         {error ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
             <p className="font-semibold">Inbox not reachable.</p>
@@ -168,7 +162,6 @@ export default async function InboxPage({
             })}
           </ul>
         )}
-      </div>
-    </main>
+    </AppShell>
   );
 }

@@ -1,10 +1,11 @@
-import Link from "next/link";
 import { inArray } from "drizzle-orm";
+import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
 import { after } from "next/server";
 import { recentMeetingIndex, deriveAccountLabel } from "@/lib/recall-index";
 import { readCachedLabels, warmLabels, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
+import AppShell from "@/app/AppShell";
 import MeetingsHub, { type HubMeeting } from "./MeetingsHub";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export const runtime = "nodejs";
 // after() within this budget.
 export const maxDuration = 300;
 
-const PLUM = "#773D72";
+export const metadata: Metadata = { title: "Meetings" };
 
 const DAYS_LIMIT: Record<number, number> = { 30: 120, 90: 350, 365: 700 };
 
@@ -102,48 +103,12 @@ export default async function MeetingsPage({
   });
 
   return (
-    <main className="min-h-screen bg-zinc-50 px-6 py-7">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-4 flex flex-wrap items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg text-lg" style={{ background: "#F0E8EF" }}>
-            🎥
-          </div>
-          <div className="mr-2">
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Meetings</h1>
-            <p className="text-sm text-zinc-500">
-              Watch recordings, read transcripts, and chat across them.
-            </p>
-          </div>
-          <div className="ml-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
-            <Link
-              href="/"
-              className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
-            >
-              Home
-            </Link>
-            <Link
-              href="/board"
-              className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
-            >
-              Boards
-            </Link>
-            <span
-              className="rounded-md px-2.5 py-1 text-sm font-medium text-white"
-              style={{ background: PLUM }}
-            >
-              Meetings
-            </span>
-            <Link
-              href="/board/meetings/schedule"
-              className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
-            >
-              Bot schedule
-            </Link>
-          </div>
-        </header>
-
-        <MeetingsHub meetings={data} days={days} initialAccount={account} />
-      </div>
-    </main>
+    <AppShell
+      active="meetings"
+      title="Meetings"
+      subtitle="Watch recordings, read transcripts, and chat across them."
+    >
+      <MeetingsHub meetings={data} days={days} initialAccount={account} />
+    </AppShell>
   );
 }

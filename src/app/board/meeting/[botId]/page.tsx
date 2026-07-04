@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { loadMeeting } from "@/lib/meeting-viewer";
+import AppShell from "@/app/AppShell";
 import MeetingChatStream from "../MeetingChatStream";
 import MeetingPlayerAndTranscript from "./MeetingPlayerAndTranscript";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+export const metadata = { title: "Meeting" };
 
 const PLUM = "#773D72";
 
@@ -33,18 +36,17 @@ export default async function MeetingViewerPage({
   const { from, customer } = await searchParams;
   const meeting = await loadMeeting(botId, { customerHint: customer ?? null });
 
-  const backHref = from ? `/board/${from}` : "/board";
+  const backHref = from ? `/board/${from}` : "/board/meetings";
   const subtitle = [meeting.companyName, fmtPT(meeting.startedAt), meeting.platform]
     .filter(Boolean)
     .join(" · ");
 
   return (
-    <main className="min-h-screen bg-zinc-50 px-6 py-7">
-      <div className="mx-auto max-w-6xl">
+    <AppShell active="meetings" maxWidth="max-w-6xl">
         {/* breadcrumb */}
         <nav className="mb-4 flex items-center gap-1.5 text-sm text-zinc-400">
           <Link href={backHref} className="no-underline hover:underline" style={{ color: "#574B59" }}>
-            {from ? "← Back to task" : "← Board"}
+            {from ? "← Back to task" : "← All meetings"}
           </Link>
         </nav>
 
@@ -104,7 +106,6 @@ export default async function MeetingViewerPage({
             </div>
           </div>
         )}
-      </div>
-    </main>
+    </AppShell>
   );
 }

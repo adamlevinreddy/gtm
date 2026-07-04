@@ -15,12 +15,10 @@ import {
 } from "@/lib/work-items";
 import type { WorkItem } from "@/lib/schema";
 import { cookies } from "next/headers";
-import Link from "next/link";
 import {
   labelsFor,
   listLabels,
   listViews,
-  unreadNotificationCount,
 } from "@/lib/board-world";
 import { itemIdsForFilters } from "@/lib/board-filter-query";
 import BoardClient from "./BoardClient";
@@ -36,10 +34,12 @@ import {
   UNTAGGED,
   type BoardFilters,
 } from "./filters";
-import ViewerPicker from "./ViewerPicker";
+import AppShell from "@/app/AppShell";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+export const metadata = { title: "Board" };
 
 const VIEWER_COOKIE = "board_viewer";
 
@@ -251,7 +251,6 @@ export default async function BoardPage({
   let savedViews: { id: string; name: string; shared: boolean; spec: unknown }[] = [];
   let owners: string[] = [];
   let customers: string[] = [];
-  let unread = 0;
   let error: string | null = null;
 
   try {
@@ -352,7 +351,6 @@ export default async function BoardPage({
     ).sort((a, b) => a.localeCompare(b));
 
     labelsByItem = await labelsFor(rendered.map((i) => i.id));
-    unread = await unreadNotificationCount(viewer);
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   }
@@ -375,66 +373,23 @@ export default async function BoardPage({
   };
 
   return (
-    <main className="min-h-screen bg-zinc-50 px-6 py-7">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-4 flex flex-wrap items-center gap-3">
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-lg"
-            style={{ background: "#F0E8EF" }}
-          >
-            🗂️
-          </div>
-          <div className="mr-2">
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
-              {activeBoardName}
-            </h1>
-            <p className="text-sm text-zinc-500">
-              Move work through Slack or here. The link is always on.
-            </p>
-          </div>
-
+    <AppShell
+      active="board"
+      viewer={viewer}
+      title={activeBoardName}
+      subtitle="Move work through Slack or here. The link is always on."
+      actions={
+        <>
           {boards.length > 0 && (
             <BoardSwitcher boards={boards} active={filters.board} view={filters.view} />
           )}
-
-          <div className="ml-auto flex items-center gap-3">
-            <ViewerPicker viewer={viewer} />
-            <Link
-              href="/"
-              className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
-              title="Home — ask across everything"
-            >
-              🏠 Home
-            </Link>
-            <Link
-              href="/board/meetings"
-              className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
-              title="Meetings — recordings, transcripts & chat"
-            >
-              🎥 Meetings
-            </Link>
-            <Link
-              href="/board/inbox"
-              className="relative rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
-              title="Notifications"
-            >
-              Inbox
-              {unread > 0 && (
-                <span
-                  className="ml-1 rounded-full px-1.5 text-[11px] font-semibold tabular-nums text-white"
-                  style={{ background: PLUM }}
-                >
-                  {unread}
-                </span>
-              )}
-            </Link>
-            <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
-              {tab("kanban", "Board")}
-              {tab("list", "List")}
-            </div>
+          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
+            {tab("kanban", "Board")}
+            {tab("list", "List")}
           </div>
-        </header>
-
+        </>
+      }
+    >
         {error ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
             <p className="font-semibold">Board not reachable.</p>
@@ -473,7 +428,6 @@ export default async function BoardPage({
             )}
           </>
         )}
-      </div>
-    </main>
+    </AppShell>
   );
 }

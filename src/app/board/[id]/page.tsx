@@ -11,9 +11,12 @@ import {
   effectiveHighPriority,
 } from "@/lib/work-items";
 import type { WorkItem, WorkItemActivity } from "@/lib/schema";
+import AppShell from "@/app/AppShell";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+export const metadata = { title: "Task" };
 
 const PLUM = "#773D72";
 
@@ -133,8 +136,7 @@ export default async function WorkItemDetailPage({
   const high = effectiveHighPriority(item, now);
 
   return (
-    <main className="min-h-screen bg-zinc-50 px-6 py-7">
-      <div className="mx-auto max-w-3xl">
+    <AppShell active="board" maxWidth="max-w-3xl">
         {/* breadcrumb */}
         <nav className="mb-4 flex items-center gap-1.5 text-sm text-zinc-400">
           <Link href="/board" className="no-underline hover:underline" style={{ color: "#574B59" }}>Board</Link>
@@ -283,7 +285,6 @@ export default async function WorkItemDetailPage({
             </ol>
           )}
         </section>
-      </div>
-    </main>
+    </AppShell>
   );
 }
