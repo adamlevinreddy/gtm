@@ -60,8 +60,12 @@ export default async function AppShell({
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50">
+      {/* Full-width bar with FIXED edges — brand pinned left, picker pinned
+          right, independent of each page's content width. Never give this
+          container a page-driven max-width: that's what made the nav "fly
+          around" between pages. */}
       <header className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white/85 backdrop-blur">
-        <div className={`mx-auto flex h-14 items-center gap-6 px-6 ${maxWidth} w-full`}>
+        <div className="flex h-14 w-full items-center gap-6 px-6">
           <Link href="/" className="flex shrink-0 items-center gap-2.5 no-underline">
             <span
               className="flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold text-white"
