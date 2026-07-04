@@ -6,7 +6,10 @@
 import { recentMeetingIndex, deriveAccountLabel, type IndexedMeeting } from "@/lib/recall-index";
 import { readCachedLabels, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
 
-const FREE_DOMAINS = new Set(["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com"]);
+// reddy.io is excluded as evidence: our own people attend every meeting, and
+// Reddy exists as a HubSpot company — domain resolution used to hit OURSELVES
+// before the customer's domain and label customer meetings "Reddy".
+const FREE_DOMAINS = new Set(["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "reddy.io"]);
 export const INTERNAL_ACCOUNT_LABELS = new Set(["Internal", "Reddy"]);
 
 export type LabeledMeeting = IndexedMeeting & {

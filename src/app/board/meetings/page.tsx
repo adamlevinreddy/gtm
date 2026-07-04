@@ -50,7 +50,9 @@ export default async function MeetingsPage({
   // Canon: resolve the messy heuristic label → a canonical HubSpot company,
   // over DISTINCT labels only (cheap; KV-cached; bot for the hard tail). Falls
   // back to the raw label if resolution is unavailable, so the hub never regresses.
-  const FREE_DOMAINS = new Set(["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com"]);
+  // reddy.io excluded — our own domain resolving as "the customer" mislabeled
+  // meetings as Reddy (see company-resolver guardOwnCompany).
+  const FREE_DOMAINS = new Set(["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "reddy.io"]);
   const rawByBot = new Map<string, string>();
   const evidence = new Map<string, LabelEvidence>();
   for (const m of meetings) {
