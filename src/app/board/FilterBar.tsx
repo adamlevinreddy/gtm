@@ -7,6 +7,7 @@ import {
   activeFilterCount,
   filtersHref,
   UNASSIGNED,
+  UNTAGGED,
 } from "./filters";
 import { KIND_OPTIONS, PLUM, personName } from "./ui-shared";
 
@@ -96,6 +97,7 @@ export default function FilterBar({
             style={pill(!!filters.customer)}
           >
             <option value="">Company: any</option>
+            <option value={UNTAGGED}>No company tag</option>
             {customers.map((c) => (
               <option key={c} value={c}>
                 {prettyCompany(c)}

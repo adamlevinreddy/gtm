@@ -6,40 +6,58 @@ const PLUM = "#773D72";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
+// Chat panel wired to /api/board/ui/meeting-chat (NDJSON protocol:
+// status lines while the agent works, then delta chunks). Scoped when
+// `botIds` is set; open-ended (full cross-source brain) when omitted.
 export default function MeetingChatStream({
   botIds,
+  scopeNote,
   title = "Ask about this meeting",
   scopeLabel,
   starters,
   placeholder = "Ask a question…",
+  unscoped = false,
 }: {
-  botIds: string[];
+  botIds?: string[];
+  /** Human description of the filter behind botIds — passed to the agent. */
+  scopeNote?: string;
   title?: string;
   scopeLabel?: string;
   starters?: string[];
   placeholder?: string;
+  /** true → no meeting scope: the agent answers from everything it has. */
+  unscoped?: boolean;
 }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const scoped = !unscoped;
+  const ids = botIds ?? [];
+  const disabled = scoped && ids.length === 0;
 
   const scrollDown = () =>
     requestAnimationFrame(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight));
 
   async function ask(question: string) {
     const q = question.trim();
-    if (!q || streaming || botIds.length === 0) return;
+    if (!q || streaming || disabled) return;
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
     setMessages((m) => [...m, { role: "user", content: q }, { role: "assistant", content: "" }]);
     setInput("");
     setStreaming(true);
+    setStatus("Sending…");
     scrollDown();
     try {
       const res = await fetch("/api/board/ui/meeting-chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ botIds, messages: [...history, { role: "user", content: q }] }),
+        body: JSON.stringify({
+          ...(scoped ? { botIds: ids, scopeNote } : {}),
+          messages: [...history, { role: "user", content: q }],
+        }),
       });
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => null);
@@ -47,21 +65,40 @@ export default function MeetingChatStream({
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let buf = "";
+      const handleLine = (raw: string) => {
+        if (!raw.trim()) return;
+        let evt: { t?: string; text?: string };
+        try {
+          evt = JSON.parse(raw) as { t?: string; text?: string };
+        } catch {
+          return;
+        }
+        if (evt.t === "status" && evt.text) {
+          setStatus(evt.text);
+        } else if (evt.t === "delta" && evt.text) {
+          setStatus(null);
+          setMessages((m) => {
+            const next = m.slice();
+            next[next.length - 1] = {
+              role: "assistant",
+              content: next[next.length - 1].content + evt.text,
+            };
+            return next;
+          });
+          scrollDown();
+        }
+      };
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        setMessages((m) => {
-          const next = m.slice();
-          next[next.length - 1] = {
-            role: "assistant",
-            content: next[next.length - 1].content + chunk,
-          };
-          return next;
-        });
-        scrollDown();
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const l of lines) handleLine(l);
       }
+      if (buf) handleLine(buf);
     } catch (err) {
       setMessages((m) => {
         const next = m.slice();
@@ -73,6 +110,7 @@ export default function MeetingChatStream({
       });
     } finally {
       setStreaming(false);
+      setStatus(null);
       scrollDown();
     }
   }
@@ -89,11 +127,13 @@ export default function MeetingChatStream({
         {messages.length === 0 && (
           <div className="space-y-2">
             <p className="text-sm text-zinc-500">
-              {botIds.length === 0
+              {disabled
                 ? "No meetings in scope — adjust the filters."
-                : "Claude reads the transcript" + (botIds.length > 1 ? "s" : "") + " and answers here."}
+                : scoped
+                  ? "Claude reads the transcript" + (ids.length > 1 ? "s" : "") + " and answers here."
+                  : "Ask across every meeting, HubSpot, and the library — same brain as the Slack bot."}
             </p>
-            {starters && botIds.length > 0 && (
+            {starters && !disabled && (
               <div className="flex flex-col gap-1.5 pt-1">
                 {starters.map((s) => (
                   <button
@@ -123,7 +163,15 @@ export default function MeetingChatStream({
                     : { background: "#F6F2F6", color: "#27272a" }
                 }
               >
-                {m.content || (isLastAssistant && streaming ? "▍" : "")}
+                {m.content ||
+                  (isLastAssistant && streaming ? (
+                    <span className="inline-flex items-center gap-1.5 text-zinc-500">
+                      <span className="animate-pulse">●</span>
+                      {status ?? "Working…"}
+                    </span>
+                  ) : (
+                    ""
+                  ))}
               </div>
             </div>
           );
@@ -154,7 +202,7 @@ export default function MeetingChatStream({
         />
         <button
           type="submit"
-          disabled={streaming || !input.trim() || botIds.length === 0}
+          disabled={streaming || !input.trim() || disabled}
           className="rounded-lg px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-40"
           style={{ background: PLUM }}
         >

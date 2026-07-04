@@ -37,19 +37,42 @@ function fmtPT(iso: string | null): string {
   }).format(d) + " PT";
 }
 
-export default function MeetingsHub({ meetings, days }: { meetings: HubMeeting[]; days: number }) {
+// Labels the resolver marks as non-customer meetings. "Reddy" covers stale
+// cache entries from before the own-company guard shipped.
+const INTERNAL_LABELS = new Set(["Internal", "Reddy"]);
+
+export default function MeetingsHub({
+  meetings,
+  days,
+  initialAccount,
+}: {
+  meetings: HubMeeting[];
+  days: number;
+  initialAccount?: string;
+}) {
   const [search, setSearch] = useState("");
-  const [account, setAccount] = useState<string>("all");
+  const [account, setAccount] = useState<string>(initialAccount || "all");
   const [tasksOnly, setTasksOnly] = useState(false);
+  // Internal meetings are ~half the index and drown the customer view —
+  // hidden by default, one click to bring back.
+  const [showInternal, setShowInternal] = useState(
+    initialAccount ? INTERNAL_LABELS.has(initialAccount) : false
+  );
 
   const accounts = useMemo(
-    () => Array.from(new Set(meetings.map((m) => m.account))).sort((a, b) => a.localeCompare(b)),
+    () =>
+      Array.from(new Set(meetings.map((m) => m.account)))
+        .filter((a) => !INTERNAL_LABELS.has(a))
+        .sort((a, b) => a.localeCompare(b)),
     [meetings]
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return meetings.filter((m) => {
+      // An explicit account pick or a search query overrides the internal
+      // toggle — if you ask for it, you see it.
+      if (!showInternal && account === "all" && !q && INTERNAL_LABELS.has(m.account)) return false;
       if (account !== "all" && m.account !== account) return false;
       if (tasksOnly && m.tasks.length === 0) return false;
       if (q) {
@@ -58,7 +81,7 @@ export default function MeetingsHub({ meetings, days }: { meetings: HubMeeting[]
       }
       return true;
     });
-  }, [meetings, search, account, tasksOnly]);
+  }, [meetings, search, account, tasksOnly, showInternal]);
 
   // Only meetings with a transcript can be chatted about.
   const chatBotIds = useMemo(
@@ -123,6 +146,19 @@ export default function MeetingsHub({ meetings, days }: { meetings: HubMeeting[]
             }
           >
             Has tasks
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowInternal((v) => !v)}
+            className="rounded-lg border px-2.5 py-1.5 text-sm transition-colors"
+            style={
+              showInternal
+                ? { borderColor: PLUM, background: "#F0E8EF", color: PLUM }
+                : { borderColor: "#E4DCE3", color: "#52525b" }
+            }
+            title="Internal Reddy meetings (standups, syncs) are hidden by default"
+          >
+            {showInternal ? "Internal shown" : "Internal hidden"}
           </button>
         </div>
 
@@ -190,6 +226,12 @@ export default function MeetingsHub({ meetings, days }: { meetings: HubMeeting[]
           <MeetingChatStream
             key={account + ":" + tasksOnly + ":" + days}
             botIds={chatBotIds}
+            scopeNote={
+              `last ${days} days` +
+              (account !== "all" ? `, account ${account}` : "") +
+              (search.trim() ? `, matching "${search.trim()}"` : "") +
+              (tasksOnly ? ", only meetings with tasks" : "")
+            }
             title="Chat across these meetings"
             scopeLabel={scopeLabel}
             placeholder={chatBotIds.length ? "Ask across the meetings in view…" : "No transcripts in view"}

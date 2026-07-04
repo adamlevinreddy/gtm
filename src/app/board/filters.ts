@@ -25,6 +25,10 @@ export const PARAM_KEYS = [
 ] as const;
 
 export const UNASSIGNED = "__none__";
+// Company filter value meaning "items with NO customer tag". Without this,
+// untagged items (a large share — triage doesn't always set a slug) were
+// invisible to every Company-filtered view with no way to find them.
+export const UNTAGGED = "__untagged__";
 
 type SP = Record<string, string | string[] | undefined>;
 function str(v: string | string[] | undefined): string | undefined {

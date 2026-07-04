@@ -20,9 +20,9 @@ const DAYS_LIMIT: Record<number, number> = { 30: 120, 90: 350, 365: 700 };
 export default async function MeetingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ days?: string }>;
+  searchParams: Promise<{ days?: string; account?: string }>;
 }) {
-  const { days: daysRaw } = await searchParams;
+  const { days: daysRaw, account } = await searchParams;
   const days = [30, 90, 365].includes(Number(daysRaw)) ? Number(daysRaw) : 30;
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   const meetings = pat ? await recentMeetingIndex(pat, days, DAYS_LIMIT[days]).catch(() => []) : [];
@@ -114,6 +114,12 @@ export default async function MeetingsPage({
           </div>
           <div className="ml-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
             <Link
+              href="/"
+              className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
+            >
+              Home
+            </Link>
+            <Link
               href="/board"
               className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
             >
@@ -134,7 +140,7 @@ export default async function MeetingsPage({
           </div>
         </header>
 
-        <MeetingsHub meetings={data} days={days} />
+        <MeetingsHub meetings={data} days={days} initialAccount={account} />
       </div>
     </main>
   );

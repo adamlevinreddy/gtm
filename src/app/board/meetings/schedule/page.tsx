@@ -22,6 +22,12 @@ export default function BotSchedulePage() {
           </div>
           <div className="ml-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
             <Link
+              href="/"
+              className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
+            >
+              Home
+            </Link>
+            <Link
               href="/board"
               className="rounded-md px-2.5 py-1 text-sm font-medium text-zinc-600 no-underline hover:bg-zinc-50"
             >

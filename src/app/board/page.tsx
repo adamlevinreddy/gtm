@@ -33,8 +33,10 @@ import {
   parseFilters,
   filtersHref,
   UNASSIGNED,
+  UNTAGGED,
   type BoardFilters,
 } from "./filters";
+import ViewerPicker from "./ViewerPicker";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,6 +63,7 @@ function passesClientSideFilters(
   allowIds: Set<string> | null
 ): boolean {
   if (f.assignee === UNASSIGNED && it.ownerEmail) return false;
+  if (f.customer === UNTAGGED && it.customerSlug) return false;
   if (allowIds && !allowIds.has(it.id)) return false;
   if (f.priority) {
     const due = it.dueAt
@@ -268,19 +271,23 @@ export default async function BoardPage({
       ? new Set(await itemIdsForFilters({ labelId: filters.label }))
       : null;
 
+    // UNTAGGED is a post-filter (customerSlug IS NULL), not a slug value.
+    const customerSlugFilter =
+      filters.customer && filters.customer !== UNTAGGED ? filters.customer : undefined;
+
     // Per-board summary + boards list + the world reads, in parallel.
     const [boardRows, allBoards, digest, allLabels, views] = await Promise.all([
       filters.view === "list"
         ? listWorkItems({
             boardId: boardId ?? undefined,
             ownerEmail,
-            customerSlug: filters.customer,
+            customerSlug: customerSlugFilter,
             kind: kindFilter,
           })
         : getBoard({
             boardId: boardId ?? undefined,
             ownerEmail,
-            customerSlug: filters.customer,
+            customerSlug: customerSlugFilter,
             kind: kindFilter,
           }),
       listBoards(),
@@ -391,6 +398,14 @@ export default async function BoardPage({
           )}
 
           <div className="ml-auto flex items-center gap-3">
+            <ViewerPicker viewer={viewer} />
+            <Link
+              href="/"
+              className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
+              title="Home — ask across everything"
+            >
+              🏠 Home
+            </Link>
             <Link
               href="/board/meetings"
               className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"

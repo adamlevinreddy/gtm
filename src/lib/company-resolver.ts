@@ -46,6 +46,17 @@ function pretty(s: string): string {
   return s.split(/[-_]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
+// Reddy itself exists as a HubSpot company, so internal meetings ("Reddy
+// standup") used to resolve to "Reddy" as if it were a customer — 10 of the
+// hub's account labels were us. Any resolution that lands on our own company
+// is an internal meeting, full stop.
+function guardOwnCompany(r: ResolvedCompany | null): ResolvedCompany | null {
+  if (!r) return null;
+  const isSelf = r.domain?.toLowerCase() === "reddy.io" || r.canonical.trim().toLowerCase() === "reddy";
+  if (!isSelf) return r;
+  return { canonical: "Internal", hubspotCompanyId: null, domain: null, source: r.source, confidence: "high" };
+}
+
 // --- deterministic steps (cheap, no bot) -----------------------------------
 async function resolveDeterministic(ev: LabelEvidence): Promise<ResolvedCompany | null> {
   // slug-exact: an already-attributed slug → canonicalize its pretty form.
@@ -153,7 +164,7 @@ export async function warmLabels(evidence: LabelEvidence[], opts: { userEmail: s
     await Promise.all(
       chunk.map(async (ev) => {
         if (await kv.get<ResolvedCompany>(canonKey(ev)).catch(() => null)) return; // already warmed
-        const det = await resolveDeterministic(ev).catch(() => null);
+        const det = guardOwnCompany(await resolveDeterministic(ev).catch(() => null));
         if (det) await kv.set(canonKey(ev), det, { ex: CANON_TTL }).catch(() => {});
         else needBot.push(ev);
       })
@@ -167,7 +178,7 @@ export async function warmLabels(evidence: LabelEvidence[], opts: { userEmail: s
     if (botCalls < MAX_BOT_CALLS_PER_RENDER) {
       botCalls += 1;
       const shortlist = await shortlistCandidates(ev).catch(() => []);
-      resolved = await botPickCanonical(ev, shortlist, opts.userEmail).catch(() => null);
+      resolved = guardOwnCompany(await botPickCanonical(ev, shortlist, opts.userEmail).catch(() => null));
     }
     const final: ResolvedCompany =
       resolved ?? { canonical: ev.rawLabel, hubspotCompanyId: null, domain: null, source: "fallback", confidence: "low" };
