@@ -21,7 +21,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-export const metadata: Metadata = { title: "Home" };
+// The root layout's title.template doesn't apply to its own segment's page,
+// so spell the full title out here.
+export const metadata: Metadata = { title: "Home · Reddy GTM" };
 
 const PLUM = "#773D72";
 
