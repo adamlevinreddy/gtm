@@ -3,9 +3,7 @@ import { and, desc, gte, ne, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
 import { readMeetingIndex } from "@/lib/meeting-index";
-import { deriveAccountLabel } from "@/lib/recall-index";
-import { accountCanon, slugifyAccount, prettyAccount } from "@/lib/account-identity";
-import { readAccountInfo } from "@/lib/company-resolver";
+import { labeledMeetings, accountRollup } from "@/lib/meeting-accounts";
 import { listLibraryFiles } from "@/lib/library";
 import { fmtDayPT } from "@/lib/fmt";
 import { verifyViewerCookie } from "@/lib/viewer";
@@ -50,11 +48,15 @@ export async function GET(req: NextRequest) {
   }
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const [rows, libFiles, taskRows] = await Promise.all([
+  const [rows, labeled, libFiles, taskRows] = await Promise.all([
     readMeetingIndex({
       sinceMs: Date.now() - 90 * 24 * 60 * 60 * 1000,
       limit: 400,
     }).catch(() => []),
+    // Accounts come from the SAME labeler the meetings hub / home / /a use, so
+    // the deduped display + slug are identical everywhere (no reimplementation
+    // that can drift). Cheap: recentMeetingIndex is the KV fast path.
+    pat ? labeledMeetings(pat, 90, 400).catch(() => ({ meetings: [], uncachedEvidence: [] })) : Promise.resolve({ meetings: [], uncachedEvidence: [] }),
     pat ? listLibraryFiles(pat).catch(() => []) : Promise.resolve([]),
     // Open tasks (+ recently-done), matching the /tasks list scope.
     db
@@ -81,29 +83,17 @@ export async function GET(req: NextRequest) {
     botId: r.bot_id,
   }));
 
-  // Accounts, deduped by the SAME deterministic identity the meetings hub uses,
-  // so ⌘K lists one entry per company (no "1-800-Flowers.com" twice) and links
-  // to the same /a/{slug}. Internal / all-reddy meetings are excluded.
-  const acctByKey = new Map<string, string>(); // key → best raw display
-  for (const r of rows) {
-    const label = deriveAccountLabel(r.title, r.customer_slug);
-    const { key, aliasDisplay } = accountCanon(label, r.customer_slug);
-    if (key === "internal" || key === "unknown") continue;
-    const emailed = (r.attendees ?? []).filter((a) => a.email);
-    if (emailed.length > 0 && emailed.every((a) => a.email!.toLowerCase().endsWith("@reddy.io"))) continue;
-    if (!acctByKey.has(key)) acctByKey.set(key, aliasDisplay ?? prettyAccount(label));
-  }
-  const acctInfo = await readAccountInfo([...acctByKey.keys()]).catch(() => new Map());
-  const accounts: QuickItem[] = [...acctByKey.entries()]
-    .map(([key, raw]) => {
-      const display = acctInfo.get(key)?.canonical ?? raw;
-      return {
-        type: "account" as const,
-        title: display,
-        subtitle: "account · meetings, deliverables, commitments",
-        href: `/a/${slugifyAccount(display)}`,
-      };
-    })
+  // One entry per company, deduped + displayed + slugged EXACTLY as the
+  // meetings hub / home / /a do (accountRollup is the shared source of truth),
+  // so a ⌘K account result always lands on the matching /a page. Internal /
+  // all-reddy meetings are already excluded by accountRollup.
+  const accounts: QuickItem[] = accountRollup(labeled.meetings)
+    .map((a) => ({
+      type: "account" as const,
+      title: a.account,
+      subtitle: "account · meetings, deliverables, commitments",
+      href: `/a/${a.accountSlug}`,
+    }))
     .sort((a, b) => a.title.localeCompare(b.title));
 
   const tasks: QuickItem[] = taskRows.map((t) => ({
