@@ -5,7 +5,7 @@ import { readBrief } from "@/lib/brief";
 import { fmtTimePT, fmtDayPT, fmtWeekdayPT } from "@/lib/fmt";
 import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT, WARN } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
-import WelcomeGate from "@/app/WelcomeGate";
+import Gate from "@/app/Gate";
 import { personName } from "@/app/board/ui-shared";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: "Your brief" };
 
 export default async function BriefPage() {
   const viewer = await resolveViewer();
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
 
   const found = await readBrief(viewer);
 

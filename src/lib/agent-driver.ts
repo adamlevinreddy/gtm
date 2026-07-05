@@ -61,6 +61,7 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
   - These run AS the Slack user who mentioned you — reading their Gmail, writing their drafts, reading their HubSpot deals, accessing calendars they have permission to see. Everything is scoped to that user's permissions in each service.
   - Common tool names you'll see on the \`composio\` server: \`GMAIL_FETCH_EMAILS\`, \`GMAIL_CREATE_EMAIL_DRAFT\`, \`GMAIL_SEND_EMAIL\`, \`GOOGLECALENDAR_EVENTS_LIST\`, \`GOOGLECALENDAR_FIND_FREE_SLOTS\`, \`GOOGLECALENDAR_CREATE_EVENT\`, \`GOOGLEDRIVE_FIND_FILE\`, \`GOOGLEDRIVE_DOWNLOAD_FILE\`, \`GOOGLESHEETS_*\`, \`GOOGLEDOCS_*\`, \`HUBSPOT_*\`, \`LINKEDIN_*\`, \`APOLLO_*\`, \`DOCUSIGN_*\`.
 - **Granola MCP (separate from Composio)**: when the user has connected Granola via "set me up", a \`granola\` MCP server is registered with their personal OAuth token. Prefer this over the legacy \`GRANOLA_API_KEY\` curl path — the MCP is per-user (returns only their meetings) and auto-refreshes tokens. Use it for any "what did we discuss", "recent calls", "transcript of X" question. If \`granola\` is NOT in the connected services list, tell the user to run \`@Reddy-GTM set me up\` and click "Connect Granola".
+- **Team Google Drive**: the shared Reddy folder id is \`${process.env.DRIVE_SHARED_FOLDER_ID || "1MCjCHCagypCHe5Z4ysSvVGfuQRX2pnI1"}\`. When the user asks to save a deliverable to the Drive (e.g. "save this in our drive folder for this customer as well"), use their connected googledrive Composio tools to upload it there — inside a subfolder named after the customer (create it if missing) — and reply with the file's Drive link. "What's in our drive" questions can list that folder the same way. If \`googledrive\` isn't in \`connectedToolkits\`, say so and point them to \`/reddy-connect\`.
 
 ## Turn-start convention
 At the start of every turn, refresh the workspace so you pick up any saves from other threads:
@@ -180,6 +181,33 @@ const attachHint = EMAIL_LANE
 function mcpAppendAnswer(text) { mcpBuffer.answer.push(text); }
 function mcpAppendReference(label, url, type) {
   mcpBuffer.references.push({ label, url, type: type || "link" });
+}
+
+// Session sync (Daybreak Arc V): Slack- and email-lane conversations mirror
+// into the web app's Sessions (/s) so one conversation is visible everywhere.
+// Web-lane turns are recorded by the web client itself — skip them here.
+// Fire-and-forget: sync failures never touch the run.
+const SESSION_SYNC = (!MCP_MODE) || EMAIL_LANE;
+async function recordTurn(role, content) {
+  if (!SESSION_SYNC || !content) return;
+  try {
+    const base = process.env.REDDY_GTM_BASE_URL || "https://gtm-jet.vercel.app";
+    await fetch(base + "/api/agent/turns", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-board-secret": process.env.BOARD_API_SECRET || "" },
+      body: JSON.stringify({
+        threadKey: META.threadKey,
+        lane: EMAIL_LANE ? "email" : "slack",
+        channel: META.slackChannel,
+        threadTs: META.slackThreadTs,
+        userEmail: META.slackUserEmail,
+        role: role,
+        content: String(content).slice(0, 200000),
+      }),
+    });
+  } catch (e) {
+    trace("session_sync_error", { error: String(e && e.message ? e.message : e) });
+  }
 }
 
 // ────────── Slack helpers ──────────
@@ -341,6 +369,9 @@ async function main() {
 
   const turn = JSON.parse(await readFile(\`inbox/turn-\${TURN_NUMBER}.json\`, "utf-8"));
   trace("info", { output: "turn payload: " + JSON.stringify(turn) });
+  // Sessions mirror gets the CLEAN text the human typed (displayText), not the
+  // enriched prompt with injected index/meanwhile blocks.
+  void recordTurn("user", turn.displayText || turn.userText);
 
   // Board API helper — the in-sandbox tools call back to /api/board/* as the
   // current Slack user (x-board-actor) with the shared secret. String concat
@@ -383,7 +414,10 @@ async function main() {
           }
           const r = await postSlackMessage(text);
           trace("tool_call", { name: "post_slack_message", textPreview: text.slice(0, 200), ok: r?.ok });
-          if (r?.ok) slackPosted = true;
+          if (r?.ok) {
+            slackPosted = true;
+            void recordTurn("assistant", text); // sessions mirror
+          }
           return { content: [{ type: "text", text: r?.ok ? "posted" : "post failed: " + JSON.stringify(r) }] };
         },
       ),
@@ -687,6 +721,7 @@ async function main() {
       attachments: mcpBuffer.attachments,
       finishedAt: new Date().toISOString(),
     }, 3 * 60 * 60).catch(() => {});
+    if (EMAIL_LANE) await recordTurn("assistant", finalAnswer); // sessions mirror
     console.log("[agent-driver] MCP run " + MCP_REQUEST_ID + " complete (" + finalAnswer.length + " chars, " + mcpBuffer.attachments.length + " attachments)");
     return;
   }

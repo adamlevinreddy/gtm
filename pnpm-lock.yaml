@@ -41,6 +41,9 @@ importers:
       '@vercel/sandbox':
         specifier: beta
         version: 2.0.0-beta.14
+      '@workos-inc/node':
+        specifier: ^10.7.0
+        version: 10.7.0
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@upstash/redis@1.37.0)(postgres@3.4.8)
@@ -1641,6 +1644,10 @@ packages:
 
   '@workflow/serde@4.1.0-beta.2':
     resolution: {integrity: sha512-8kkeoQKLDaKXefjV5dbhBj2aErfKp1Mc4pb6tj8144cF+Em5SPbyMbyLCHp+BVrFfFVCBluCtMx+jjvaFVZGww==}
+
+  '@workos-inc/node@10.7.0':
+    resolution: {integrity: sha512-rffa9znZuIv4yo+9JRxGOLTTSxh0XhOT6jlsktgqEi9MuB9V0VFHRzLd3bTpkq+J9sgrPZNGpvX4aWNfMqt5cQ==}
+    engines: {node: '>=22.11.0'}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -5384,6 +5391,8 @@ snapshots:
       tinyrainbow: 3.1.0
 
   '@workflow/serde@4.1.0-beta.2': {}
+
+  '@workos-inc/node@10.7.0': {}
 
   accepts@2.0.0:
     dependencies:

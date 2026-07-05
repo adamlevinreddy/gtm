@@ -13,7 +13,7 @@ import { signedThumbUrl } from "@/lib/mux";
 import { fmtDayPT } from "@/lib/fmt";
 import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT, OK } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
-import WelcomeGate from "@/app/WelcomeGate";
+import Gate from "@/app/Gate";
 import MeetingRow, { type MeetingRowData } from "@/components/MeetingRow";
 import AccountAsk from "./AccountAsk";
 
@@ -47,7 +47,7 @@ async function hubspotFacts(name: string): Promise<HubFacts> {
 
 export default async function AccountPage({ params }: { params: Promise<{ slug: string }> }) {
   const viewer = await resolveViewer();
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
 
   const { slug: rawSlug } = await params;
   const slug = slugify(decodeURIComponent(rawSlug));

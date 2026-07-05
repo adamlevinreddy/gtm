@@ -21,6 +21,7 @@
     "@slack/web-api": "7.15.0",
     "@vercel/kv": "3.0.0",
     "@vercel/sandbox": "beta",
+    "@workos-inc/node": "^10.7.0",
     "drizzle-orm": "0.45.2",
     "fuzzball": "2.2.3",
     "googleapis": "171.4.0",

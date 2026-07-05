@@ -1,4 +1,4 @@
-import { verifyViewerCookie } from "@/lib/viewer";
+import { resolveApiViewer } from "@/lib/viewer";
 import { NextRequest, NextResponse } from "next/server";
 import { selfBaseUrl, BOARD_COLUMNS, type BoardColumn } from "@/lib/work-items";
 
@@ -23,22 +23,11 @@ export const maxDuration = 30;
 // We pass the status through verbatim so the client can branch on 409.
 // ---------------------------------------------------------------------------
 
-const VIEWER_COOKIE = "board_viewer";
 
 function isBoardColumn(v: unknown): v is BoardColumn {
   return typeof v === "string" && (BOARD_COLUMNS as string[]).includes(v);
 }
 
-function resolveViewer(req: NextRequest, bodyAs?: unknown): string {
-  if (typeof bodyAs === "string" && bodyAs.includes("@")) return bodyAs;
-  const qAs = req.nextUrl.searchParams.get("as");
-  if (qAs && qAs.includes("@")) return qAs;
-  // Signed cookie (Daybreak P6): verify + strip the HMAC; raw use would
-  // leak "email|sig" into attribution.
-  const verified = verifyViewerCookie(req.cookies.get(VIEWER_COOKIE)?.value);
-  if (verified) return verified;
-  return process.env.BOARD_DEFAULT_VIEWER || "adam@reddy.io";
-}
 
 type MoveBody = {
   id?: unknown;
@@ -75,7 +64,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const actorEmail = resolveViewer(req, body.as);
+  const actorEmail = resolveApiViewer(req, body.as);
+  if (!actorEmail) return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
 
   let upstream: Response;
   try {

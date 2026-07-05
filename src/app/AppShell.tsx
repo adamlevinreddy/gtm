@@ -5,8 +5,9 @@ import { unreadNotificationCount } from "@/lib/board-world";
 import { VIEWER_COOKIE } from "@/lib/team";
 import { verifyViewerCookie } from "@/lib/viewer";
 import ViewerPicker from "./board/ViewerPicker";
-import WelcomeGate from "./WelcomeGate";
+import Gate from "@/app/Gate";
 import CommandK from "@/components/CommandK";
+import { ssoEnabled } from "@/lib/workos";
 
 // ---------------------------------------------------------------------------
 // The ONE app chrome. Every page renders inside this shell so navigation
@@ -36,11 +37,12 @@ const NAV: Array<{ key: NavKey; label: string; href: string }> = [
 
 /** ?as= override or the verified cookie — NULL when anonymous. Pages that
  * pass the result to AppShell get the blocking gate for free; never re-add
- * a default here (that's how "everyone is adam@" came back once already). */
+ * a default here (that's how "everyone is adam@" came back once already).
+ * The ?as= convenience is honor-system: it dies the moment SSO is on. */
 export async function resolveViewer(asParam?: string): Promise<string | null> {
   const cookieStore = await cookies();
   return (
-    (asParam && asParam.includes("@") ? asParam : null) ||
+    (!ssoEnabled() && asParam && asParam.includes("@") ? asParam : null) ||
     verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value)
   );
 }
@@ -72,7 +74,7 @@ export default async function AppShell({
   // No identity → the gate, nothing else. (?as= via viewerProp keeps
   // automation/deep-link flows working without a browser cookie.)
   const viewer = viewerProp ?? cookieViewer ?? null;
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
 
   const unread = await unreadNotificationCount(viewer).catch(() => 0);
 
@@ -128,7 +130,7 @@ export default async function AppShell({
 
           <div className="ml-auto flex shrink-0 items-center gap-3">
             <CommandK />
-            <ViewerPicker viewer={viewer} />
+            <ViewerPicker viewer={viewer} sso={ssoEnabled()} />
           </div>
         </div>
       </header>

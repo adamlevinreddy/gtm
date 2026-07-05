@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getConnectionStatus, TOOLKITS } from "@/lib/composio";
 import { PLUM, BORDER, BORDER_SOFT, OK } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
-import WelcomeGate from "@/app/WelcomeGate";
+import Gate from "@/app/Gate";
 import BotScheduleClient from "./BotScheduleClient";
 import AddBotNow from "./AddBotNow";
 
@@ -37,7 +37,7 @@ function Section({
 
 export default async function SettingsPage() {
   const viewer = await resolveViewer();
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
 
   let connections: Record<string, boolean> | null = null;
   if (process.env.COMPOSIO_API_KEY) {

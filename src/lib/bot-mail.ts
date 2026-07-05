@@ -186,6 +186,7 @@ async function runOneshot(
   question: string,
   userEmail: string,
   requestId: string,
+  sync?: { displayText?: string; threadKey?: string },
 ): Promise<{ ok: boolean; answer: string | null; attachments?: MailAttachment[] }> {
   const secret = process.env.MCP_INTERNAL_SECRET;
   if (!secret) return { ok: false, answer: null };
@@ -197,7 +198,9 @@ async function runOneshot(
       // requestId so the answer lands at a key we already know — if the agent
       // outruns this inline poll, the deliver cron picks it up. Abort a bit past
       // the poll so we stay inside the webhook's maxDuration.
-      body: JSON.stringify({ question, userEmail, requestId, lane: "email", pollTimeoutMs: INLINE_POLL_MS }),
+      // displayText/threadKey feed the sessions mirror (/s): clean human text,
+      // grouped by Gmail thread so a back-and-forth stays one session.
+      body: JSON.stringify({ question, userEmail, requestId, lane: "email", pollTimeoutMs: INLINE_POLL_MS, ...sync }),
       signal: AbortSignal.timeout(INLINE_POLL_MS + 40_000),
     });
     const json = (await res.json().catch(() => null)) as
@@ -376,7 +379,10 @@ export async function processInboundMail(m: InboundMail): Promise<void> {
 
   let result: { ok: boolean; answer: string | null; attachments?: MailAttachment[] } = { ok: false, answer: null };
   try {
-    result = await runOneshot(buildEmailPrompt(m), m.from, requestId);
+    result = await runOneshot(buildEmailPrompt(m), m.from, requestId, {
+      displayText: `Subject: ${subject}\n\n${m.body}`.slice(0, 20_000),
+      threadKey: m.threadId ? `mail:${m.threadId}` : `mail:${requestId}`,
+    });
   } catch {
     /* inline run failed/aborted — the agent may still be running; cron delivers */
   }

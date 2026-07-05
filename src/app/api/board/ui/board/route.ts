@@ -5,6 +5,8 @@ import {
   type WorkItemKind,
 } from "@/lib/work-items";
 import { itemIdsForFilters } from "@/lib/board-filter-query";
+import { resolveApiViewer } from "@/lib/viewer";
+import { ssoEnabled } from "@/lib/workos";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,10 +29,16 @@ export async function GET(req: NextRequest) {
   const label = sp.get("label") || undefined;
   const priorityOnly = sp.get("priority") === "1";
   const customer = sp.get("customer") || undefined;
-  const viewer = sp.get("as") || undefined;
+  // Under SSO this read is gated on a valid signed cookie (no ?as=, no default);
+  // with SSO off it stays honor-system so `mine` still resolves.
+  const viewer = resolveApiViewer(req) ?? undefined;
+  if (ssoEnabled() && !viewer) {
+    return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
+  }
 
   try {
-    const boardId = await resolveBoardId(boardKey);
+    // "all" = cross-board view (the /tasks board tab): no board filter at all.
+    const boardId = boardKey === "all" ? null : await resolveBoardId(boardKey);
 
     // assignee: explicit owner, "__none__" → unassigned, or "mine" → viewer
     let ownerEmail: string | undefined;

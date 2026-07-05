@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { addTurn, getSession } from "@/lib/sessions";
+import { postToChannel } from "@/lib/slack";
+import { personName } from "@/app/board/ui-shared";
 import { verifyViewerCookie } from "@/lib/viewer";
 import { VIEWER_COOKIE } from "@/lib/team";
 
@@ -34,7 +36,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
   // Cap matches the route's validation posture elsewhere — an unbounded turn
   // would re-enter every subsequent prompt for the life of the session.
-  const turn = await addTurn({ sessionId: id, viewer: v, role, content: body.content.slice(0, 200_000) }).catch(() => null);
+  const content = body.content.slice(0, 200_000);
+  const turn = await addTurn({ sessionId: id, viewer: v, role, content }).catch(() => null);
   if (!turn) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+
+  // Bi-directional sync (Arc V): continuing a Slack-born session on the web
+  // mirrors both sides of the exchange back into the original Slack thread,
+  // so teammates watching the thread see the whole conversation.
+  const found = await getSession(id, v).catch(() => null);
+  const scope = found?.session.scope as
+    | { source?: string; slackChannel?: string; slackThreadTs?: string }
+    | null;
+  if (scope?.source === "slack" && scope.slackChannel && scope.slackThreadTs) {
+    const text =
+      role === "user"
+        ? `💬 *${personName(v)}* (from the web app): ${content.slice(0, 2800)}`
+        : content.slice(0, 3500);
+    // after(): a bare void-promise can be killed when the response ends on
+    // Vercel; after() keeps the function alive until the mirror lands.
+    after(() => postToChannel(scope.slackChannel!, { text, threadTs: scope.slackThreadTs! }).catch(() => {}));
+  }
+
   return NextResponse.json({ ok: true, turn });
 }

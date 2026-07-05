@@ -1,4 +1,4 @@
-import { verifyViewerCookie } from "@/lib/viewer";
+import { resolveApiViewer } from "@/lib/viewer";
 import { NextRequest, NextResponse } from "next/server";
 import {
   listAllCalendars,
@@ -44,19 +44,8 @@ export const maxDuration = 120;
 // server-side; the viewer's identity rides the board_viewer cookie.
 // ---------------------------------------------------------------------------
 
-const VIEWER_COOKIE = "board_viewer";
 const UPCOMING_DAYS = 14;
 
-function resolveViewer(req: NextRequest, bodyAs?: unknown): string {
-  if (typeof bodyAs === "string" && bodyAs.includes("@")) return bodyAs;
-  const qAs = req.nextUrl.searchParams.get("as");
-  if (qAs && qAs.includes("@")) return qAs;
-  // Signed cookie (Daybreak P6): verify + strip the HMAC; raw use would
-  // leak "email|sig" into attribution.
-  const verified = verifyViewerCookie(req.cookies.get(VIEWER_COOKIE)?.value);
-  if (verified) return verified;
-  return process.env.BOARD_DEFAULT_VIEWER || "adam@reddy.io";
-}
 
 function isJoinable(e: CalendarEvent): boolean {
   return !e.is_deleted && e.raw?.status !== "cancelled" && !!e.meeting_url;
@@ -163,7 +152,8 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const viewer = resolveViewer(req, body.as);
+  const viewer = resolveApiViewer(req, body.as);
+  if (!viewer) return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
 
   try {
     let block: MeetingBlock | null = null;

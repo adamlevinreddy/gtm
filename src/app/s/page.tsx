@@ -5,7 +5,7 @@ import { listSessions } from "@/lib/sessions";
 import { fmtDayTimePT, dayKeyPT, fmtWeekdayPT } from "@/lib/fmt";
 import { PLUM, PLUM_TINT, BORDER } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
-import WelcomeGate from "@/app/WelcomeGate";
+import Gate from "@/app/Gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: "Sessions" };
 
 export default async function SessionsPage() {
   const viewer = await resolveViewer();
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
 
   const sessions = await listSessions(viewer).catch(() => []);
 
@@ -44,7 +44,8 @@ export default async function SessionsPage() {
             </h2>
             <div className="overflow-hidden rounded-xl border bg-white" style={{ borderColor: BORDER }}>
               {list.map((s) => {
-                const scope = s.scope as { label?: string; botIds?: string[] } | null;
+                const scope = s.scope as { label?: string; botIds?: string[]; source?: string } | null;
+                const source = scope?.source === "slack" ? "Slack" : scope?.source === "email" ? "Email" : null;
                 return (
                   <Link
                     key={s.id}
@@ -57,6 +58,14 @@ export default async function SessionsPage() {
                       <span className="block truncate text-sm font-medium text-zinc-900">{s.title}</span>
                       <span className="block truncate text-xs text-zinc-500">
                         {fmtDayTimePT(s.updatedAt)}
+                        {source && (
+                          <>
+                            {" · "}
+                            <span className="rounded px-1 py-px text-[10.5px] font-medium" style={{ background: "#EAF0F5", color: "#3A6B8C" }}>
+                              from {source}
+                            </span>
+                          </>
+                        )}
                         {scope?.label && (
                           <>
                             {" · "}

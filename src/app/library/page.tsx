@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
-import { FileText, Download } from "lucide-react";
+import { FileText, Download, Folder, ExternalLink } from "lucide-react";
 import { listLibraryFiles, latestPointers, type LibraryFile } from "@/lib/library";
+import { listSharedDrive, DRIVE_FOLDER_ID } from "@/lib/gdrive";
+import { fmtDayPT } from "@/lib/fmt";
 import { PLUM, BORDER, BORDER_SOFT, PLUM_TINT } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
-import WelcomeGate from "@/app/WelcomeGate";
+import Gate from "@/app/Gate";
 import CopyButton from "@/components/CopyButton";
 import { Link2 } from "lucide-react";
 
@@ -30,10 +32,13 @@ function prettyCat(s: string): string {
 
 export default async function LibraryPage() {
   const viewer = await resolveViewer();
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
 
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
-  const files = pat ? await listLibraryFiles(pat).catch(() => []) : [];
+  const [files, drive] = await Promise.all([
+    pat ? listLibraryFiles(pat).catch(() => []) : Promise.resolve([]),
+    listSharedDrive().catch(() => null),
+  ]);
   const latest = pat ? await latestPointers(pat, files).catch(() => new Map()) : new Map();
 
   const byCategory = new Map<string, LibraryFile[]>();
@@ -52,6 +57,66 @@ export default async function LibraryPage() {
       maxWidth="max-w-5xl"
     >
       <div className="flex flex-col gap-5">
+        {/* Shared Google Drive — everyone already has access; we link out. */}
+        <section className="rounded-xl border bg-white" style={{ borderColor: BORDER }}>
+          <div className="flex items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: BORDER_SOFT }}>
+            <h2 className="text-sm font-semibold" style={{ color: PLUM }}>Google Drive</h2>
+            <a
+              href={`https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-xs text-zinc-400 no-underline hover:text-zinc-600"
+            >
+              open folder <ExternalLink size={11} />
+            </a>
+          </div>
+          {drive === null ? (
+            <p className="px-4 py-4 text-sm text-zinc-400">
+              Drive listing unavailable — the service account&apos;s Google Drive isn&apos;t connected yet
+              (run <code>/reddy-connect</code> in Slack as adam@ and connect Google Drive). The{" "}
+              <a
+                href={`https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: PLUM }}
+              >
+                shared folder
+              </a>{" "}
+              still opens directly.
+            </p>
+          ) : drive.length === 0 ? (
+            <p className="px-4 py-4 text-sm text-zinc-400">The shared folder is empty.</p>
+          ) : (
+            <div>
+              {drive.map((f) => (
+                <a
+                  key={f.id}
+                  href={f.webViewLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-3 border-b px-4 py-2 no-underline last:border-b-0 hover:bg-zinc-50"
+                  style={{ borderColor: "#F1EBF0" }}
+                >
+                  {f.folder ? (
+                    <Folder size={14} className="shrink-0" style={{ color: PLUM }} />
+                  ) : (
+                    <FileText size={14} className="shrink-0 text-zinc-400" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-sm text-zinc-900">{f.name}</span>
+                  {f.modifiedTime && (
+                    <span className="shrink-0 text-xs text-zinc-400">{fmtDayPT(f.modifiedTime)}</span>
+                  )}
+                  <ExternalLink size={12} className="shrink-0 text-zinc-300" />
+                </a>
+              ))}
+            </div>
+          )}
+          <p className="border-t px-4 py-2 text-xs text-zinc-400" style={{ borderColor: "#F1EBF0" }}>
+            Tip: tell the bot “save this in our Drive folder for this customer” and it files the
+            deliverable into a customer subfolder here too.
+          </p>
+        </section>
+
         {categories.map(([cat, list]) => (
           <section key={cat} className="rounded-xl border bg-white" style={{ borderColor: BORDER }}>
             <div className="flex items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: BORDER_SOFT }}>

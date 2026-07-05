@@ -6,10 +6,11 @@ import { TEAM_EMAILS } from "@/lib/team";
 import { personName } from "./board/ui-shared";
 import { PLUM, BORDER } from "@/lib/tokens";
 
-// Blocking identity gate (Daybreak Phase 6). Until someone says who they
-// are, the app renders THIS instead of any page — the silent "everyone is
-// adam@" fallback is dead. One pick lasts a year (signed httpOnly cookie).
-export default function WelcomeGate() {
+// Blocking identity gate (Daybreak Phase 6 → Arc V). Until someone proves
+// who they are, the app renders THIS instead of any page. With WorkOS SSO
+// configured (`sso` prop) the only way in is a reddy.io Google sign-in;
+// otherwise the honor-system picker applies.
+export default function WelcomeGate({ sso = false }: { sso?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +50,21 @@ export default function WelcomeGate() {
           </div>
         </div>
 
+        {sso ? (
+          <div>
+            <a
+              href="/api/auth/login"
+              className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white no-underline"
+              style={{ background: PLUM }}
+            >
+              Continue with your Reddy Google account
+            </a>
+            <p className="mt-3 text-xs text-zinc-400">
+              Sign-in is required — only @reddy.io accounts are allowed in.
+            </p>
+          </div>
+        ) : (
+        <>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {TEAM_EMAILS.map((email) => (
             <button
@@ -84,11 +100,13 @@ export default function WelcomeGate() {
         >
           Someone else…
         </button>
+        </>
+        )}
 
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
         <p className="mt-8 text-xs text-zinc-400">
-          New here? After picking your name, try asking the home page things like
+          New here? Once you&apos;re in, try asking the home page things like
           “what did we promise in our last customer call?” or “get me a shareable
           recording link for yesterday&apos;s meeting.”
         </p>

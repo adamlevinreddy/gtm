@@ -7,6 +7,7 @@ import { buildAgentDriver, type AgentMeta } from "@/lib/agent-driver";
 import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
 import { activeMeetingsBlock } from "@/lib/recall-index";
+import { webTurnsSinceLastSlackDispatch, commitSlackDispatchMarker } from "@/lib/sessions";
 import { randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -198,14 +199,27 @@ export async function POST(req: NextRequest) {
     // "what's being said in my X call" without a discovery round-trip.
     // Best-effort: if Recall is slow/unavailable, ship without the block.
     const activeBlock = await activeMeetingsBlock().catch(() => "");
-    const enrichedUserText = activeBlock
-      ? `${activeBlock}\n\n---\n\n${userText}`
-      : userText;
+
+    // Cross-surface catch-up (Arc V): if this Slack thread's session gained
+    // WEB turns since the last Slack dispatch, brief the agent — otherwise
+    // its sandbox session is forked from what the thread visibly shows. This
+    // is a PURE READ; the marker is committed to `syncUpTo` only after the
+    // driver launches (below), so a failed launch re-briefs on retry.
+    const { block: meanwhileBlock, upTo: syncUpTo } = await webTurnsSinceLastSlackDispatch(threadKey).catch(
+      () => ({ block: "", upTo: 0 }),
+    );
+
+    const enrichedUserText = [activeBlock, meanwhileBlock, userText]
+      .filter(Boolean)
+      .join("\n\n---\n\n");
 
     const turnPayload = {
       turnNumber: state.turnCount,
       receivedAt: new Date().toISOString(),
       userText: enrichedUserText,
+      // The RAW human message — session sync mirrors this, never the
+      // enriched prompt (which carries internal blocks + signed URLs).
+      displayText: userText,
       slackUser: slackUser ?? null,
       slackUserEmail,
       connectedToolkits,
@@ -277,6 +291,10 @@ export async function POST(req: NextRequest) {
 
     // Persist state (increments turnCount, captures sessionId for next resume)
     await kv.set(threadKey, state, { ex: THREAD_TTL_SECONDS });
+
+    // Driver launched → the catch-up brief was actually delivered; advance the
+    // sync marker now (never at read time, so a failed launch above re-briefs).
+    if (syncUpTo > 0) await commitSlackDispatchMarker(threadKey, syncUpTo).catch(() => {});
 
     console.log(`[agent] Driver started cmd=${cmd.cmdId} turn=${state.turnCount} session=${state.sessionId}`);
 

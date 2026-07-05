@@ -7,9 +7,33 @@ import { personName } from "./ui-shared";
 
 // Header identity selector. Posts to /api/viewer, which sets the SIGNED
 // httpOnly cookie (Daybreak Phase 6) — client JS never writes identity.
-export default function ViewerPicker({ viewer }: { viewer: string }) {
+// With WorkOS SSO active (`sso`), identity comes from Google sign-in and
+// can't be switched here — the picker becomes name + sign out.
+export default function ViewerPicker({ viewer, sso = false }: { viewer: string; sso?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+
+  if (sso) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold text-white"
+          style={{ background: "#773D72" }}
+          aria-hidden
+        >
+          {personName(viewer).charAt(0)}
+        </span>
+        <span className="text-xs font-medium text-zinc-700">{personName(viewer)}</span>
+        <a
+          href="/api/auth/logout"
+          className="text-xs text-zinc-400 no-underline hover:text-zinc-700"
+          title="Sign out"
+        >
+          Sign out
+        </a>
+      </span>
+    );
+  }
 
   const setViewer = async (email: string) => {
     if (!email || email === viewer) return;

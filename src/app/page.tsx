@@ -17,7 +17,7 @@ import { fmtTimePT, fmtDayTimePT, fmtDuration, fmtDayPT, dayKeyPT, ptStartOfDayM
 import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT, OK, WARN } from "@/lib/tokens";
 import { personName } from "./board/ui-shared";
 import AppShell, { resolveViewer } from "./AppShell";
-import WelcomeGate from "./WelcomeGate";
+import Gate from "@/app/Gate";
 import HomeAsk from "./HomeAsk";
 import CopyButton from "@/components/CopyButton";
 
@@ -110,7 +110,7 @@ const OPEN_FOR_VIEWER = ["triage", "suggested", "approved", "in_progress", "wait
 export default async function HomePage() {
   const viewer = await resolveViewer();
   // Anonymous → the gate, BEFORE any viewer-scoped reads run.
-  if (!viewer) return <WelcomeGate />;
+  if (!viewer) return <Gate />;
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   const shareBase = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
 

@@ -16,6 +16,7 @@ import {
 import type { WorkItem } from "@/lib/schema";
 import { cookies } from "next/headers";
 import { verifyViewerCookie } from "@/lib/viewer";
+import { ssoEnabled } from "@/lib/workos";
 import {
   labelsFor,
   listLabels,
@@ -36,7 +37,7 @@ import {
   type BoardFilters,
 } from "./filters";
 import AppShell from "@/app/AppShell";
-import WelcomeGate from "@/app/WelcomeGate";
+import Gate from "@/app/Gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -239,8 +240,10 @@ export default async function BoardPage({
   // the gate; no silent adam@ fallback.
   const cookieStore = await cookies();
   const asParam = typeof sp.as === "string" ? sp.as : undefined;
-  const viewer = asParam || verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
-  if (!viewer) return <WelcomeGate />;
+  const viewer =
+    (!ssoEnabled() && asParam && asParam.includes("@") ? asParam : null) ||
+    verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
+  if (!viewer) return <Gate />;
 
   let boards: BoardTab[] = [];
   let board: BoardColumns | null = null;

@@ -49,6 +49,12 @@ type OneshotRequest = {
   requestId?: string;
   // Lane the request came from. "email" unlocks file attachments in the driver.
   lane?: string;
+  // Clean human-typed text for the sessions mirror (question often carries
+  // injected context blocks the user never wrote).
+  displayText?: string;
+  // Stable conversation key for session grouping (e.g. `mail:{gmailThreadId}`).
+  // Defaults to a per-request key, i.e. each oneshot is its own session.
+  threadKey?: string;
 };
 
 type McpResult = {
@@ -148,7 +154,10 @@ export async function POST(req: NextRequest) {
       slackThreadTs: requestId,
       slackUser: null,
       slackUserEmail: userEmail,
-      threadKey: `mcp:thread:${requestId}`,
+      threadKey:
+        typeof body.threadKey === "string" && body.threadKey.length > 0
+          ? body.threadKey.slice(0, 200)
+          : `mcp:thread:${requestId}`,
       sessionId: randomUUID(),
       libraryRepoUrl: "github.com/ReddySolutions/reddy-gtm.git",
       isFirstTurn: true,
@@ -161,7 +170,14 @@ export async function POST(req: NextRequest) {
       slackFiles: [],
     };
 
-    const turnPayload = { turnNumber: 1, receivedAt: new Date().toISOString(), userText, slackUserEmail: userEmail, connectedToolkits };
+    const turnPayload = {
+      turnNumber: 1,
+      receivedAt: new Date().toISOString(),
+      userText,
+      displayText: typeof body.displayText === "string" && body.displayText ? body.displayText : question,
+      slackUserEmail: userEmail,
+      connectedToolkits,
+    };
 
     // Reuse this teammate's persistent sandbox if one exists (warm =
     // ~10-30s per call). Cold start happens once per email per snapshot
