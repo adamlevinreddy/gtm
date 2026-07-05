@@ -99,22 +99,8 @@ export default async function SettingsPage({
     >
       <div className="flex flex-col gap-5">
         <Section
-          title="Send the notetaker to a meeting now"
-          subtitle="For meetings the calendar flow missed — last-minute invites, someone else's calendar."
-        >
-          <AddBotNow />
-        </Section>
-
-        <Section
-          title="Notetaker schedule"
-          subtitle="Skip any upcoming meeting or recurring series; undo any time."
-        >
-          <BotScheduleClient />
-        </Section>
-
-        <Section
-          title="Your connections"
-          subtitle="Tools the assistant can use on your behalf. Click Connect once — it opens a secure OAuth window and you're set (you can also connect from Slack with /reddy-connect)."
+          title="Connect your tools"
+          subtitle="Reddy works your Google Workspace and HubSpot on your behalf. Click Connect once — it opens a secure OAuth window and you're set (or connect from Slack with /reddy-connect)."
         >
           {justConnected && (
             <div
@@ -132,27 +118,26 @@ export default async function SettingsPage({
 
           {connections ? (
             <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap gap-2">
-                {toolkits.map((t) => (
-                  <ConnRow
-                    key={t.slug}
-                    label={t.label}
-                    connected={!!connections?.[t.slug]}
-                    href={`/api/composio/connect?slug=${t.slug}`}
-                  />
-                ))}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Core — connect these
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {toolkits.map((t) => (
+                    <ConnRow
+                      key={t.slug}
+                      label={t.label}
+                      connected={!!connections?.[t.slug]}
+                      href={`/api/composio/connect?slug=${t.slug}`}
+                    />
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Meetings <span className="normal-case font-normal text-zinc-400">(optional — the notetaker already covers calls)</span>
+                </p>
                 <ConnRow label="Granola" connected={granolaOn} href={`/api/oauth/granola/start?email=${emailQ}`} />
-                <a
-                  href={`/api/oauth/recall-calendar/start?email=${emailQ}`}
-                  className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium no-underline transition-colors hover:border-zinc-400"
-                  style={{ borderColor: BORDER, background: "#FAFAFA", color: "#574B59" }}
-                >
-                  <span className="text-[13px] leading-none" style={{ color: PLUM }}>+</span>
-                  Connect Recall calendar
-                </a>
-                <span className="text-xs text-zinc-400">— auto-joins meetings on your calendar</span>
               </div>
             </div>
           ) : (
@@ -160,6 +145,20 @@ export default async function SettingsPage({
               Connection status unavailable right now — the tools still work from Slack.
             </p>
           )}
+        </Section>
+
+        <Section
+          title="Send the notetaker to a meeting now"
+          subtitle="For meetings the calendar flow missed — last-minute invites, someone else's calendar."
+        >
+          <AddBotNow />
+        </Section>
+
+        <Section
+          title="Notetaker schedule"
+          subtitle="Skip any upcoming meeting or recurring series; undo any time."
+        >
+          <BotScheduleClient />
         </Section>
       </div>
     </AppShell>

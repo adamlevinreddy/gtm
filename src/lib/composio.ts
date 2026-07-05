@@ -29,8 +29,6 @@ export type ToolkitSlug =
   | "googlesheets"
   | "googledocs"
   | "hubspot"
-  | "linkedin"
-  | "apollo"
   | "docusign";
 
 type ToolkitMeta = {
@@ -47,8 +45,6 @@ export const TOOLKITS: ReadonlyArray<ToolkitMeta> = [
   { slug: "googlesheets",   label: "Google Sheets",    category: "google",  envVar: "COMPOSIO_AUTH_CONFIG_GSHEETS" },
   { slug: "googledocs",     label: "Google Docs",      category: "google",  envVar: "COMPOSIO_AUTH_CONFIG_GDOCS" },
   { slug: "hubspot",        label: "HubSpot",          category: "work",    envVar: "COMPOSIO_AUTH_CONFIG_HUBSPOT" },
-  { slug: "linkedin",       label: "LinkedIn",         category: "work",    envVar: "COMPOSIO_AUTH_CONFIG_LINKEDIN" },
-  { slug: "apollo",         label: "Apollo",           category: "company", envVar: "COMPOSIO_AUTH_CONFIG_APOLLO" },
   { slug: "docusign",       label: "DocuSign",         category: "company", envVar: "COMPOSIO_AUTH_CONFIG_DOCUSIGN" },
 ];
 
