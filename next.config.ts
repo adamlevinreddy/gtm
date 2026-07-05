@@ -29,6 +29,13 @@ const nextConfig: NextConfig = {
         destination: "/settings",
         permanent: true,
       },
+      // Board list retired — Tasks replaces it (list + board view + filters).
+      // Exact "/board" only; /board/[id] (item history) and /board/inbox stay.
+      {
+        source: "/board",
+        destination: "/tasks",
+        permanent: false,
+      },
     ];
   },
 };
