@@ -8,6 +8,7 @@ import { generateMcpUrl, getConnectionStatus, TOOLKITS, type ToolkitSlug } from 
 import { getTokensForUser as getGranolaTokens, granolaMcpConfig } from "@/lib/granola";
 import { activeMeetingsBlock } from "@/lib/recall-index";
 import { webTurnsSinceLastSlackDispatch, commitSlackDispatchMarker } from "@/lib/sessions";
+import { assertInternalNoOrigin } from "@/lib/board-auth";
 import { randomUUID } from "node:crypto";
 
 export const maxDuration = 800;
@@ -49,6 +50,14 @@ export function agentThreadKey(threadTs: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Internal-only: this route runs the agent AS a resolved Slack user (loading
+  // their Composio/Granola tool creds), so it must never be callable from the
+  // open internet. Only the Slack-events dispatcher (a server fetch with the
+  // shared secret and no Origin) may reach it. Not Clerk-gated (it's under /api).
+  if (!assertInternalNoOrigin(req)) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
   const { userText, slackChannel, slackThreadTs, slackUser, slackFiles } =
     (await req.json()) as {
       userText: string;
@@ -282,7 +291,7 @@ export async function POST(req: NextRequest) {
         POSTGRES_URL: process.env.POSTGRES_URL ?? "",
         POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
         // For falling back to legacy /api/* routes if the agent prefers them
-        REDDY_GTM_BASE_URL: "https://gtm-jet.vercel.app",
+        REDDY_GTM_BASE_URL: "https://reddy-gtm.com",
         BOARD_API_SECRET: process.env.BOARD_API_SECRET ?? "",
         // GTM (read + write via /api/gtm/*). Agent curls those endpoints;
         // service account + IDs live on the API route side, not the sandbox.

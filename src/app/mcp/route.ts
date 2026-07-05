@@ -74,7 +74,7 @@ async function handleMcp(req: Request): Promise<Response> {
       customer: z.string().optional().describe("Optional customer scope hint (e.g., 'Gifthealth', 'Vistra'). Helps the agent disambiguate if the question doesn't already name the customer."),
     },
     async ({ question, customer }) => {
-      const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+      const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
       const internalSecret = process.env.MCP_INTERNAL_SECRET;
       if (!internalSecret) {
         return {

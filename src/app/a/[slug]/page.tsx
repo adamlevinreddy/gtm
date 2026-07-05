@@ -96,7 +96,7 @@ export default async function AccountPage({ params }: { params: Promise<{ slug: 
   const latest = pat && artifacts.length ? await latestPointers(pat, artifacts).catch(() => new Map()) : new Map();
 
   const chatIds = meetings.filter((m) => m.has_transcript).map((m) => m.bot_id);
-  const shareBase = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const shareBase = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   const sparse = meetings.length < 3;
 
   return (

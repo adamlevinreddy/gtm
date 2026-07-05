@@ -498,7 +498,7 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   if (hasTranscript) {
     after(async () => {
       try {
-        const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+        const base = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
         await fetch(`${base}/api/proactive/meeting`, {
           method: "POST",
           headers: {

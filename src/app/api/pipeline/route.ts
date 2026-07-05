@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   const pipelineId = uuidv4();
   const baseUrl = process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
-    : "https://gtm-jet.vercel.app";
+    : "https://reddy-gtm.com";
 
   // Brain emoji
   const slack = new WebClient(process.env.SLACK_BOT_TOKEN);

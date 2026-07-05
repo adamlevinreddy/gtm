@@ -46,7 +46,7 @@ export default async function LibraryPage() {
     (byCategory.get(f.category) ?? byCategory.set(f.category, []).get(f.category)!).push(f);
   }
   const categories = [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const base = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
 
   return (
     <AppShell

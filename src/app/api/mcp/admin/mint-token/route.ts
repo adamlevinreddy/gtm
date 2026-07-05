@@ -5,7 +5,7 @@ import { mintMcpToken } from "@/lib/mcp-token";
 // Reddy-GTM MCP server in Claude Desktop. Gated by MCP_ADMIN_SECRET.
 //
 //   curl -X POST -H "x-admin-secret: $MCP_ADMIN_SECRET" \
-//     "https://gtm-jet.vercel.app/api/mcp/admin/mint-token" \
+//     "https://reddy-gtm.com/api/mcp/admin/mint-token" \
 //     -d '{"email":"someone@reddy.io","ttl_days":365}'
 //
 // Returns: { token, expiresAt, claudeDesktopConfig }
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const token = mintMcpToken(email, ttlSeconds, tokenSecret);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
-  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   const claudeDesktopConfig = {
     mcpServers: {
       "reddy-gtm": {

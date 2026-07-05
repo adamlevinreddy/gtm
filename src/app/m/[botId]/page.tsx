@@ -45,7 +45,7 @@ export default async function MeetingViewerPage({
   const subtitle = [meeting.companyName, fmtDayTimePT(meeting.startedAt), duration, meeting.platform]
     .filter(Boolean)
     .join(" · ");
-  const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const base = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   const shareUrl = `${base}/m/${botId}`;
 
   return (

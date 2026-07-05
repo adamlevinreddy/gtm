@@ -18,10 +18,15 @@ import { currentUser } from "@clerk/nextjs/server";
 export const ALLOWED_DOMAIN = process.env.SSO_ALLOWED_DOMAIN || "reddy.io";
 
 /** True when enforced SSO (Clerk) is configured. Named `ssoEnabled` for
- * continuity with the identity gate used throughout the app. Node runtime —
- * middleware uses its own edge-safe check on the publishable key. */
+ * continuity with the identity gate used throughout the app.
+ *
+ * Requires BOTH keys: the middleware/edge gate keys off the publishable key and
+ * this node gate off the secret. If they can disagree (one key set, the other
+ * not), a half-configured deploy locks everyone into a /auth/sync redirect loop.
+ * Gating both on the presence of both keys keeps them in lockstep — a partial
+ * config falls back to the honor-system picker instead. */
 export function ssoEnabled(): boolean {
-  return !!process.env.CLERK_SECRET_KEY;
+  return !!(process.env.CLERK_SECRET_KEY && process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 }
 
 /** The signed-in Clerk user's email (lowercased) — only if on the allowed

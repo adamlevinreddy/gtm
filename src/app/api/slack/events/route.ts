@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
       const state = await kv.get(`reddy-gtm:thread:${threadTs}`).catch(() => null);
       if (!state) return NextResponse.json({ ok: true });
 
-      const baseUrl = "https://gtm-jet.vercel.app";
+      const baseUrl = "https://reddy-gtm.com";
       fetch(`${baseUrl}/api/slack/close-thread`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -160,10 +160,10 @@ export async function POST(req: NextRequest) {
       console.log(`[slack] lock reaction → dispatching save-intent for thread ${threadTs}`);
       await addReaction(channel, threadTs, "speech_balloon");
 
-      const baseUrl = "https://gtm-jet.vercel.app";
+      const baseUrl = "https://reddy-gtm.com";
       fetch(`${baseUrl}/api/agent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-board-secret": process.env.BOARD_API_SECRET ?? "" },
         body: JSON.stringify({
           userText: "SAVE_INTENT: the user reacted with 🔒 to lock this thread's work into the library. Refresh the workspace (git pull --rebase), inspect git status, stage the relevant dirty paths under corpora/ or decks/ (be explicit — never git add -A), commit with a concise message, pull --rebase, push to main, and confirm in Slack with the final commit path.",
           slackChannel: channel,
@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
       // Same backend as the :end: reaction: stop sandbox + clear KV.
       if (process.env.REDDY_GTM_ENGINE === "agent-sdk" && /\bend\s+thread\b/i.test(text)) {
         const threadTs: string = event.thread_ts || event.ts;
-        const baseUrl = "https://gtm-jet.vercel.app";
+        const baseUrl = "https://reddy-gtm.com";
         fetch(`${baseUrl}/api/slack/close-thread`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
       // and Vercel's lambda runtime freezes post-response async work.
       if (process.env.REDDY_GTM_ENGINE === "agent-sdk" && isSetupIntent(text)) {
         await addReaction(channel, event.ts, "wave");
-        const baseUrl = "https://gtm-jet.vercel.app";
+        const baseUrl = "https://reddy-gtm.com";
         fetch(`${baseUrl}/api/slack/set-me-up`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -288,10 +288,10 @@ export async function POST(req: NextRequest) {
           } catch { /* ignore — proceed as a normal mention */ }
         }
 
-        const baseUrl = "https://gtm-jet.vercel.app";
+        const baseUrl = "https://reddy-gtm.com";
         fetch(`${baseUrl}/api/agent`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-board-secret": process.env.BOARD_API_SECRET ?? "" },
           body: JSON.stringify({
             userText: rawText + proposalContext,
             slackChannel: channel,
@@ -387,7 +387,7 @@ export async function POST(req: NextRequest) {
           // Fire the pipeline as a background job.
           // Use waitUntil pattern: start the fetch, don't await the full response,
           // but ensure the request body is fully sent before the function exits.
-          const baseUrl = "https://gtm-jet.vercel.app";
+          const baseUrl = "https://reddy-gtm.com";
           const pipelinePayload = JSON.stringify({
             rawData,
             fileName,
@@ -484,7 +484,7 @@ export async function POST(req: NextRequest) {
 
           // Store review in KV (unknowns will be populated by background job)
           const reviewId = await createReview({ source, items: [], knownResults, fileName: file.name });
-          const baseUrl = "https://gtm-jet.vercel.app";
+          const baseUrl = "https://reddy-gtm.com";
 
           // Store metadata for the final combined message
           const excluded = knownResults.filter((r) => r.action === "exclude");
@@ -715,7 +715,7 @@ export async function POST(req: NextRequest) {
         await replyInThread(channel, event.ts, `Querying marketing data for: _${question}_\nThis may take a minute...`);
 
         // Fire background job — campaign queries involve multiple MCP round-trips
-        const baseUrl = "https://gtm-jet.vercel.app";
+        const baseUrl = "https://reddy-gtm.com";
         fetch(`${baseUrl}/api/campaign`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -757,7 +757,7 @@ export async function POST(req: NextRequest) {
             : "Researching pricing references — back in a minute."
         );
 
-        const baseUrl = "https://gtm-jet.vercel.app";
+        const baseUrl = "https://reddy-gtm.com";
         fetch(`${baseUrl}/api/pricing`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -781,7 +781,7 @@ export async function POST(req: NextRequest) {
         if (existing) {
           await addReaction(channel, event.ts, existing.mode === "build" ? "hammer_and_wrench" : "mag");
 
-          const baseUrl = "https://gtm-jet.vercel.app";
+          const baseUrl = "https://reddy-gtm.com";
           fetch(`${baseUrl}/api/pricing`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

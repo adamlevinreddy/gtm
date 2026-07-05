@@ -4,9 +4,13 @@ import { ClerkProvider } from "@clerk/nextjs";
 import ChatDock from "@/components/ChatDock";
 import "./globals.css";
 
-// Enforced-auth mode is gated on the Clerk publishable key so local dev (no
-// keys) renders without a provider and stays on the picker gate.
-const CLERK_ON = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+// Enforced-auth mode requires BOTH Clerk keys (kept in lockstep with the
+// middleware + ssoEnabled() gates so a half-configured deploy can't lock users
+// into a redirect loop). Local dev (no keys) renders without a provider and
+// stays on the picker gate.
+const CLERK_ON = !!(
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY
+);
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

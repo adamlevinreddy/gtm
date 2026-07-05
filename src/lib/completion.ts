@@ -40,7 +40,7 @@ export async function markJobComplete(reviewId: string): Promise<void> {
   const hsMatchCount = review?.hubspotMatches?.length || 0;
   const hsContactCount = review?.hubspotMatches?.reduce((s, m) => s + m.contacts.length, 0) || 0;
 
-  const baseUrl = "https://gtm-jet.vercel.app";
+  const baseUrl = "https://reddy-gtm.com";
   let text = `:white_check_mark: *Finished processing ${meta.totalCompanies} companies from ${review?.source || "upload"}*\n\n`;
   text += `*Known matches:*\n`;
   text += `> :no_entry: *${meta.excludedCount}* vendors excluded\n`;

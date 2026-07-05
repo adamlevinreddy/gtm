@@ -54,7 +54,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ botId: stri
   }
 
   // Fallback: LFS proxy.
-  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   const url = buildVideoLink({ baseUrl, botId, customer, secret, ttlSeconds });
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
   return NextResponse.json({ ok: true, url, expiresAt, ttlSeconds, source: "lfs-proxy" });

@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 function webhookUrl(): string {
-  const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const base = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   return `${base}/api/webhooks/composio`;
 }
 

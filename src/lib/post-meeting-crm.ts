@@ -32,7 +32,7 @@ export const CRM_APPLY_ACTION_ID = "pm_crm_apply";
 const CRM_TTL = 7 * 24 * 3600;
 
 function recordingUrl(botId: string): string {
-  const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const base = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   return `${base}/m/${botId}`;
 }
 

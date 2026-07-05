@@ -112,7 +112,7 @@ export default async function HomePage() {
   // Anonymous → the gate, BEFORE any viewer-scoped reads run.
   if (!viewer) return <Gate />;
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
-  const shareBase = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const shareBase = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
 
   const overnightCutoff = ptStartOfDayMs(0) - 7 * 3600_000; // 5pm yesterday PT
   const todayKey = dayKeyPT(new Date());

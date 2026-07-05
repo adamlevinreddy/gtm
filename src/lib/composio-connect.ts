@@ -13,7 +13,7 @@ import { isConnected as isGranolaConnected } from "@/lib/granola";
 // Public-facing base URL for OAuth redirect links embedded in Slack messages.
 // Must match the host Granola's DCR client was registered against.
 const PUBLIC_BASE_URL =
-  process.env.PUBLIC_BASE_URL ?? process.env.REDDY_GTM_BASE_URL ?? "https://gtm-jet.vercel.app";
+  process.env.PUBLIC_BASE_URL ?? process.env.REDDY_GTM_BASE_URL ?? "https://reddy-gtm.com";
 
 export async function resolveSlackEmailForConnect(userId: string, slack: WebClient): Promise<string | null> {
   try {

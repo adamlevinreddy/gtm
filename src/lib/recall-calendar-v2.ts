@@ -31,7 +31,7 @@ export const GOOGLE_SCOPES = [
 // existing V1-scheduled bots (deepgram nova-3, speaker view, etc.) plus
 // realtime_endpoints so we get per-utterance webhooks during the call.
 export function buildDefaultBotConfig() {
-  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
+  const baseUrl = process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com";
   const realtimeToken = process.env.RECALL_REALTIME_WEBHOOK_TOKEN;
   // Subscribe to BOTH the finalized and partial transcript events.
   // transcript.data fires only when deepgram finalizes a chunk (often

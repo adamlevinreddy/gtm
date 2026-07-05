@@ -88,7 +88,7 @@ export default async function MeetingsPage({
         initialQ={sp.q}
         initialVideoOnly={sp.video === "1"}
         initialShowInternal={sp.internal === "1"}
-        shareBase={process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app"}
+        shareBase={process.env.PUBLIC_BASE_URL ?? "https://reddy-gtm.com"}
       />
     </AppShell>
   );

@@ -191,7 +191,7 @@ const SESSION_SYNC = (!MCP_MODE) || EMAIL_LANE;
 async function recordTurn(role, content) {
   if (!SESSION_SYNC || !content) return;
   try {
-    const base = process.env.REDDY_GTM_BASE_URL || "https://gtm-jet.vercel.app";
+    const base = process.env.REDDY_GTM_BASE_URL || "https://reddy-gtm.com";
     await fetch(base + "/api/agent/turns", {
       method: "POST",
       headers: { "content-type": "application/json", "x-board-secret": process.env.BOARD_API_SECRET || "" },
@@ -378,7 +378,7 @@ async function main() {
   // only (no backticks / no \${}) so this stays literal inside the driver template.
   const boardFetch = async (apiPath, body) => {
     try {
-      const base = process.env.REDDY_GTM_BASE_URL || "https://gtm-jet.vercel.app";
+      const base = process.env.REDDY_GTM_BASE_URL || "https://reddy-gtm.com";
       const r = await fetch(base + "/api/board/" + apiPath, {
         method: "POST",
         headers: {
@@ -648,7 +648,7 @@ async function main() {
       POSTGRES_URL: process.env.POSTGRES_URL ?? "",
       POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
       // Base URL for legacy /api/* routes the agent can hit
-      REDDY_GTM_BASE_URL: process.env.REDDY_GTM_BASE_URL ?? "https://gtm-jet.vercel.app",
+      REDDY_GTM_BASE_URL: process.env.REDDY_GTM_BASE_URL ?? "https://reddy-gtm.com",
       // Slack context (so MCP tools inside the SDK can post back)
       SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
       SLACK_CHANNEL: process.env.SLACK_CHANNEL ?? "",
