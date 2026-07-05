@@ -64,7 +64,9 @@ export default function HomeAsk({ starters }: { starters: string[] }) {
       <Drawer open={question !== null} onClose={() => setQuestion(null)} title="Ask Reddy GTM">
         {question !== null && (
           <MeetingChatStream
+            key={question}
             unscoped
+            persist
             title="Ask Reddy GTM"
             scopeLabel="meetings · HubSpot · documents · board"
             placeholder="Follow up…"

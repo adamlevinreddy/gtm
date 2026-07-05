@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readMeetingIndex } from "@/lib/meeting-index";
+import { listLibraryFiles } from "@/lib/library";
 import { fmtDayPT } from "@/lib/fmt";
 import { verifyViewerCookie } from "@/lib/viewer";
 import { VIEWER_COOKIE } from "@/lib/team";
@@ -11,7 +12,7 @@ export const runtime = "nodejs";
 // caches it and filters LOCALLY — keystrokes never hit the network.
 
 export type QuickItem = {
-  type: "meeting" | "account" | "nav";
+  type: "meeting" | "account" | "nav" | "file";
   title: string;
   subtitle?: string;
   href: string;
@@ -21,6 +22,8 @@ export type QuickItem = {
 const NAV_ITEMS: QuickItem[] = [
   { type: "nav", title: "Home", href: "/" },
   { type: "nav", title: "Meetings", href: "/meetings" },
+  { type: "nav", title: "Sessions · past conversations", href: "/s" },
+  { type: "nav", title: "Library · pricing, proposals, legal", href: "/library" },
   { type: "nav", title: "Board", href: "/board" },
   { type: "nav", title: "Inbox", href: "/board/inbox" },
   { type: "nav", title: "Settings · notetaker schedule & connections", href: "/settings" },
@@ -36,10 +39,21 @@ export async function GET(req: NextRequest) {
   if (!verifyViewerCookie(req.cookies.get(VIEWER_COOKIE)?.value)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
-  const rows = await readMeetingIndex({
-    sinceMs: Date.now() - 90 * 24 * 60 * 60 * 1000,
-    limit: 400,
-  }).catch(() => []);
+  const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
+  const [rows, libFiles] = await Promise.all([
+    readMeetingIndex({
+      sinceMs: Date.now() - 90 * 24 * 60 * 60 * 1000,
+      limit: 400,
+    }).catch(() => []),
+    pat ? listLibraryFiles(pat).catch(() => []) : Promise.resolve([]),
+  ]);
+
+  const files: QuickItem[] = libFiles.slice(0, 300).map((f) => ({
+    type: "file",
+    title: f.name,
+    subtitle: `${f.category}${f.subpath ? ` / ${f.subpath}` : ""}`,
+    href: `/api/library/file?path=${encodeURIComponent(f.path)}`,
+  }));
 
   const meetings: QuickItem[] = rows.map((r) => ({
     type: "meeting",
@@ -60,7 +74,7 @@ export async function GET(req: NextRequest) {
     }));
 
   return NextResponse.json(
-    { ok: true, items: [...NAV_ITEMS, ...accounts, ...meetings] },
+    { ok: true, items: [...NAV_ITEMS, ...accounts, ...meetings, ...files] },
     { headers: { "Cache-Control": "private, max-age=120" } },
   );
 }

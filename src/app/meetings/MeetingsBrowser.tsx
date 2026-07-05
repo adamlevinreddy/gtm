@@ -403,6 +403,7 @@ export default function MeetingsBrowser({
               key={chatScope.botIds.join(",")}
               botIds={chatScope.botIds}
               scopeNote={chatScope.note}
+              persist
               title="Meetings chat"
               scopeLabel={`${chatScope.botIds.length} transcript${chatScope.botIds.length === 1 ? "" : "s"}`}
               placeholder="Ask across the scoped meetings…"

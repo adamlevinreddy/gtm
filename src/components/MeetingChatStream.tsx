@@ -24,6 +24,8 @@ export default function MeetingChatStream({
   placeholder = "Ask a question…",
   unscoped = false,
   initialQuestion,
+  persist = false,
+  initialSession,
 }: {
   botIds?: string[];
   /** Human description of the filter behind botIds — passed to the agent. */
@@ -36,8 +38,12 @@ export default function MeetingChatStream({
   unscoped?: boolean;
   /** Auto-send this question on mount (⌘K free-text fall-through). */
   initialQuestion?: string;
+  /** Persist this conversation as a resumable session (Daybreak P8). */
+  persist?: boolean;
+  /** Resume an existing session: hydrate history + append to it. */
+  initialSession?: { id: string; turns: Array<{ role: "user" | "assistant"; content: string }> };
 }) {
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(initialSession?.turns ?? []);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -49,6 +55,63 @@ export default function MeetingChatStream({
   const scoped = !unscoped;
   const ids = botIds ?? [];
   const disabled = scoped && ids.length === 0;
+
+  // Session persistence (Daybreak P8): created lazily on the first ask,
+  // every completed turn appended. ALL writes are truly fire-and-forget —
+  // the agent run must never wait on (or be un-stoppable because of) a
+  // persistence round-trip. The single stashed create-promise also makes a
+  // rapid second ask join the same session instead of minting two.
+  const sessionIdRef = useRef<string | null>(initialSession?.id ?? null);
+  const sessionPromiseRef = useRef<Promise<void> | null>(null);
+  const answerBufRef = useRef("");
+  const persistOn = persist || !!initialSession;
+  const ensureSession = (firstQuestion: string): void => {
+    if (!persistOn || sessionIdRef.current || sessionPromiseRef.current) return;
+    sessionPromiseRef.current = (async () => {
+      try {
+        const r = await fetch("/api/board/ui/sessions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: firstQuestion,
+            scope: scoped ? { botIds: ids, note: scopeNote, label: scopeLabel } : null,
+          }),
+        });
+        const j = (await r.json()) as { ok?: boolean; session?: { id: string } };
+        if (j.ok && j.session?.id) sessionIdRef.current = j.session.id;
+      } catch {
+        /* stay ephemeral */
+      }
+    })();
+  };
+  const persistTurn = (role: "user" | "assistant", content: string) => {
+    if (!persistOn || !content) return;
+    void (async () => {
+      await sessionPromiseRef.current?.catch(() => {});
+      const id = sessionIdRef.current;
+      if (!id) return;
+      await fetch(`/api/board/ui/sessions/${id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role, content }),
+      });
+    })().catch(() => {});
+  };
+  // A run that outlives the stream gets its requestId pinned to the session
+  // so /s/{id} can complete the turn later, even if this component unmounts.
+  const recordPending = (requestId: string) => {
+    if (!persistOn) return;
+    void (async () => {
+      await sessionPromiseRef.current?.catch(() => {});
+      const id = sessionIdRef.current;
+      if (!id) return;
+      await fetch(`/api/board/ui/sessions/${id}/pending`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+    })().catch(() => {});
+  };
 
   const scrollDown = () =>
     requestAnimationFrame(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight));
@@ -104,6 +167,7 @@ export default function MeetingChatStream({
             p.content ||
             "⚠️ The assistant is taking unusually long. Its answer may still land in Slack — or try asking again.",
         }));
+        if (answerBufRef.current) persistTurn("assistant", answerBufRef.current + "\n\n_— run timed out mid-answer_");
         setStreaming(false);
         setStatus(null);
         return;
@@ -119,6 +183,7 @@ export default function MeetingChatStream({
           clearInterval(latePollRef.current);
           latePollRef.current = null;
           setLastAssistant((p) => ({ ...p, content: j.answer! }));
+          persistTurn("assistant", j.answer);
           setStreaming(false);
           setStatus(null);
           scrollDown();
@@ -139,7 +204,13 @@ export default function MeetingChatStream({
     setStreaming(true);
     setStatus("Sending…");
     scrollDown();
+    // Controller FIRST (before any await) so Stop/unmount can always abort;
+    // session creation runs in parallel and persistTurn awaits it internally.
     abortRef.current = new AbortController();
+    ensureSession(q);
+    persistTurn("user", q);
+    let answerBuf = "";
+    answerBufRef.current = "";
     // Set once the server accepts the run — gates whether an error is
     // recoverable (poll the result key) or terminal (show it immediately).
     let streamOpened = false;
@@ -179,6 +250,8 @@ export default function MeetingChatStream({
           setStatus(evt.text);
         } else if (evt.t === "delta" && evt.text) {
           setStatus(null);
+          answerBuf += evt.text;
+          answerBufRef.current += evt.text;
           setLastAssistant((p) => ({ ...p, content: p.content + evt.text }));
           scrollDown();
         } else if (evt.t === "timeout") {
@@ -200,20 +273,26 @@ export default function MeetingChatStream({
       if (sawTimeout || !sawDone) {
         // Server said "timed out, re-poll" — or the stream was cut before the
         // done sentinel (proxy drop): the run may still finish server-side.
+        // Pin the requestId to the session so /s can complete the turn even
+        // if this component unmounts before the answer lands.
+        recordPending(requestId);
         beginLatePoll(requestId);
         return; // streaming stays true; the late poll owns completion
       }
+      persistTurn("assistant", answerBuf);
       setStreaming(false);
       setStatus(null);
     } catch (err) {
       if (abortRef.current?.signal.aborted) {
         setLastAssistant((p) => ({ ...p, stopped: true }));
+        if (answerBuf) persistTurn("assistant", answerBuf + "\n\n_— stopped early_");
         setStreaming(false);
         setStatus(null);
         return;
       }
       if (streamOpened) {
         // Connection dropped mid-run — the agent may still finish; recover late.
+        recordPending(requestId);
         beginLatePoll(requestId);
         return;
       }
@@ -236,6 +315,9 @@ export default function MeetingChatStream({
       setStreaming(false);
       setStatus(null);
       setLastAssistant((p) => ({ ...p, stopped: true }));
+      // Persist whatever streamed before the drop — the session must match
+      // what the user saw (the pending marker may still complete it later).
+      if (answerBufRef.current) persistTurn("assistant", answerBufRef.current + "\n\n_— stopped early_");
       return;
     }
     abortRef.current?.abort();

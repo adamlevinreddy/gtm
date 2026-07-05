@@ -21,11 +21,13 @@ import CommandK from "@/components/CommandK";
 
 export const PLUM = "#773D72";
 
-export type NavKey = "home" | "meetings" | "board" | "inbox" | "settings";
+export type NavKey = "home" | "meetings" | "sessions" | "library" | "board" | "inbox" | "settings";
 
 const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: "home", label: "Home", href: "/" },
   { key: "meetings", label: "Meetings", href: "/meetings" },
+  { key: "sessions", label: "Sessions", href: "/s" },
+  { key: "library", label: "Library", href: "/library" },
   { key: "board", label: "Board", href: "/board" },
   { key: "inbox", label: "Inbox", href: "/board/inbox" },
   { key: "settings", label: "Settings", href: "/settings" },

@@ -83,6 +83,7 @@ function buildPrompt(opts: {
   lines.push(
     `You have your full toolset: when the user asks you to ACT — create/update a board task (board_*), log to or update HubSpot, draft a follow-up, etc. — do it, following the usual guardrails (anything customer-facing is draft/suggest-only, never auto-sent; respect task ownership; confirm-first for risky changes). When you create or change something, state exactly what you did.`,
     `FORMAT: standard GitHub-flavored Markdown (this panel renders it — tables, links, lists all work). NOT Slack mrkdwn: use **bold**, [link](url), and | tables |.`,
+    `MOMENT CITATIONS (receipts): when you quote or paraphrase something said in a meeting, cite the moment as a markdown link to /m/{botId}?t={seconds} — e.g. "[Nike QBR · 14:32](/m/abc-123?t=872)". Compute seconds from the transcript.json timestamps when available (corpora/.../meetings/{botId}/transcript.json has per-line start times); if only transcript.txt exists, link without ?t=. Every factual claim about what someone said should carry one — the link opens the video seeked to that second.`,
     `Be concise and conversational — this is a chat panel, not a report. No preamble.`,
     ``,
     `CONVERSATION SO FAR (oldest first):`,

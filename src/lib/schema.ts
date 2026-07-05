@@ -1619,3 +1619,38 @@ export const gmailTriageOptin = pgTable("gmail_triage_optin", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// --- Chat sessions (Daybreak Phase 8) — persistent, resumable web chat ---
+// Every web conversation lives here: the 31% drafting bucket stops
+// evaporating on refresh. Scope is snapshotted at creation (botIds + note);
+// changing page filters can never mutate an existing session.
+
+export const chatSessions = pgTable(
+  "chat_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    viewer: text("viewer").notNull(),
+    title: text("title").notNull(),
+    scope: jsonb("scope"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("idx_chat_sessions_viewer").on(table.viewer, table.updatedAt)]
+);
+
+export const chatTurns = pgTable(
+  "chat_turns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("idx_chat_turns_session").on(table.sessionId, table.createdAt)]
+);
+
+export type ChatSession = typeof chatSessions.$inferSelect;
+export type ChatTurn = typeof chatTurns.$inferSelect;

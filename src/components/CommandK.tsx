@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, CornerDownLeft, Link2, Video, Building2, Compass, Sparkles } from "lucide-react";
+import { Search, CornerDownLeft, Link2, Video, Building2, Compass, Sparkles, FileText } from "lucide-react";
 import Drawer from "@/components/Drawer";
 import MeetingChatStream from "@/components/MeetingChatStream";
 import { PLUM, BORDER, BORDER_SOFT } from "@/lib/tokens";
 
 type QuickItem = {
-  type: "meeting" | "account" | "nav";
+  type: "meeting" | "account" | "nav" | "file";
   title: string;
   subtitle?: string;
   href: string;
@@ -130,12 +130,18 @@ export default function CommandK() {
       void copyLink(row);
       return;
     }
+    if (row.type === "file") {
+      // Library files are API URLs, not app routes — open, don't route.
+      setOpen(false);
+      window.open(row.href, "_blank", "noreferrer");
+      return;
+    }
     setOpen(false);
     router.push(row.href);
   };
 
   const icon = (t: string) =>
-    t === "meeting" ? <Video size={14} /> : t === "account" ? <Building2 size={14} /> : t === "ask" ? <Sparkles size={14} /> : <Compass size={14} />;
+    t === "meeting" ? <Video size={14} /> : t === "account" ? <Building2 size={14} /> : t === "file" ? <FileText size={14} /> : t === "ask" ? <Sparkles size={14} /> : <Compass size={14} />;
 
   return (
     <>
@@ -244,6 +250,7 @@ export default function CommandK() {
           <MeetingChatStream
             key={ask}
             unscoped
+            persist
             title="Ask Reddy GTM"
             scopeLabel="meetings · HubSpot · documents · board"
             placeholder="Ask anything…"
