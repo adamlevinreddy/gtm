@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { FileText, Download } from "lucide-react";
-import { listLibraryFiles, type LibraryFile } from "@/lib/library";
+import { listLibraryFiles, latestPointers, type LibraryFile } from "@/lib/library";
 import { PLUM, BORDER, BORDER_SOFT, PLUM_TINT } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import WelcomeGate from "@/app/WelcomeGate";
@@ -34,6 +34,7 @@ export default async function LibraryPage() {
 
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   const files = pat ? await listLibraryFiles(pat).catch(() => []) : [];
+  const latest = pat ? await latestPointers(pat, files).catch(() => new Map()) : new Map();
 
   const byCategory = new Map<string, LibraryFile[]>();
   for (const f of files) {
@@ -68,7 +69,18 @@ export default async function LibraryPage() {
                   >
                     <FileText size={14} className="shrink-0 text-zinc-400" />
                     <a href={href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 no-underline">
-                      <span className="block truncate text-sm text-zinc-900">{f.name}</span>
+                      <span className="block truncate text-sm text-zinc-900">
+                        {f.name}
+                        {latest.has(f.path) && (
+                          <span
+                            className="ml-1.5 rounded px-1 py-px align-middle text-[9.5px] font-semibold tracking-wide"
+                            style={{ background: "#E9F5EE", color: "#3F7D5B" }}
+                            title={`Locked as latest${latest.get(f.path)?.account ? ` for ${latest.get(f.path)!.account}` : ""} by ${latest.get(f.path)?.lockedBy ?? "?"}`}
+                          >
+                            LATEST
+                          </span>
+                        )}
+                      </span>
                       <span className="block truncate text-xs text-zinc-500">
                         {f.subpath && (
                           <span className="mr-1.5 rounded px-1 py-px text-[10.5px]" style={{ background: PLUM_TINT, color: PLUM }}>

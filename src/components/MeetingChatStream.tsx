@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Square } from "lucide-react";
+import { Copy, Check, Square, FileText, Download, Lock } from "lucide-react";
 import { PLUM, BORDER, BORDER_SOFT } from "@/lib/tokens";
 
-type Msg = { role: "user" | "assistant"; content: string; stopped?: boolean };
+type Attachment = { name: string; kbPath: string };
+type Msg = { role: "user" | "assistant"; content: string; stopped?: boolean; attachments?: Attachment[] };
 
 // The team chat surface (Daybreak Phase 1) — one component behind the home
 // hero, the meetings-hub corpus chat, and the meeting viewer.
@@ -26,6 +27,7 @@ export default function MeetingChatStream({
   initialQuestion,
   persist = false,
   initialSession,
+  onStreamingChange,
 }: {
   botIds?: string[];
   /** Human description of the filter behind botIds — passed to the agent. */
@@ -42,6 +44,8 @@ export default function MeetingChatStream({
   persist?: boolean;
   /** Resume an existing session: hydrate history + append to it. */
   initialSession?: { id: string; turns: Array<{ role: "user" | "assistant"; content: string }> };
+  /** ChatDock's minimized pill shows a live "working" dot from this. */
+  onStreamingChange?: (streaming: boolean) => void;
 }) {
   const [messages, setMessages] = useState<Msg[]>(initialSession?.turns ?? []);
   const [input, setInput] = useState("");
@@ -116,13 +120,16 @@ export default function MeetingChatStream({
   const scrollDown = () =>
     requestAnimationFrame(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight));
 
-  // Elapsed-seconds ticker while a run is live.
+  // Elapsed-seconds ticker while a run is live; mirror streaming outward
+  // for the dock's minimized-pill indicator.
   useEffect(() => {
+    onStreamingChange?.(streaming);
     if (!streaming) return;
     const t0 = Date.now();
     setElapsed(0);
     const iv = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
     return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming]);
 
   useEffect(
@@ -174,7 +181,7 @@ export default function MeetingChatStream({
       }
       try {
         const r = await fetch(`/api/board/ui/meeting-chat/result?id=${requestId}`, { cache: "no-store" });
-        const j = (await r.json()) as { ready?: boolean; answer?: string };
+        const j = (await r.json()) as { ready?: boolean; answer?: string; attachments?: Attachment[] };
         // Re-check AFTER the await: the user may have hit Stop while this
         // tick's fetch was in flight — a stale tick must not overwrite the
         // "Stopped." state.
@@ -182,8 +189,12 @@ export default function MeetingChatStream({
         if (j.ready && j.answer) {
           clearInterval(latePollRef.current);
           latePollRef.current = null;
-          setLastAssistant((p) => ({ ...p, content: j.answer! }));
-          persistTurn("assistant", j.answer);
+          const atts = (j.attachments ?? []).filter((a) => a.name && a.kbPath);
+          setLastAssistant((p) => ({ ...p, content: j.answer!, attachments: atts.length ? atts : p.attachments }));
+          const attMd = atts
+            .map((a) => `\n\n📎 [${a.name}](/api/library/file?path=${encodeURIComponent(a.kbPath)})`)
+            .join("");
+          persistTurn("assistant", j.answer + attMd);
           setStreaming(false);
           setStatus(null);
           scrollDown();
@@ -254,6 +265,14 @@ export default function MeetingChatStream({
           answerBufRef.current += evt.text;
           setLastAssistant((p) => ({ ...p, content: p.content + evt.text }));
           scrollDown();
+        } else if (evt.t === "attachment") {
+          const a = evt as unknown as Attachment;
+          if (a.name && a.kbPath) {
+            setLastAssistant((p) => ({ ...p, attachments: [...(p.attachments ?? []), { name: a.name, kbPath: a.kbPath }] }));
+            // Sessions see attachments as markdown links (cards are live-only).
+            answerBuf += `\n\n📎 [${a.name}](/api/library/file?path=${encodeURIComponent(a.kbPath)})`;
+            answerBufRef.current = answerBuf;
+          }
         } else if (evt.t === "timeout") {
           sawTimeout = true;
         } else if (evt.t === "done") {
@@ -393,6 +412,13 @@ export default function MeetingChatStream({
                     {m.stopped && m.content && (
                       <p className="mt-1 text-[11px] italic text-zinc-400">— stopped early</p>
                     )}
+                    {(m.attachments?.length ?? 0) > 0 && (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {m.attachments!.map((a) => (
+                          <AttachmentCard key={a.kbPath} a={a} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {!waiting && m.content && (
                     // Revealed on hover, keyboard focus, AND always on
@@ -451,6 +477,64 @@ export default function MeetingChatStream({
           </button>
         )}
       </form>
+    </div>
+  );
+}
+
+// A file the agent built this turn: download it, or lock it as THE latest
+// deliverable for an account (Daybreak P10 — artifacts can't be lost).
+function AttachmentCard({ a }: { a: Attachment }) {
+  const [locked, setLocked] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const href = `/api/library/file?path=${encodeURIComponent(a.kbPath)}`;
+
+  const lock = async () => {
+    const account = window.prompt("Lock as the latest deliverable for which account?");
+    if (!account?.trim()) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/board/ui/lock-latest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kbPath: a.kbPath, account: account.trim() }),
+      });
+      const j = (await r.json()) as { ok?: boolean; error?: string };
+      if (!j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setLocked(account.trim());
+    } catch (e) {
+      window.alert(`Couldn't lock: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5" style={{ borderColor: BORDER }}>
+      <FileText size={14} className="shrink-0" style={{ color: PLUM }} />
+      <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-800">{a.name}</span>
+      <a
+        href={`${href}&dl=1`}
+        className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium text-zinc-600 no-underline hover:bg-zinc-50"
+        style={{ borderColor: BORDER }}
+      >
+        <Download size={11} /> Download
+      </a>
+      {locked ? (
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-700">
+          <Check size={11} /> Latest for {locked}
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={lock}
+          disabled={busy}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+          style={{ background: PLUM }}
+          title="Make this THE latest deliverable for an account — badged in the Library"
+        >
+          <Lock size={11} /> {busy ? "…" : "Lock as latest"}
+        </button>
+      )}
     </div>
   );
 }

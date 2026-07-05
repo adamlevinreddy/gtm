@@ -25,7 +25,7 @@ function ghHeaders(pat: string) {
   };
 }
 
-const HIDDEN = new Set([".gitattributes", ".gitkeep", "README.md"]);
+const HIDDEN = new Set([".gitattributes", ".gitkeep", "README.md", "latest.json"]);
 
 // DOCUMENT allowlist. The KB carries template machinery (149 font binaries,
 // .tsx deck sources, build assets) that would drown the actual documents —
@@ -85,6 +85,43 @@ export async function listLibraryFiles(pat: string): Promise<LibraryFile[]> {
   files.sort((a, b) => a.category.localeCompare(b.category) || a.path.localeCompare(b.path));
   await kv.set(cacheKey, files, { ex: 3600 }).catch(() => {});
   return files;
+}
+
+// Which deliverable is THE latest — pointers live in each deliverable's
+// OWN dir (corpora/deliverables/{title-slug}/latest.json), so candidate
+// dirs are exactly the dirs with visible files. Reads are KV-cached 10 min
+// per dir; a fresh lock shows within one cache window.
+export async function latestPointers(
+  pat: string,
+  files: LibraryFile[],
+): Promise<Map<string, { account: string; lockedBy: string }>> {
+  const dirs = [
+    ...new Set(files.filter((f) => f.category === "deliverables").map((f) => f.path.split("/").slice(0, -1).join("/"))),
+  ];
+  const out = new Map<string, { account: string; lockedBy: string }>();
+  await Promise.all(
+    dirs.slice(0, 60).map(async (dir) => {
+      const ck = `latestptr:v1:${dir}`;
+      type Ptr = { path?: string; account?: string; lockedBy?: string } | { miss: true };
+      let ptr = await kv.get<Ptr>(ck).catch(() => null);
+      if (!ptr) {
+        try {
+          const res = await fetch(
+            `${GH_API}/repos/${REPO.owner}/${REPO.name}/contents/${dir}/latest.json`,
+            { headers: { ...ghHeaders(pat), Accept: "application/vnd.github.raw" } },
+          );
+          ptr = res.ok ? (JSON.parse(await res.text()) as Ptr) : { miss: true };
+        } catch {
+          ptr = { miss: true };
+        }
+        await kv.set(ck, ptr, { ex: 600 }).catch(() => {});
+      }
+      if (ptr && !("miss" in ptr) && ptr.path) {
+        out.set(ptr.path, { account: ptr.account ?? "", lockedBy: ptr.lockedBy ?? "" });
+      }
+    }),
+  );
+  return out;
 }
 
 export const MIME: Record<string, string> = {

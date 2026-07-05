@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft, Link2, Video, Building2, Compass, Sparkles, FileText } from "lucide-react";
-import Drawer from "@/components/Drawer";
-import MeetingChatStream from "@/components/MeetingChatStream";
+import { askReddy } from "@/components/ChatDock";
 import { PLUM, BORDER, BORDER_SOFT } from "@/lib/tokens";
 
 type QuickItem = {
@@ -29,7 +28,6 @@ export default function CommandK() {
   const [items, setItems] = useState<QuickItem[]>([]);
   const [sel, setSel] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [ask, setAsk] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -123,7 +121,7 @@ export default function CommandK() {
   const activate = (row: (typeof rows)[number], withMeta: boolean) => {
     if (row.type === "ask") {
       setOpen(false);
-      setAsk(row.title);
+      askReddy({ question: row.title });
       return;
     }
     if (withMeta && row.type === "meeting") {
@@ -241,23 +239,6 @@ export default function CommandK() {
         </div>
       )}
 
-      {/* free-text fall-through: full agent ask in a drawer */}
-      <Drawer open={ask !== null} onClose={() => setAsk(null)} title="Ask Reddy GTM">
-        {ask !== null && (
-          // Keyed by the question: a NEW ⌘K ask while the drawer is already
-          // open starts a fresh thread and actually fires (the initialQuestion
-          // ref-guard would otherwise swallow it).
-          <MeetingChatStream
-            key={ask}
-            unscoped
-            persist
-            title="Ask Reddy GTM"
-            scopeLabel="meetings · HubSpot · documents · board"
-            placeholder="Ask anything…"
-            initialQuestion={ask}
-          />
-        )}
-      </Drawer>
     </>
   );
 }

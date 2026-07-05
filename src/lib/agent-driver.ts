@@ -167,10 +167,16 @@ const MCP_MODE = !!MCP_REQUEST_ID;
 // attach behavior on this, NOT on MCP_MODE — the Claude Desktop MCP path is also
 // MCP_MODE and has nothing to deliver an attachment.
 const EMAIL_LANE = process.env.AGENT_LANE === "email";
+// Web lane (the board/home chat panels): file deliverables persist to the KB
+// deliverables library and surface in the panel as download cards, exactly
+// like the email lane's attach path — same persistence, different delivery.
+const WEB_LANE = process.env.AGENT_LANE === "web";
 const mcpBuffer = { answer: [], references: [], attachments: [] };
 const attachHint = EMAIL_LANE
   ? "You are on the EMAIL lane: to attach a file you generate (PDF/xlsx/etc.) to your reply, call upload_slack_pdf(filePath, title) — it becomes a real email attachment (NOT a Slack upload) AND is saved to the cross-surface library at corpora/deliverables/{slug-of-title}/ so it can be pulled up later from Slack/email. Give a descriptive title (e.g. 'Advensus pricing proposal'). Prefer attaching over linking. Still end the turn with one post_slack_message for the email body text."
-  : "upload_slack_pdf errors here; for builds tell them to do it from Slack.";
+  : WEB_LANE
+    ? "You are on the WEB lane (the team's app chat): when you generate a FILE deliverable (PDF/xlsx/docx), call upload_slack_pdf(filePath, title) — it is saved to the cross-surface library (corpora/deliverables/{slug-of-title}/) and appears in the chat panel as a download card the user can lock as the latest version for an account. Give a descriptive title. Still end with one post_slack_message for the answer text."
+    : "upload_slack_pdf errors here; for builds tell them to do it from Slack.";
 function mcpAppendAnswer(text) { mcpBuffer.answer.push(text); }
 function mcpAppendReference(label, url, type) {
   mcpBuffer.references.push({ label, url, type: type || "link" });
@@ -390,14 +396,15 @@ async function main() {
         },
         async ({ filePath, title }) => {
           const abs = path.isAbsolute(filePath) ? filePath : path.join("/vercel/sandbox", filePath);
-          if (EMAIL_LANE) {
-            // Email lane: persist to the KB + buffer it; bot-mail attaches it to
-            // the reply. (The answer text still rides via post_slack_message.)
+          if (EMAIL_LANE || WEB_LANE) {
+            // Email/web lanes: persist to the KB + buffer it; bot-mail attaches
+            // it to the reply, the web panel renders a download card. (The
+            // answer text still rides via post_slack_message.)
             try {
               const r = await persistAttachmentToKb(abs, title);
-              trace("tool_call", { name: "upload_slack_pdf", mode: "email-attach", kbPath: r.repoPath, bytes: r.bytes });
+              trace("tool_call", { name: "upload_slack_pdf", mode: EMAIL_LANE ? "email-attach" : "web-artifact", kbPath: r.repoPath, bytes: r.bytes });
               slackPosted = true; // counts as "the agent produced a deliverable"
-              return { content: [{ type: "text", text: "Attached " + r.name + " to the email reply (saved to the library at " + r.repoPath + ")." }] };
+              return { content: [{ type: "text", text: (EMAIL_LANE ? "Attached " + r.name + " to the email reply" : "Delivered " + r.name + " to the chat panel") + " (saved to the library at " + r.repoPath + ")." }] };
             } catch (e) {
               return { content: [{ type: "text", text: "ERROR attaching file: " + (e instanceof Error ? e.message : String(e)) + ". Post a link or summary via post_slack_message instead." }], isError: true };
             }

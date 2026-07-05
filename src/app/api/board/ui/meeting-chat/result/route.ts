@@ -12,7 +12,12 @@ export const runtime = "nodejs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type McpResult = { ok?: boolean; answer?: string; error?: string };
+type McpResult = {
+  ok?: boolean;
+  answer?: string;
+  error?: string;
+  attachments?: Array<{ name?: string; kbPath?: string }>;
+};
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id") ?? "";
@@ -28,5 +33,6 @@ export async function GET(req: NextRequest) {
     ok: true,
     ready: true,
     answer: result.answer || (result.error ? `⚠️ ${result.error}` : "⚠️ The run finished without an answer."),
+    attachments: (result.attachments ?? []).filter((a) => a?.name && a?.kbPath).slice(0, 10),
   });
 }

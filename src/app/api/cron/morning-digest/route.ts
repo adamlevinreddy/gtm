@@ -4,6 +4,7 @@ import { postToChannel } from "@/lib/slack";
 import { getDigestData, ptDate } from "@/lib/work-items";
 import { buildDigestBlocks, buildDigestText } from "@/lib/digest";
 import { deriveFocusViaAgent } from "@/lib/digest-focus";
+import { buildBriefs } from "@/lib/brief";
 
 // Long enough for the sandbox agent (focus-today) to run; added/done are
 // deterministic and instant, the agent run is the only slow part.
@@ -68,10 +69,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Standing Briefs (Daybreak P12): per-person prep pages for /brief,
+  // precomputed here so reading one is a single KV get. Runs BEFORE the
+  // channel check — a Slack misconfig must not cost the team their briefs.
+  // Best-effort and idempotent (plain overwrite keyed by PT day).
+  const briefs = await buildBriefs(now).catch((err) => {
+    console.warn(`[morning-digest] briefs failed: ${err instanceof Error ? err.message : err}`);
+    return { written: 0 };
+  });
+
   const channel = digestChannel();
   if (!channel) {
     return NextResponse.json(
-      { ok: false, error: "no digest channel configured (set SALES_TESTING_CHANNEL_ID)" },
+      { ok: false, error: "no digest channel configured (set SALES_TESTING_CHANNEL_ID)", briefsWritten: briefs.written },
       { status: 500 }
     );
   }
@@ -88,6 +98,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       posted: { channel, ts },
       forced: force,
+      briefsWritten: briefs.written,
       added: data.addedYesterday.length,
       done: data.doneYesterday.length,
       focusSource: focus?.source ?? "heuristic",

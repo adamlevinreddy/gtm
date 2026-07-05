@@ -208,9 +208,18 @@ export default async function HomePage() {
           <Card
             title="Today"
             action={
-              <Link href="/settings" className="text-xs text-zinc-400 no-underline hover:text-zinc-600">
-                bot schedule →
-              </Link>
+              <span className="flex items-center gap-2">
+                <Link
+                  href="/brief"
+                  className="rounded-full px-2 py-0.5 text-xs font-medium no-underline"
+                  style={{ background: PLUM_TINT, color: PLUM }}
+                >
+                  Your brief →
+                </Link>
+                <Link href="/settings" className="text-xs text-zinc-400 no-underline hover:text-zinc-600">
+                  bot schedule →
+                </Link>
+              </span>
             }
           >
             <div className="divide-y" style={{ borderColor: "#F4EEF3" }}>
@@ -357,7 +366,7 @@ export default async function HomePage() {
                     <tr key={a.account} className="border-t border-zinc-100 hover:bg-zinc-50">
                       <td className="px-4 py-2">
                         <Link
-                          href={`/meetings?days=90&account=${encodeURIComponent(a.account)}`}
+                          href={`/a/${slugify(a.account)}`}
                           className="font-medium no-underline hover:underline"
                           style={{ color: PLUM }}
                         >

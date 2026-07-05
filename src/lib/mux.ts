@@ -132,6 +132,20 @@ export function signPlaybackJwt(opts: {
   return `${signingInput}.${base64url(sig)}`;
 }
 
+// Signed poster-thumbnail URL for meeting rows (one aud:"t" JWT — never mint
+// the full three-token set for a list). Query params verified to work
+// alongside the signed token against the production account.
+export function signedThumbUrl(playbackId: string | null, ttlSeconds = 7 * 86400): string | null {
+  if (!playbackId) return null;
+  if (!process.env.MUX_SIGNING_KEY_ID || !process.env.MUX_SIGNING_KEY_PRIVATE) return null;
+  try {
+    const t = signPlaybackJwt({ playbackId, ttlSeconds, aud: "t" });
+    return `https://image.mux.com/${playbackId}/thumbnail.jpg?width=128&height=72&fit_mode=smartcrop&token=${t}`;
+  } catch {
+    return null;
+  }
+}
+
 // Build the signed HLS playback URL. This is what we share into Slack.
 // Anyone with the link can stream until the JWT expires; after that,
 // Mux returns 403. Default TTL: 7 days.

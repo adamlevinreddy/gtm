@@ -95,11 +95,17 @@ function buildPrompt(opts: {
   return lines.filter((l, i) => l !== `` || lines[i - 1] !== ``).join("\n");
 }
 
+type OneshotResult = {
+  answer: string;
+  attachments: Array<{ name: string; kbPath: string }>;
+  attachmentsTotal: number;
+};
+
 async function runOneshot(
   question: string,
   userEmail: string,
   requestId?: string,
-): Promise<string | null> {
+): Promise<OneshotResult | null> {
   const secret = process.env.MCP_INTERNAL_SECRET;
   if (!secret) return null;
   try {
@@ -108,10 +114,25 @@ async function runOneshot(
       headers: { "content-type": "application/json", "x-reddy-internal": secret },
       // requestId: the client minted it and re-polls mcp:result:{id} if this
       // stream dies — the answer lands late instead of never (Daybreak P1).
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 250_000, requestId }),
+      // lane "web" arms the driver's artifact path: files the agent builds
+      // persist to corpora/deliverables/ and surface as download cards.
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 250_000, requestId, lane: "web" }),
     });
-    const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
-    if (json?.ok && json.answer) return json.answer;
+    const json = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      answer?: string;
+      attachments?: Array<{ name?: string; kbPath?: string }>;
+    } | null;
+    if (json?.ok && json.answer) {
+      const valid = (json.attachments ?? []).filter(
+        (a): a is { name: string; kbPath: string } => !!a?.name && !!a?.kbPath,
+      );
+      return {
+        answer: json.answer,
+        attachments: valid.slice(0, 10),
+        attachmentsTotal: valid.length,
+      };
+    }
   } catch {
     /* fall through */
   }
@@ -190,12 +211,13 @@ export async function POST(req: NextRequest) {
         }
       }, 5_000);
 
-      const answer = await runOneshot(
+      const result = await runOneshot(
         buildPrompt({ botIds, truncatedFrom, scopeNote, messages, viewer }),
         viewer,
         requestId,
       );
       clearInterval(ticker);
+      const answer = result?.answer ?? null;
 
       if (answer === null) {
         // Agent outran the poll window (or errored). The run may still finish
@@ -216,6 +238,13 @@ export async function POST(req: NextRequest) {
       for (let i = 0; i < answer.length; i += chunkSize) {
         send({ t: "delta", text: answer.slice(i, i + chunkSize) });
         if (i + chunkSize < answer.length) await new Promise((r) => setTimeout(r, 8));
+      }
+      const atts = result?.attachments ?? [];
+      for (const a of atts) {
+        send({ t: "attachment", name: a.name, kbPath: a.kbPath });
+      }
+      if (result && result.attachmentsTotal > atts.length) {
+        send({ t: "status", text: `${result.attachmentsTotal - atts.length} more file${result.attachmentsTotal - atts.length === 1 ? "" : "s"} were produced — find them in the Library.` });
       }
       send({ t: "done" });
       try {

@@ -24,6 +24,8 @@ const NAV_ITEMS: QuickItem[] = [
   { type: "nav", title: "Meetings", href: "/meetings" },
   { type: "nav", title: "Sessions · past conversations", href: "/s" },
   { type: "nav", title: "Library · pricing, proposals, legal", href: "/library" },
+  { type: "nav", title: "Tasks", href: "/tasks" },
+  { type: "nav", title: "Your brief · morning prep", href: "/brief" },
   { type: "nav", title: "Board", href: "/board" },
   { type: "nav", title: "Inbox", href: "/board/inbox" },
   { type: "nav", title: "Settings · notetaker schedule & connections", href: "/settings" },
@@ -69,8 +71,8 @@ export async function GET(req: NextRequest) {
     .map((s) => ({
       type: "account",
       title: pretty(s),
-      subtitle: "account · meetings",
-      href: `/meetings?days=90&account=${encodeURIComponent(pretty(s))}`,
+      subtitle: "account · meetings, deliverables, commitments",
+      href: `/a/${s}`,
     }));
 
   return NextResponse.json(

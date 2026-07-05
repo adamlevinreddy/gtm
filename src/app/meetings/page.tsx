@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { workItems } from "@/lib/schema";
 import { labeledMeetings } from "@/lib/meeting-accounts";
 import { warmLabels } from "@/lib/company-resolver";
-import { signPlaybackJwt } from "@/lib/mux";
+import { signedThumbUrl } from "@/lib/mux";
 import AppShell from "@/app/AppShell";
 import type { MeetingRowData } from "@/components/MeetingRow";
 import MeetingsBrowser from "./MeetingsBrowser";
@@ -23,19 +23,6 @@ export const metadata: Metadata = { title: "Meetings" };
 const DAYS_CHOICES = [7, 30, 90, 365];
 const LIMIT: Record<number, number> = { 7: 80, 30: 200, 90: 400, 365: 700 };
 
-function thumbFor(muxPlaybackId: string | null): string | null {
-  if (!muxPlaybackId) return null;
-  if (!process.env.MUX_SIGNING_KEY_ID || !process.env.MUX_SIGNING_KEY_PRIVATE) return null;
-  try {
-    // ONE thumbnail-audience JWT per row (signedPlayerTokens mints three —
-    // 3× RSA waste at 400+ rows/render). Query params verified to work
-    // alongside the signed token against the production Mux account.
-    const t = signPlaybackJwt({ playbackId: muxPlaybackId, ttlSeconds: 7 * 86400, aud: "t" });
-    return `https://image.mux.com/${muxPlaybackId}/thumbnail.jpg?width=128&height=72&fit_mode=smartcrop&token=${t}`;
-  } catch {
-    return null;
-  }
-}
 
 export default async function MeetingsPage({
   searchParams,
@@ -84,7 +71,7 @@ export default async function MeetingsPage({
     attendees: m.attendees.map((a) => a.name || a.email || "").filter(Boolean),
     hasTranscript: m.has_transcript,
     hasVideo: m.has_video,
-    thumbUrl: thumbFor(m.mux_playback_id),
+    thumbUrl: signedThumbUrl(m.mux_playback_id),
     tasks: tasksByBot[m.bot_id] ?? [],
   }));
 

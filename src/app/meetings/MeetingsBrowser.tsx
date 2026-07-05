@@ -3,10 +3,9 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronRight, MessageSquareText, X } from "lucide-react";
+import { ChevronRight, MessageSquareText } from "lucide-react";
 import MeetingRow, { type MeetingRowData } from "@/components/MeetingRow";
-import MeetingChatStream from "@/components/MeetingChatStream";
-import Drawer from "@/components/Drawer";
+import { askReddy } from "@/components/ChatDock";
 import { dayKeyPT, fmtWeekdayPT, fmtDayPT } from "@/lib/fmt";
 import { PLUM, BORDER } from "@/lib/tokens";
 
@@ -19,8 +18,6 @@ import { PLUM, BORDER } from "@/lib/tokens";
 
 const DAYS_CHOICES = [7, 30, 90, 365];
 const INTERNAL_LABELS = new Set(["Internal", "Reddy"]);
-
-type ChatScope = { botIds: string[]; note: string; label: string };
 
 function weekKeyPT(iso: string): string {
   // Monday-anchored week key for the PT calendar day.
@@ -97,8 +94,6 @@ export default function MeetingsBrowser({
     initialShowInternal || (initialAccount ? INTERNAL_LABELS.has(initialAccount) : false),
   );
   const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
-  const [chatScope, setChatScope] = useState<ChatScope | null>(null);
-  const [chatStarted, setChatStarted] = useState(false);
 
   // The last URL WE wrote — distinguishes our own router.replace echoes
   // from external navigations (⌘K, home links) that must adopt into state.
@@ -188,21 +183,19 @@ export default function MeetingsBrowser({
   // Group: current week by day, older weeks collapsed.
   const { dayGroups, weekGroups } = useMemo(() => groupByRecency(filtered), [filtered]);
 
-  const openChat = (scope: ChatScope) => {
-    setChatStarted(false);
-    setChatScope(scope);
-  };
-
+  // Chat opens in the GLOBAL dock — scope snapshotted at dispatch, and the
+  // conversation survives filter changes, navigation, even minimizing.
   const askAboutView = () => {
     const ids = filtered.filter((m) => m.hasTranscript).map((m) => m.botId);
-    openChat({
+    askReddy({
       botIds: ids,
-      note:
+      scopeNote:
         `last ${days} days` +
         (account !== "all" ? `, account ${account}` : "") +
         (q.trim() ? `, matching "${q.trim()}"` : "") +
         (videoOnly ? ", with video" : ""),
-      label: `${ids.length} meeting${ids.length === 1 ? "" : "s"} in view`,
+      title: "Ask about these meetings",
+      scopeLabel: `${ids.length} meeting${ids.length === 1 ? "" : "s"} in view`,
     });
   };
 
@@ -314,7 +307,7 @@ export default function MeetingsBrowser({
                   m={m}
                   shareBase={shareBase}
                   onAsk={(mm) =>
-                    openChat({ botIds: [mm.botId], note: `the meeting "${mm.title ?? mm.botId}"`, label: mm.title ?? "1 meeting" })
+                    askReddy({ botIds: [mm.botId], scopeNote: `the meeting "${mm.title ?? mm.botId}"`, title: mm.title ?? "Ask about this meeting" })
                   }
                 />
               ))}
@@ -351,7 +344,7 @@ export default function MeetingsBrowser({
                       m={m}
                       shareBase={shareBase}
                       onAsk={(mm) =>
-                        openChat({ botIds: [mm.botId], note: `the meeting "${mm.title ?? mm.botId}"`, label: mm.title ?? "1 meeting" })
+                        askReddy({ botIds: [mm.botId], scopeNote: `the meeting "${mm.title ?? mm.botId}"`, title: mm.title ?? "Ask about this meeting" })
                       }
                     />
                   ))}
@@ -368,54 +361,6 @@ export default function MeetingsBrowser({
         )}
       </div>
 
-      {/* slide-over chat — scope snapshotted at open */}
-      <Drawer
-        open={!!chatScope}
-        onClose={() => setChatScope(null)}
-        title={
-          chatScope && (
-            <span className="flex flex-wrap items-center gap-1.5">
-              Ask about
-              <span
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium"
-                style={{ background: "#F5EDF4", color: PLUM }}
-              >
-                {chatScope.label}
-                {!chatStarted && chatScope.botIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setChatScope(null)}
-                    className="rounded-full p-px hover:bg-white/60"
-                    aria-label="Clear scope"
-                    title="Clear scope and close"
-                  >
-                    <X size={11} />
-                  </button>
-                )}
-              </span>
-            </span>
-          )
-        }
-      >
-        {chatScope && (
-          <div onClickCapture={() => setChatStarted(true)} className="h-full">
-            <MeetingChatStream
-              key={chatScope.botIds.join(",")}
-              botIds={chatScope.botIds}
-              scopeNote={chatScope.note}
-              persist
-              title="Meetings chat"
-              scopeLabel={`${chatScope.botIds.length} transcript${chatScope.botIds.length === 1 ? "" : "s"}`}
-              placeholder="Ask across the scoped meetings…"
-              starters={[
-                "What are the main themes across these meetings?",
-                "Which deals or accounts need follow-up?",
-                "Summarize the key commitments we made.",
-              ]}
-            />
-          </div>
-        )}
-      </Drawer>
     </div>
   );
 }
