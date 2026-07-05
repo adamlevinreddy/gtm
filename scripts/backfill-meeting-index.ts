@@ -41,6 +41,8 @@ async function main() {
       has_chat: r.has_chat,
       mux_playback_id: r.mux_playback_id,
       attribution_confidence: r.attribution_confidence,
+      hubspot_company_id: r.hubspot_company_id,
+      account_canonical: r.account_canonical,
     });
     ok++;
     if (ok % 100 === 0) console.log(`  upserted ${ok}…`);

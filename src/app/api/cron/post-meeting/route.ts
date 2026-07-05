@@ -78,6 +78,8 @@ export async function GET(req: NextRequest) {
       has_chat: m.has_chat,
       mux_playback_id: m.mux_playback_id,
       attribution_confidence: m.attribution_confidence,
+      hubspot_company_id: m.hubspot_company_id,
+      account_canonical: m.account_canonical,
     })
       .then(() => true)
       .catch(() => false);

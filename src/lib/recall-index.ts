@@ -39,6 +39,9 @@ export type IndexedMeeting = {
   has_mux: boolean;
   platform: string | null;
   attribution_confidence: string | null;
+  /** HubSpot identity persisted at ingest (zero-warm account resolution). */
+  hubspot_company_id: string | null;
+  account_canonical: string | null;
   /** Mux playback id — inert without a signed token; used to mint posters. */
   mux_playback_id: string | null;
   // Pre-minted clickable playback URL when the meeting has a video.
@@ -74,6 +77,8 @@ function rowFromKvIndex(r: MeetingIndexRow): IndexedRow {
     has_mux: !!r.mux_playback_id,
     platform: r.platform,
     attribution_confidence: r.attribution_confidence,
+    hubspot_company_id: r.hubspot_company_id ?? null,
+    account_canonical: r.account_canonical ?? null,
     mux_playback_id: r.mux_playback_id,
   };
 }
@@ -152,6 +157,10 @@ export async function walkAllKbMeetings(pat: string): Promise<IndexedRow[]> {
             has_mux: !!parsed.mux?.playback_id,
             platform: parsed.platform ?? null,
             attribution_confidence: parsed.attribution?.confidence ?? null,
+            // KB meta doesn't carry the HubSpot id (KV-index-only) → resolve via
+            // the warm/acctinfo path. This slow walk is a rare cold-start fallback.
+            hubspot_company_id: null,
+            account_canonical: null,
             mux_playback_id: parsed.mux?.playback_id ?? null,
           };
           return row;

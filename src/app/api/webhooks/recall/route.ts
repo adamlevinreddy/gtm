@@ -471,6 +471,9 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
       has_chat: hasChat,
       mux_playback_id: muxPlaybackId,
       attribution_confidence: attribution.confidence ?? null,
+      // Persist HubSpot identity at ingest — accounts resolve with zero warm.
+      hubspot_company_id: attribution.hubspotCompanyId ?? null,
+      account_canonical: attribution.companyName ?? null,
     }).catch((err) => {
       console.warn(`[recall webhook] meeting-index upsert failed bot=${botId}: ${err instanceof Error ? err.message : err}`);
     });

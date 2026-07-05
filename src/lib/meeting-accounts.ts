@@ -81,14 +81,17 @@ export async function labeledMeetings(
     const emailed = (m.attendees ?? []).filter((a) => a.email);
     const allReddy = emailed.length > 0 && emailed.every((a) => a.email!.toLowerCase().endsWith("@reddy.io"));
     const canon = accountCanon(rawLabel, m.customer_slug);
+    // Prefer the HubSpot identity PERSISTED at ingest (zero-warm) over the
+    // lazily-warmed per-label cache.
+    const perLabelCanonical = r && r.canonical && r.canonical !== rawLabel ? r.canonical : null;
     return {
       m,
       key: allReddy || INTERNAL_ACCOUNT_LABELS.has(rawLabel) ? "internal" : canon.key,
       allReddy,
       aliasDisplay: canon.aliasDisplay,
-      resolverCanonical: r && r.canonical && r.canonical !== rawLabel ? r.canonical : null,
+      resolverCanonical: m.account_canonical ?? perLabelCanonical,
       rawPretty: prettyAccount(rawLabel),
-      hubspotCompanyId: allReddy ? null : (r?.hubspotCompanyId ?? null),
+      hubspotCompanyId: allReddy ? null : (m.hubspot_company_id ?? r?.hubspotCompanyId ?? null),
     };
   });
 
