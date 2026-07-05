@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { and, desc, gte, ne, or } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { workItems } from "@/lib/schema";
 import { readMeetingIndex } from "@/lib/meeting-index";
 import { listLibraryFiles } from "@/lib/library";
 import { fmtDayPT } from "@/lib/fmt";
@@ -8,11 +11,13 @@ import { VIEWER_COOKIE } from "@/lib/team";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// Composite index behind ⌘K (Daybreak Phase 7). One KV read; the client
-// caches it and filters LOCALLY — keystrokes never hit the network.
+// Composite index behind ⌘K (Daybreak Phase 7). One read; the client caches it
+// and filters LOCALLY — keystrokes never hit the network. Everything the team
+// works across is searchable here: nav, accounts, meetings, library files, and
+// open tasks.
 
 export type QuickItem = {
-  type: "meeting" | "account" | "nav" | "file";
+  type: "meeting" | "account" | "nav" | "file" | "task";
   title: string;
   subtitle?: string;
   href: string;
@@ -42,12 +47,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
-  const [rows, libFiles] = await Promise.all([
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [rows, libFiles, taskRows] = await Promise.all([
     readMeetingIndex({
       sinceMs: Date.now() - 90 * 24 * 60 * 60 * 1000,
       limit: 400,
     }).catch(() => []),
     pat ? listLibraryFiles(pat).catch(() => []) : Promise.resolve([]),
+    // Open tasks (+ recently-done), matching the /tasks list scope.
+    db
+      .select({ id: workItems.id, title: workItems.title, status: workItems.status, customerSlug: workItems.customerSlug })
+      .from(workItems)
+      .where(and(ne(workItems.status, "dismissed"), or(ne(workItems.status, "done"), gte(workItems.stageEnteredAt, weekAgo))))
+      .orderBy(desc(workItems.createdAt))
+      .limit(250)
+      .catch(() => []),
   ]);
 
   const files: QuickItem[] = libFiles.slice(0, 300).map((f) => ({
@@ -75,8 +89,15 @@ export async function GET(req: NextRequest) {
       href: `/a/${s}`,
     }));
 
+  const tasks: QuickItem[] = taskRows.map((t) => ({
+    type: "task",
+    title: t.title,
+    subtitle: `task · ${t.status.replace(/_/g, " ")}${t.customerSlug ? ` · ${pretty(t.customerSlug)}` : ""}`,
+    href: `/tasks?focus=${t.id}`,
+  }));
+
   return NextResponse.json(
-    { ok: true, items: [...NAV_ITEMS, ...accounts, ...meetings, ...files] },
+    { ok: true, items: [...NAV_ITEMS, ...accounts, ...tasks, ...meetings, ...files] },
     { headers: { "Cache-Control": "private, max-age=120" } },
   );
 }

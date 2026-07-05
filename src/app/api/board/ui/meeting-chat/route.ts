@@ -104,7 +104,10 @@ async function runOneshot(
       // stream dies — the answer lands late instead of never (Daybreak P1).
       // lane "web" arms the driver's artifact path: files the agent builds
       // persist to corpora/deliverables/ and surface as download cards.
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 250_000, requestId, lane: "web" }),
+      // Stay just under this route's 300s maxDuration so heavier builds (e.g. a
+      // PDF + Drive upload) surface in-stream when they finish instead of
+      // falling to the slower late-poll recovery path.
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 285_000, requestId, lane: "web" }),
     });
     const json = (await res.json().catch(() => null)) as {
       ok?: boolean;

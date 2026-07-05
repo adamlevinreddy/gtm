@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Bot, Video } from "lucide-react";
 import Drawer from "@/components/Drawer";
 import { TEAM_EMAILS } from "@/lib/team";
-import { personName } from "@/app/board/ui-shared";
+import { personName, KIND_LABEL } from "@/app/board/ui-shared";
 import { fmtDayPT, dayKeyPT } from "@/lib/fmt";
 import { PLUM, PLUM_TINT, BORDER, OK, WARN, INFO } from "@/lib/tokens";
 
@@ -43,10 +43,34 @@ const STATUS_CHOICES = [
   { value: "dismissed", label: "Dismiss" },
 ];
 
-export default function TasksClient({ tasks, viewer }: { tasks: TaskRow[]; viewer: string }) {
+const UNTAGGED = "__untagged__";
+const SORTS = [
+  { value: "recent", label: "Newest" },
+  { value: "due", label: "Due date" },
+  { value: "title", label: "Title" },
+] as const;
+type Sort = (typeof SORTS)[number]["value"];
+
+export default function TasksClient({
+  tasks,
+  viewer,
+  focusId,
+}: {
+  tasks: TaskRow[];
+  viewer: string;
+  focusId?: string;
+}) {
   const router = useRouter();
   const [owner, setOwner] = useState<string>("all");
-  const [selected, setSelected] = useState<TaskRow | null>(null);
+  const [kindF, setKindF] = useState<string>("all");
+  const [custF, setCustF] = useState<string>("all");
+  const [sort, setSort] = useState<Sort>("recent");
+  const [query, setQuery] = useState("");
+  // Deep-link from ⌘K search (/tasks?focus=<id>): open that task's drawer on
+  // load. Lazy initializer (not an effect) so it's set during first render.
+  const [selected, setSelected] = useState<TaskRow | null>(
+    () => (focusId ? tasks.find((t) => t.id === focusId) ?? null : null),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
@@ -55,11 +79,33 @@ export default function TasksClient({ tasks, viewer }: { tasks: TaskRow[]; viewe
     () => Array.from(new Set(tasks.map((t) => t.ownerEmail).filter((o): o is string => !!o))).sort(),
     [tasks],
   );
-
-  const visible = useMemo(
-    () => tasks.filter((t) => t.status !== "dismissed" && (owner === "all" || t.ownerEmail === owner)),
-    [tasks, owner],
+  const kinds = useMemo(() => Array.from(new Set(tasks.map((t) => t.kind))).sort(), [tasks]);
+  const customers = useMemo(
+    () => Array.from(new Set(tasks.map((t) => t.customerSlug).filter((c): c is string => !!c))).sort(),
+    [tasks],
   );
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = tasks.filter((t) => {
+      if (t.status === "dismissed") return false;
+      if (owner !== "all" && t.ownerEmail !== owner) return false;
+      if (kindF !== "all" && t.kind !== kindF) return false;
+      if (custF === UNTAGGED ? !!t.customerSlug : custF !== "all" && t.customerSlug !== custF) return false;
+      if (q) {
+        const hay = `${t.title} ${t.customerSlug ?? ""} ${t.ownerEmail ? personName(t.ownerEmail) : ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const by: Record<Sort, (a: TaskRow, b: TaskRow) => number> = {
+      recent: (a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
+      // Nulls (no due date) sort last.
+      due: (a, b) => (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999"),
+      title: (a, b) => a.title.localeCompare(b.title),
+    };
+    return [...filtered].sort(by[sort]);
+  }, [tasks, owner, kindF, custF, sort, query]);
 
   const mutate = async (action: string, payload: Record<string, unknown>) => {
     setBusy(true);
@@ -94,18 +140,15 @@ export default function TasksClient({ tasks, viewer }: { tasks: TaskRow[]; viewe
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-2">
-        <select
-          value={owner}
-          onChange={(e) => setOwner(e.target.value)}
-          className="rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search tasks…"
+          className="min-w-[9rem] flex-1 rounded-lg border bg-white px-3 py-1.5 text-sm text-zinc-700 outline-none"
           style={{ borderColor: BORDER }}
-        >
-          <option value="all">Everyone</option>
-          {owners.map((o) => (
-            <option key={o} value={o}>{personName(o)}</option>
-          ))}
-        </select>
+        />
         <button
           type="button"
           onClick={() => setOwner(owner === viewer ? "all" : viewer)}
@@ -118,6 +161,53 @@ export default function TasksClient({ tasks, viewer }: { tasks: TaskRow[]; viewe
         >
           My tasks
         </button>
+        <select
+          value={owner}
+          onChange={(e) => setOwner(e.target.value)}
+          className="rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
+          style={{ borderColor: BORDER }}
+        >
+          <option value="all">Everyone</option>
+          {owners.map((o) => (
+            <option key={o} value={o}>{personName(o)}</option>
+          ))}
+        </select>
+        <select
+          value={kindF}
+          onChange={(e) => setKindF(e.target.value)}
+          className="rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
+          style={{ borderColor: BORDER }}
+        >
+          <option value="all">All types</option>
+          {kinds.map((k) => (
+            <option key={k} value={k}>{KIND_LABEL[k] ?? k.replace(/_/g, " ")}</option>
+          ))}
+        </select>
+        {customers.length > 0 && (
+          <select
+            value={custF}
+            onChange={(e) => setCustF(e.target.value)}
+            className="rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
+            style={{ borderColor: BORDER }}
+          >
+            <option value="all">All customers</option>
+            <option value={UNTAGGED}>Untagged</option>
+            {customers.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        )}
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as Sort)}
+          className="rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none"
+          style={{ borderColor: BORDER }}
+          aria-label="Sort"
+        >
+          {SORTS.map((s) => (
+            <option key={s.value} value={s.value}>Sort: {s.label}</option>
+          ))}
+        </select>
       </div>
 
       <div className="flex flex-col gap-4">

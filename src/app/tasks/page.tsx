@@ -31,11 +31,11 @@ function weekAgoDate(): Date {
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; focus?: string }>;
 }) {
   const viewer = await resolveViewer();
   if (!viewer) return <Gate />;
-  const { view } = await searchParams;
+  const { view, focus } = await searchParams;
   const boardView = view === "board";
 
   const viewTabs = (
@@ -120,7 +120,7 @@ export default async function TasksPage({
       maxWidth="max-w-4xl"
       actions={viewTabs}
     >
-      <TasksClient tasks={tasks} viewer={viewer} />
+      <TasksClient tasks={tasks} viewer={viewer} focusId={focus} />
     </AppShell>
   );
 }
