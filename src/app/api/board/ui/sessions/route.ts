@@ -6,9 +6,9 @@ import { VIEWER_COOKIE } from "@/lib/team";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// Sessions collection (Daybreak Phase 8): GET = the viewer's sessions,
-// POST = create one (title + snapshotted scope). Cookie-gated; sessions
-// are strictly per-viewer.
+// Sessions collection (Daybreak Phase 8): GET = sessions, POST = create one.
+// Cookie-gated. GET defaults to the viewer's own but ?who=<email>|all widens
+// to a teammate or the whole team (sales is a team sport).
 
 function viewer(req: NextRequest): string | null {
   return verifyViewerCookie(req.cookies.get(VIEWER_COOKIE)?.value);
@@ -17,7 +17,9 @@ function viewer(req: NextRequest): string | null {
 export async function GET(req: NextRequest) {
   const v = viewer(req);
   if (!v) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  const sessions = await listSessions(v).catch(() => []);
+  const who = req.nextUrl.searchParams.get("who");
+  const owner = who === "all" ? undefined : who || v;
+  const sessions = await listSessions({ owner }).catch(() => []);
   return NextResponse.json({ ok: true, sessions });
 }
 

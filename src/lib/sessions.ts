@@ -3,7 +3,7 @@
 // the full turn history in its prompt on every ask (same mechanism as
 // before), so resume needs no sandbox state.
 
-import { desc, eq, and, asc, sql } from "drizzle-orm";
+import { desc, eq, and, asc, gte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { kv } from "@/lib/kv-client";
 import { chatSessions, chatTurns, type ChatSession, type ChatTurn } from "@/lib/schema";
@@ -154,11 +154,13 @@ export async function addTurn(opts: {
   role: "user" | "assistant";
   content: string;
 }): Promise<ChatTurn | null> {
-  // Ownership check — turns only append to the viewer's own session.
+  // Team-writable: sales is a team sport, so any teammate can continue any
+  // session (viewer is kept for attribution in the reverse-mirror, not as a
+  // gate). We only require the session to exist.
   const [session] = await db
     .select({ id: chatSessions.id })
     .from(chatSessions)
-    .where(and(eq(chatSessions.id, opts.sessionId), eq(chatSessions.viewer, opts.viewer.toLowerCase())))
+    .where(eq(chatSessions.id, opts.sessionId))
     .limit(1);
   if (!session) return null;
   const [turn] = await db
@@ -172,23 +174,34 @@ export async function addTurn(opts: {
   return turn;
 }
 
-export async function listSessions(viewer: string, limit = 50): Promise<ChatSession[]> {
+/** Team-visible session list. No `owner` → everyone's sessions; pass `owner`
+ * to scope to one person. `sinceMs` bounds by last activity (PT-aware ranges
+ * come from view-filters). */
+export async function listSessions(
+  opts: { owner?: string; sinceMs?: number; limit?: number } = {},
+): Promise<ChatSession[]> {
+  const conds = [];
+  if (opts.owner) conds.push(eq(chatSessions.viewer, opts.owner.toLowerCase()));
+  if (opts.sinceMs) conds.push(gte(chatSessions.updatedAt, new Date(opts.sinceMs)));
   return db
     .select()
     .from(chatSessions)
-    .where(eq(chatSessions.viewer, viewer.toLowerCase()))
+    .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(chatSessions.updatedAt))
-    .limit(limit);
+    .limit(opts.limit ?? 200);
 }
 
+/** Team-readable: any signed-in teammate can view any session (the `viewer`
+ * arg is ignored for filtering — kept for call-site compatibility). */
 export async function getSession(
   id: string,
-  viewer: string,
+  _viewer?: string,
 ): Promise<{ session: ChatSession; turns: ChatTurn[] } | null> {
+  void _viewer;
   const [session] = await db
     .select()
     .from(chatSessions)
-    .where(and(eq(chatSessions.id, id), eq(chatSessions.viewer, viewer.toLowerCase())))
+    .where(eq(chatSessions.id, id))
     .limit(1);
   if (!session) return null;
   // Secondary sort puts 'user' before 'assistant' on createdAt ties (racing

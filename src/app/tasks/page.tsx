@@ -50,7 +50,7 @@ export default async function TasksPage({
           className="rounded-md px-2.5 py-1 text-sm font-medium no-underline"
           style={(boardView ? v === "board" : v === "list") ? { background: PLUM, color: "white" } : { color: "#574B59" }}
         >
-          {v === "list" ? "List" : "Board"}
+          {v === "list" ? "List" : "Kanban"}
         </Link>
       ))}
     </div>
@@ -69,8 +69,9 @@ export default async function TasksPage({
         active="tasks"
         viewer={viewer}
         title="Tasks"
-        subtitle="Drag between columns, or switch to the list for quick edits."
+        subtitle="Drag between columns to move work along; switch to the list for quick edits and filters."
         actions={viewTabs}
+        maxWidth="max-w-none"
       >
         <BoardClient initial={columns} viewerEmail={viewer} labelsByItem={Object.fromEntries(labelsByItem)} />
       </AppShell>

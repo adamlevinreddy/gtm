@@ -3,23 +3,45 @@ import type { Metadata } from "next";
 import { MessageSquareText } from "lucide-react";
 import { listSessions } from "@/lib/sessions";
 import { fmtDayTimePT, dayKeyPT, fmtWeekdayPT } from "@/lib/fmt";
+import { rangeSinceMs, CHANNELS } from "@/lib/view-filters";
+import { TEAM_EMAILS } from "@/lib/team";
+import { personName } from "@/app/board/ui-shared";
 import { PLUM, PLUM_TINT, BORDER } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
+import FilterBar from "@/components/FilterBar";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export const metadata: Metadata = { title: "Sessions" };
 
-// /s — your conversations, none of them lost (Daybreak Phase 8). Grouped by
-// day, resumable with full history + snapshotted scope.
+// /s — the team's conversations, none of them lost (Daybreak P8 + Arc VI team
+// visibility). Sales is a team sport: this shows EVERYONE'S sessions by default,
+// filterable by person, time range, channel, and text via the shared FilterBar.
 
-export default async function SessionsPage() {
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ who?: string; when?: string; channel?: string; q?: string }>;
+}) {
   const viewer = await resolveViewer();
   if (!viewer) return <Gate />;
+  const sp = await searchParams;
 
-  const sessions = await listSessions(viewer).catch(() => []);
+  const owner = sp.who && sp.who !== "all" ? sp.who : undefined;
+  const sinceMs = rangeSinceMs(sp.when) ?? undefined;
+  const channel = sp.channel || "all";
+  const q = (sp.q || "").trim().toLowerCase();
+
+  const all = await listSessions({ owner, sinceMs }).catch(() => []);
+  const sessions = all.filter((s) => {
+    const scope = s.scope as { label?: string; source?: string } | null;
+    const src = scope?.source === "slack" ? "slack" : scope?.source === "email" ? "email" : "web";
+    if (channel !== "all" && src !== channel) return false;
+    if (q && !`${s.title} ${scope?.label ?? ""} ${personName(s.viewer)}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
 
   const byDay = new Map<string, typeof sessions>();
   for (const s of sessions) {
@@ -28,13 +50,28 @@ export default async function SessionsPage() {
   }
   const groups = [...byDay.entries()].sort(([a], [b]) => b.localeCompare(a));
 
+  const people = [
+    { value: "all", label: "Everyone" },
+    ...TEAM_EMAILS.map((e) => ({ value: e, label: personName(e) })),
+  ];
+
   return (
     <AppShell
       active="sessions"
       viewer={viewer}
       title="Sessions"
-      subtitle="Every conversation you've had here — resume any of them."
+      subtitle="Every conversation the team has had here — across the web app, Slack, and email."
       maxWidth="max-w-3xl"
+      actions={
+        <FilterBar
+          people={people}
+          viewer={viewer}
+          timeRange
+          channels={[...CHANNELS]}
+          search
+          searchPlaceholder="Search sessions…"
+        />
+      }
     >
       <div className="flex flex-col gap-4">
         {groups.map(([day, list]) => (
@@ -57,6 +94,8 @@ export default async function SessionsPage() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-zinc-900">{s.title}</span>
                       <span className="block truncate text-xs text-zinc-500">
+                        <span className="font-medium text-zinc-600">{personName(s.viewer)}</span>
+                        {" · "}
                         {fmtDayTimePT(s.updatedAt)}
                         {source && (
                           <>
@@ -84,7 +123,7 @@ export default async function SessionsPage() {
         ))}
         {sessions.length === 0 && (
           <p className="rounded-xl border bg-white px-4 py-10 text-center text-sm text-zinc-400" style={{ borderColor: BORDER }}>
-            No sessions yet — ask anything from the home page, ⌘K, or a meeting, and it&apos;ll be saved here.
+            No sessions match these filters.
           </p>
         )}
       </div>

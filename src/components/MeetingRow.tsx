@@ -96,7 +96,7 @@ export default function MeetingRow({
             icon={<Link2 size={12} />}
             title="Permanent share link — never expires"
           />
-          {onAsk && m.hasTranscript && (
+          {onAsk && (
             <button
               type="button"
               onClick={() => onAsk(m)}

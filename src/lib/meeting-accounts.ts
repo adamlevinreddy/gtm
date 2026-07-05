@@ -56,12 +56,21 @@ export async function labeledMeetings(
   const meetings = raw.map((m) => {
     const rawLabel = rawByBot.get(m.bot_id) ?? "Internal";
     const r = resolved.get(rawLabel);
-    const account = r?.canonical ?? rawLabel;
+    // Attendee-based internal detection: if every attendee WITH an email is
+    // @reddy.io, this is a team meeting (CCW follow-up, pricing model, etc.).
+    // Group it under "Internal" instead of minting a fake external account
+    // from its title — the browser excludes Internal from the account dropdown
+    // and hides it behind the Internal toggle. (Teams meetings give null
+    // emails, so this only fires when emails exist; the label heuristic below
+    // still catches the rest.)
+    const emailed = (m.attendees ?? []).filter((a) => a.email);
+    const allReddy = emailed.length > 0 && emailed.every((a) => a.email!.toLowerCase().endsWith("@reddy.io"));
+    const account = allReddy ? "Internal" : (r?.canonical ?? rawLabel);
     return {
       ...m,
       account,
-      hubspotCompanyId: r?.hubspotCompanyId ?? null,
-      isInternal: INTERNAL_ACCOUNT_LABELS.has(account),
+      hubspotCompanyId: allReddy ? null : (r?.hubspotCompanyId ?? null),
+      isInternal: allReddy || INTERNAL_ACCOUNT_LABELS.has(account),
     };
   });
 

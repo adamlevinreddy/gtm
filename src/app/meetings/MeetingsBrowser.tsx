@@ -186,7 +186,11 @@ export default function MeetingsBrowser({
   // Chat opens in the GLOBAL dock — scope snapshotted at dispatch, and the
   // conversation survives filter changes, navigation, even minimizing.
   const askAboutView = () => {
-    const ids = filtered.filter((m) => m.hasTranscript).map((m) => m.botId);
+    // Ask across the whole filtered set — NOT just meetings whose index
+    // `hasTranscript` flag is set. That flag lands asynchronously and is often
+    // stale/missing (backfills, Teams), which wrongly greyed this out; the
+    // agent globs the KB for transcripts server-side regardless.
+    const ids = filtered.map((m) => m.botId);
     askReddy({
       botIds: ids,
       scopeNote:
@@ -281,7 +285,7 @@ export default function MeetingsBrowser({
         <button
           type="button"
           onClick={askAboutView}
-          disabled={filtered.filter((m) => m.hasTranscript).length === 0}
+          disabled={filtered.length === 0}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
           style={{ background: PLUM }}
         >
