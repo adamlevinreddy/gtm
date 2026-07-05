@@ -1,11 +1,30 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MuxPlayer from "@mux/mux-player-react";
-import { FileText, Link2 } from "lucide-react";
+import { FileText, Link2, Search, ChevronUp, ChevronDown } from "lucide-react";
 import CopyButton from "@/components/CopyButton";
 
 const PLUM = "#773D72";
+
+// Highlight query matches inside a transcript line.
+function Highlighted({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "ig"));
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.toLowerCase() === query.toLowerCase() ? (
+          <mark key={i} className="rounded-sm px-0.5" style={{ background: "#F3D9F0" }}>
+            {p}
+          </mark>
+        ) : (
+          <span key={i}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
 
 type TimedLine = { start: number; speaker: string; text: string };
 type Video = {
@@ -43,6 +62,37 @@ export default function MeetingPlayerAndTranscript({
   // expose a settable .currentTime).
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   const [active, setActive] = useState(-1);
+
+  // In-transcript search (Daybreak Phase 5): highlight-all, n/N navigation,
+  // jump-to-line — find the exact second of an hour-long call in 2 clicks.
+  const [query, setQuery] = useState("");
+  const [matchIdx, setMatchIdx] = useState(0);
+  const lineRefs = useRef<Map<number, HTMLElement>>(new Map());
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as number[];
+    if (timed && timed.length > 0) {
+      return timed
+        .map((l, i) => (`${l.speaker}: ${l.text}`.toLowerCase().includes(q) ? i : -1))
+        .filter((i) => i >= 0);
+    }
+    if (fallback) {
+      return fallback
+        .split(/\r?\n/)
+        .map((l, i) => (l.toLowerCase().includes(q) ? i : -1))
+        .filter((i) => i >= 0);
+    }
+    return [];
+  }, [query, timed, fallback]);
+
+  const hasJumped = useRef(false);
+  const jumpToMatch = (next: number) => {
+    if (matches.length === 0) return;
+    const idx = ((next % matches.length) + matches.length) % matches.length;
+    setMatchIdx(idx);
+    hasJumped.current = true;
+    lineRefs.current.get(matches[idx])?.scrollIntoView({ block: "center" });
+  };
 
   // ?t= deep link: seek once, as soon as the media is ready. Paused seek —
   // the viewer decides when to press play.
@@ -107,7 +157,7 @@ export default function MeetingPlayerAndTranscript({
             style={{ aspectRatio: "16 / 9", width: "100%" }}
           />
         ) : video.kind === "lfs" && video.url ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
+           
           <video ref={mediaRef} src={video.url} controls preload="metadata" className="aspect-video w-full bg-black" />
         ) : (
           <div className="flex aspect-video w-full items-center justify-center bg-zinc-900 text-sm text-zinc-400">
@@ -118,13 +168,42 @@ export default function MeetingPlayerAndTranscript({
 
       {/* transcript */}
       <section className="rounded-xl border bg-white" style={{ borderColor: "#E4DCE3" }}>
-        <div className="flex items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: "#EFE5EE" }}>
+        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: "#EFE5EE" }}>
           <FileText size={14} style={{ color: PLUM }} />
           <h2 className="text-sm font-semibold" style={{ color: PLUM }}>Transcript</h2>
+          <div className="relative ml-2 min-w-[160px] flex-1 max-w-xs">
+            <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setMatchIdx(0);
+                hasJumped.current = false;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (e.shiftKey) jumpToMatch(matchIdx - 1);
+                  else jumpToMatch(hasJumped.current ? matchIdx + 1 : matchIdx);
+                }
+              }}
+              placeholder="Search transcript…"
+              className="w-full rounded-md border py-1 pl-6 pr-2 text-xs outline-none focus:ring-1"
+              style={{ borderColor: "#E4DCE3" }}
+            />
+          </div>
+          {query.trim() && (
+            <span className="flex items-center gap-0.5 text-xs tabular-nums text-zinc-500">
+              {matches.length ? `${matchIdx + 1}/${matches.length}` : "0/0"}
+              <button type="button" onClick={() => jumpToMatch(matchIdx - 1)} className="rounded p-0.5 hover:bg-zinc-100" aria-label="Previous match">
+                <ChevronUp size={13} />
+              </button>
+              <button type="button" onClick={() => jumpToMatch(matchIdx + 1)} className="rounded p-0.5 hover:bg-zinc-100" aria-label="Next match">
+                <ChevronDown size={13} />
+              </button>
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
-            {timed && timed.length > 0 && (
-              <span className="text-xs text-zinc-400">click a line to jump the video</span>
-            )}
             {shareUrl && video.kind !== "none" && (
               <CopyButton
                 text={() => {
@@ -144,10 +223,20 @@ export default function MeetingPlayerAndTranscript({
               {timed.map((line, i) => (
                 <button
                   key={i}
+                  ref={(el) => {
+                    if (el) lineRefs.current.set(i, el);
+                    else lineRefs.current.delete(i);
+                  }}
                   type="button"
                   onClick={() => seekTo(line.start)}
                   className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm leading-relaxed transition-colors hover:bg-zinc-50"
-                  style={i === active ? { background: "#F0E8EF" } : undefined}
+                  style={
+                    i === active
+                      ? { background: "#F0E8EF" }
+                      : query.trim() && matches[matchIdx] === i
+                        ? { outline: `1px solid ${PLUM}55`, background: "#FBF7FA" }
+                        : undefined
+                  }
                 >
                   <span
                     className="mt-0.5 shrink-0 font-mono text-[11px] tabular-nums"
@@ -156,8 +245,12 @@ export default function MeetingPlayerAndTranscript({
                     {fmt(line.start)}
                   </span>
                   <span className="min-w-0">
-                    <span className="font-semibold text-zinc-800">{line.speaker}: </span>
-                    <span className="text-zinc-700">{line.text}</span>
+                    <span className="font-semibold text-zinc-800">
+                      <Highlighted text={`${line.speaker}: `} query={query.trim()} />
+                    </span>
+                    <span className="text-zinc-700">
+                      <Highlighted text={line.text} query={query.trim()} />
+                    </span>
                   </span>
                 </button>
               ))}
@@ -165,15 +258,26 @@ export default function MeetingPlayerAndTranscript({
           ) : fallback ? (
             <div className="space-y-1.5 px-2 py-2 text-sm leading-relaxed text-zinc-700">
               {fallback.split(/\r?\n/).map((l, i) => {
+                const setRef = (el: HTMLElement | null) => {
+                  if (el) lineRefs.current.set(i, el);
+                  else lineRefs.current.delete(i);
+                };
                 const m = l.match(/^([^:]{1,40}):\s?(.*)$/);
                 if (m) {
                   return (
-                    <p key={i}>
-                      <span className="font-semibold" style={{ color: PLUM }}>{m[1]}:</span> {m[2]}
+                    <p key={i} ref={setRef}>
+                      <span className="font-semibold" style={{ color: PLUM }}>{m[1]}:</span>{" "}
+                      <Highlighted text={m[2]} query={query.trim()} />
                     </p>
                   );
                 }
-                return l.trim() ? <p key={i}>{l}</p> : <div key={i} className="h-1.5" />;
+                return l.trim() ? (
+                  <p key={i} ref={setRef}>
+                    <Highlighted text={l} query={query.trim()} />
+                  </p>
+                ) : (
+                  <div key={i} className="h-1.5" />
+                );
               })}
             </div>
           ) : (

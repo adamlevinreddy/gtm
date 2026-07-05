@@ -70,6 +70,19 @@ export function dayKeyPT(iso: string | Date): string {
   }).format(iso instanceof Date ? iso : new Date(iso));
 }
 
+/** Epoch ms of midnight PT, `daysAgo` days back — for "today"/"overnight"
+ * windows that respect the team's calendar day, not UTC's. */
+export function ptStartOfDayMs(daysAgo = 0): number {
+  const now = new Date();
+  const ymd = dayKeyPT(now); // "YYYY-MM-DD" in PT
+  const offsetName = new Intl.DateTimeFormat("en-US", { timeZone: TZ, timeZoneName: "shortOffset" })
+    .formatToParts(now)
+    .find((p) => p.type === "timeZoneName")?.value ?? "GMT-8";
+  const m = offsetName.match(/GMT([+-])(\d{1,2})/);
+  const offsetHours = m ? (m[1] === "-" ? Number(m[2]) : -Number(m[2])) : 8;
+  return Date.parse(`${ymd}T00:00:00Z`) + offsetHours * 3600_000 - daysAgo * 24 * 3600_000;
+}
+
 /** "47m" / "1h 12m" from two ISO timestamps; "" when either is missing. */
 export function fmtDuration(start: string | null | undefined, end: string | null | undefined): string {
   const s = safeDate(start);

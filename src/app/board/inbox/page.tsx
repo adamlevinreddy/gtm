@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
+import { verifyViewerCookie } from "@/lib/viewer";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { listNotifications } from "@/lib/board-world";
 import { PLUM, relTime } from "../ui-shared";
 import AppShell from "@/app/AppShell";
+import WelcomeGate from "@/app/WelcomeGate";
 import MarkAllRead from "./MarkAllRead";
 
 export const dynamic = "force-dynamic";
@@ -33,11 +35,8 @@ export default async function InboxPage({
   const sp = await searchParams;
   const cookieStore = await cookies();
   const asParam = typeof sp.as === "string" ? sp.as : undefined;
-  const viewer =
-    asParam ||
-    cookieStore.get(VIEWER_COOKIE)?.value ||
-    process.env.BOARD_DEFAULT_VIEWER ||
-    "adam@reddy.io";
+  const viewer = asParam || verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
+  if (!viewer) return <WelcomeGate />;
   const onlyUnread = sp.filter === "unread";
 
   let notifications: Awaited<ReturnType<typeof listNotifications>> = [];

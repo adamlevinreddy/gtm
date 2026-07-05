@@ -39,6 +39,8 @@ export type IndexedMeeting = {
   has_mux: boolean;
   platform: string | null;
   attribution_confidence: string | null;
+  /** Mux playback id — inert without a signed token; used to mint posters. */
+  mux_playback_id: string | null;
   // Pre-minted clickable playback URL when the meeting has a video.
   // Prefers a Mux signed player URL (no auth required, embeds Mux's
   // web player) when meta.mux.playback_id is present; falls back to
@@ -56,7 +58,7 @@ export type IndexedMeeting = {
 // If `videoLinkOpts` is supplied, also pre-mints a clickable video
 // URL for each meeting that has a video — saves the agent from
 // having to curl /api/recall/video-link.
-export type IndexedRow = IndexedMeeting & { _muxPlaybackId: string | null };
+export type IndexedRow = IndexedMeeting;
 
 function rowFromKvIndex(r: MeetingIndexRow): IndexedRow {
   return {
@@ -72,7 +74,7 @@ function rowFromKvIndex(r: MeetingIndexRow): IndexedRow {
     has_mux: !!r.mux_playback_id,
     platform: r.platform,
     attribution_confidence: r.attribution_confidence,
-    _muxPlaybackId: r.mux_playback_id,
+    mux_playback_id: r.mux_playback_id,
   };
 }
 
@@ -150,7 +152,7 @@ export async function walkAllKbMeetings(pat: string): Promise<IndexedRow[]> {
             has_mux: !!parsed.mux?.playback_id,
             platform: parsed.platform ?? null,
             attribution_confidence: parsed.attribution?.confidence ?? null,
-            _muxPlaybackId: parsed.mux?.playback_id ?? null,
+            mux_playback_id: parsed.mux?.playback_id ?? null,
           };
           return row;
         }),
@@ -197,9 +199,9 @@ export async function recentMeetingIndex(
     const muxConfigured = !!process.env.MUX_SIGNING_KEY_ID && !!process.env.MUX_SIGNING_KEY_PRIVATE;
     for (const m of filtered) {
       if (!m.bot_id) continue;
-      if (m._muxPlaybackId && muxConfigured) {
+      if (m.mux_playback_id && muxConfigured) {
         try {
-          m.video_url = signedPlayerUrl(m._muxPlaybackId, ttl);
+          m.video_url = signedPlayerUrl(m.mux_playback_id, ttl);
         } catch {
           // Fall through to LFS proxy if signing fails for any reason.
         }
@@ -216,12 +218,7 @@ export async function recentMeetingIndex(
     }
   }
 
-  // Drop the internal _muxPlaybackId stash before returning.
-  return filtered.map((m) => {
-    const { _muxPlaybackId: _drop, ...rest } = m;
-    void _drop;
-    return rest;
-  });
+  return filtered;
 }
 
 // Derive a display "account" for a meeting. Most meetings land in `_unsorted`

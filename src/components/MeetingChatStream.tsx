@@ -23,6 +23,7 @@ export default function MeetingChatStream({
   starters,
   placeholder = "Ask a question…",
   unscoped = false,
+  initialQuestion,
 }: {
   botIds?: string[];
   /** Human description of the filter behind botIds — passed to the agent. */
@@ -33,6 +34,8 @@ export default function MeetingChatStream({
   placeholder?: string;
   /** true → no meeting scope: the agent answers from everything it has. */
   unscoped?: boolean;
+  /** Auto-send this question on mount (⌘K free-text fall-through). */
+  initialQuestion?: string;
 }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -66,6 +69,16 @@ export default function MeetingChatStream({
     },
     [],
   );
+
+  // ⌘K fall-through: fire the handed-in question exactly once on mount.
+  const firedInitial = useRef(false);
+  useEffect(() => {
+    if (initialQuestion && !firedInitial.current) {
+      firedInitial.current = true;
+      void ask(initialQuestion);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuestion]);
 
   const setLastAssistant = (patch: (prev: Msg) => Msg) =>
     setMessages((m) => {

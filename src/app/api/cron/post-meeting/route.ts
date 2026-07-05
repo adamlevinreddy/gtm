@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
       has_transcript: m.has_transcript,
       has_video: m.has_video,
       has_chat: m.has_chat,
-      mux_playback_id: m._muxPlaybackId,
+      mux_playback_id: m.mux_playback_id,
       attribution_confidence: m.attribution_confidence,
     })
       .then(() => true)

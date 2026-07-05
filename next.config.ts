@@ -17,6 +17,18 @@ const nextConfig: NextConfig = {
         destination: "/m/:botId",
         permanent: true,
       },
+      // Daybreak Phase 4/6: meetings hub moved to /meetings; the bot
+      // schedule lives in /settings now.
+      {
+        source: "/board/meetings",
+        destination: "/meetings",
+        permanent: true,
+      },
+      {
+        source: "/board/meetings/schedule",
+        destination: "/settings",
+        permanent: true,
+      },
     ];
   },
 };

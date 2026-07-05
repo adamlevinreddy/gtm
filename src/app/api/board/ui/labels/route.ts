@@ -1,3 +1,4 @@
+import { verifyViewerCookie } from "@/lib/viewer";
 import { NextRequest, NextResponse } from "next/server";
 import { selfBaseUrl } from "@/lib/work-items";
 
@@ -17,8 +18,10 @@ function resolveViewer(req: NextRequest, bodyAs?: unknown): string {
   if (typeof bodyAs === "string" && bodyAs.includes("@")) return bodyAs;
   const qAs = req.nextUrl.searchParams.get("as");
   if (qAs && qAs.includes("@")) return qAs;
-  const cookie = req.cookies.get(VIEWER_COOKIE)?.value;
-  if (cookie && cookie.includes("@")) return cookie;
+  // Signed cookie (Daybreak P6): verify + strip the HMAC; raw use would
+  // leak "email|sig" into attribution.
+  const verified = verifyViewerCookie(req.cookies.get(VIEWER_COOKIE)?.value);
+  if (verified) return verified;
   return process.env.BOARD_DEFAULT_VIEWER || "adam@reddy.io";
 }
 

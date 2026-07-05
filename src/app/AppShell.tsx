@@ -3,35 +3,42 @@ import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { unreadNotificationCount } from "@/lib/board-world";
 import { VIEWER_COOKIE } from "@/lib/team";
+import { verifyViewerCookie } from "@/lib/viewer";
 import ViewerPicker from "./board/ViewerPicker";
+import WelcomeGate from "./WelcomeGate";
+import CommandK from "@/components/CommandK";
 
 // ---------------------------------------------------------------------------
 // The ONE app chrome. Every page renders inside this shell so navigation
-// never jumps: brand → Home / Meetings / Bot schedule / Board / Inbox →
+// never jumps: brand → Home / Meetings / Board / Inbox / Settings →
 // identity picker, in that order, in the same place, on every screen.
 // Pages contribute only a title/subtitle, optional right-side actions, and
 // their content. Don't hand-roll another header.
+//
+// Identity is BLOCKING (Daybreak Phase 6): without a verified viewer cookie
+// the shell renders the welcome gate instead of any page.
 // ---------------------------------------------------------------------------
 
 export const PLUM = "#773D72";
 
-export type NavKey = "home" | "meetings" | "schedule" | "board" | "inbox";
+export type NavKey = "home" | "meetings" | "board" | "inbox" | "settings";
 
 const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: "home", label: "Home", href: "/" },
-  { key: "meetings", label: "Meetings", href: "/board/meetings" },
-  { key: "schedule", label: "Bot schedule", href: "/board/meetings/schedule" },
+  { key: "meetings", label: "Meetings", href: "/meetings" },
   { key: "board", label: "Board", href: "/board" },
   { key: "inbox", label: "Inbox", href: "/board/inbox" },
+  { key: "settings", label: "Settings", href: "/settings" },
 ];
 
-export async function resolveViewer(asParam?: string): Promise<string> {
+/** ?as= override or the verified cookie — NULL when anonymous. Pages that
+ * pass the result to AppShell get the blocking gate for free; never re-add
+ * a default here (that's how "everyone is adam@" came back once already). */
+export async function resolveViewer(asParam?: string): Promise<string | null> {
   const cookieStore = await cookies();
   return (
-    (asParam && asParam.includes("@") ? asParam : undefined) ||
-    cookieStore.get(VIEWER_COOKIE)?.value ||
-    process.env.BOARD_DEFAULT_VIEWER ||
-    "adam@reddy.io"
+    (asParam && asParam.includes("@") ? asParam : null) ||
+    verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value)
   );
 }
 
@@ -51,11 +58,19 @@ export default async function AppShell({
   /** Page-specific controls rendered right of the title (switchers, tabs). */
   actions?: ReactNode;
   maxWidth?: string;
-  /** Pass when the page already resolved the viewer (e.g. honoring ?as=). */
-  viewer?: string;
+  /** Pass when the page already resolved the viewer (e.g. honoring ?as=).
+   * null/undefined → the shell falls back to the cookie, then the gate. */
+  viewer?: string | null;
   children: ReactNode;
 }) {
-  const viewer = viewerProp ?? (await resolveViewer());
+  const cookieStore = await cookies();
+  const cookieViewer = verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
+
+  // No identity → the gate, nothing else. (?as= via viewerProp keeps
+  // automation/deep-link flows working without a browser cookie.)
+  const viewer = viewerProp ?? cookieViewer ?? null;
+  if (!viewer) return <WelcomeGate />;
+
   const unread = await unreadNotificationCount(viewer).catch(() => 0);
 
   return (
@@ -108,7 +123,8 @@ export default async function AppShell({
             })}
           </nav>
 
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto flex shrink-0 items-center gap-3">
+            <CommandK />
             <ViewerPicker viewer={viewer} />
           </div>
         </div>

@@ -27,6 +27,7 @@ export type MeetingMeta = {
   mux?: { playback_id?: string } | null;
   video?: { oid?: string; size?: number } | null;
   has_transcript?: boolean;
+  has_chat?: boolean;
 };
 
 export type LoadedMeeting = {
@@ -40,6 +41,8 @@ export type LoadedMeeting = {
   companyName: string | null;
   attendees: Array<{ name?: string; email?: string }>;
   transcript: string | null;
+  /** In-meeting chat log (chat.txt) — null when the meeting had none. */
+  chatText: string | null;
   timedTranscript: TimedLine[] | null;
   video: {
     kind: "mux" | "lfs" | "none";
@@ -151,7 +154,7 @@ export async function loadMeeting(
 ): Promise<LoadedMeeting> {
   const empty: LoadedMeeting = {
     botId, slug: null, found: false, title: "Meeting", startedAt: null, endedAt: null,
-    platform: null, companyName: null, attendees: [], transcript: null,
+    platform: null, companyName: null, attendees: [], transcript: null, chatText: null,
     timedTranscript: null, video: { kind: "none", url: null },
   };
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
@@ -171,6 +174,13 @@ export async function loadMeeting(
 
   const transcriptPath = metaPath.replace(/meta\.json$/, "transcript.txt");
   const transcript = await readKbFile(pat, transcriptPath).catch(() => null);
+
+  // In-meeting chat (links pasted during the call live here). Recorded by
+  // the webhook since day one — Daybreak Phase 5 is the first surface to
+  // actually show it.
+  const chatText = meta.has_chat
+    ? await readKbFile(pat, metaPath.replace(/meta\.json$/, "chat.txt")).catch(() => null)
+    : null;
 
   const ttl = opts?.videoTtlSeconds ?? 6 * 3600;
   let video: LoadedMeeting["video"] = { kind: "none", url: null };
@@ -233,6 +243,7 @@ export async function loadMeeting(
     companyName: meta.attribution?.company_name ?? null,
     attendees: (meta.attendees ?? []).map((a) => ({ name: a.name, email: a.email })),
     transcript: transcript ?? null,
+    chatText: chatText ?? null,
     timedTranscript: timedTranscript && timedTranscript.length ? timedTranscript : null,
     video,
   };

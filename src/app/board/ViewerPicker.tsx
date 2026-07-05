@@ -2,24 +2,28 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { TEAM_EMAILS, VIEWER_COOKIE } from "@/lib/team";
+import { TEAM_EMAILS } from "@/lib/team";
 import { personName } from "./ui-shared";
 
-// Identity selector. Until this shipped, NOTHING ever wrote the
-// board_viewer cookie, so every teammate browsed as the default viewer
-// (adam@) — "My work" showed Adam's tasks for everyone and chat/task
-// actions were attributed to him. One pick persists for a year.
+// Header identity selector. Posts to /api/viewer, which sets the SIGNED
+// httpOnly cookie (Daybreak Phase 6) — client JS never writes identity.
 export default function ViewerPicker({ viewer }: { viewer: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  const setViewer = (email: string) => {
+  const setViewer = async (email: string) => {
     if (!email || email === viewer) return;
     setBusy(true);
-    document.cookie = `${VIEWER_COOKIE}=${encodeURIComponent(email)}; path=/; max-age=31536000; samesite=lax`;
-    router.refresh();
-    // refresh() keeps the component mounted; drop the busy flag shortly after.
-    setTimeout(() => setBusy(false), 800);
+    try {
+      await fetch("/api/viewer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      router.refresh();
+    } finally {
+      setTimeout(() => setBusy(false), 800);
+    }
   };
 
   const options: string[] = TEAM_EMAILS.includes(viewer as (typeof TEAM_EMAILS)[number])
@@ -42,9 +46,9 @@ export default function ViewerPicker({ viewer }: { viewer: string }) {
         onChange={(e) => {
           if (e.target.value === "__other__") {
             const email = window.prompt("Your work email:");
-            if (email && email.includes("@")) setViewer(email.trim().toLowerCase());
+            if (email && email.includes("@")) void setViewer(email.trim().toLowerCase());
           } else {
-            setViewer(e.target.value);
+            void setViewer(e.target.value);
           }
         }}
         className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white py-1 pl-2 pr-6 text-xs font-medium text-zinc-700"

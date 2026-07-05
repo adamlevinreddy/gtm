@@ -15,6 +15,7 @@ import {
 } from "@/lib/work-items";
 import type { WorkItem } from "@/lib/schema";
 import { cookies } from "next/headers";
+import { verifyViewerCookie } from "@/lib/viewer";
 import {
   labelsFor,
   listLabels,
@@ -35,6 +36,7 @@ import {
   type BoardFilters,
 } from "./filters";
 import AppShell from "@/app/AppShell";
+import WelcomeGate from "@/app/WelcomeGate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -232,14 +234,13 @@ export default async function BoardPage({
   const filters = parseFilters(sp);
   const now = new Date();
 
-  // viewer identity for "My work" + saved views ownership
+  // viewer identity for "My work" + saved views ownership. Cookie is the
+  // SIGNED Daybreak-P6 form — verify + strip, never use raw. Anonymous →
+  // the gate; no silent adam@ fallback.
   const cookieStore = await cookies();
   const asParam = typeof sp.as === "string" ? sp.as : undefined;
-  const viewer =
-    asParam ||
-    cookieStore.get(VIEWER_COOKIE)?.value ||
-    process.env.BOARD_DEFAULT_VIEWER ||
-    "adam@reddy.io";
+  const viewer = asParam || verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
+  if (!viewer) return <WelcomeGate />;
 
   let boards: BoardTab[] = [];
   let board: BoardColumns | null = null;

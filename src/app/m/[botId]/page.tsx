@@ -1,12 +1,15 @@
 import Link from "next/link";
+import { eq } from "drizzle-orm";
 import { Link2, Video } from "lucide-react";
+import { db } from "@/lib/db";
+import { workItems } from "@/lib/schema";
 import { loadMeeting } from "@/lib/meeting-viewer";
 import { fmtDayTimePT, fmtDuration } from "@/lib/fmt";
 import { PLUM, PLUM_TINT, BORDER } from "@/lib/tokens";
 import AppShell from "@/app/AppShell";
-import MeetingChatStream from "@/components/MeetingChatStream";
 import CopyButton from "@/components/CopyButton";
 import MeetingPlayerAndTranscript from "./MeetingPlayerAndTranscript";
+import TheaterPanel from "./TheaterPanel";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,7 +30,14 @@ export default async function MeetingViewerPage({
 }) {
   const { botId } = await params;
   const { from, customer, t } = await searchParams;
-  const meeting = await loadMeeting(botId, { customerHint: customer ?? null });
+  const [meeting, tasks] = await Promise.all([
+    loadMeeting(botId, { customerHint: customer ?? null }),
+    db
+      .select({ id: workItems.id, title: workItems.title, status: workItems.status })
+      .from(workItems)
+      .where(eq(workItems.sourceRef, botId))
+      .catch(() => [] as Array<{ id: string; title: string; status: string }>),
+  ]);
 
   const initialT = t && Number.isFinite(Number(t)) && Number(t) >= 0 ? Number(t) : null;
   const backHref = from ? `/board/${from}` : "/board/meetings";
@@ -96,22 +106,13 @@ export default async function MeetingViewerPage({
               />
             </div>
 
-            {/* right: chat */}
+            {/* right: Ask / in-meeting chat / tasks */}
             <div className="lg:col-span-2">
               <div
                 className="flex h-[78vh] flex-col overflow-hidden rounded-xl border bg-white lg:sticky lg:top-[calc(var(--header-h)+16px)]"
                 style={{ borderColor: BORDER }}
               >
-                <MeetingChatStream
-                  botIds={[meeting.botId]}
-                  starters={[
-                    "Summarize this meeting",
-                    "What are the action items and who owns them?",
-                    "What objections or concerns came up?",
-                    "What did we commit to?",
-                  ]}
-                  placeholder="Ask about this meeting…"
-                />
+                <TheaterPanel botId={meeting.botId} chatText={meeting.chatText} tasks={tasks} />
               </div>
             </div>
           </div>

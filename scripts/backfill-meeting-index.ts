@@ -39,7 +39,7 @@ async function main() {
       has_transcript: r.has_transcript,
       has_video: r.has_video,
       has_chat: r.has_chat,
-      mux_playback_id: r._muxPlaybackId,
+      mux_playback_id: r.mux_playback_id,
       attribution_confidence: r.attribution_confidence,
     });
     ok++;
