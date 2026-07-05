@@ -371,12 +371,12 @@ export default async function HomePage() {
               </thead>
               <tbody>
                 {accounts.map((a) => {
-                  const openTasks = openBySlug.get(slugify(a.account)) ?? 0;
+                  const openTasks = openBySlug.get(a.accountSlug) ?? openBySlug.get(slugify(a.account)) ?? 0;
                   return (
-                    <tr key={a.account} className="border-t border-zinc-100 hover:bg-zinc-50">
+                    <tr key={a.accountKey} className="border-t border-zinc-100 hover:bg-zinc-50">
                       <td className="px-4 py-2">
                         <Link
-                          href={`/a/${slugify(a.account)}`}
+                          href={`/a/${a.accountSlug}`}
                           className="font-medium no-underline hover:underline"
                           style={{ color: PLUM }}
                         >
@@ -391,7 +391,7 @@ export default async function HomePage() {
                       <td className="px-4 py-2">
                         {openTasks > 0 ? (
                           <Link
-                            href={`/board?customer=${encodeURIComponent(slugify(a.account))}`}
+                            href={`/tasks?customer=${encodeURIComponent(a.accountSlug)}`}
                             className="no-underline hover:underline"
                             style={{ color: PLUM }}
                           >

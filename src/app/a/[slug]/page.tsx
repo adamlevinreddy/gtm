@@ -10,8 +10,7 @@ import { listLibraryFiles, latestPointers } from "@/lib/library";
 import { canonicalizeCompany } from "@/lib/hubspot";
 import { kv } from "@/lib/kv-client";
 import { signedThumbUrl } from "@/lib/mux";
-import { fmtDayPT } from "@/lib/fmt";
-import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT, OK } from "@/lib/tokens";
+import { PLUM, BORDER, BORDER_SOFT, OK } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
 import MeetingRow, { type MeetingRowData } from "@/components/MeetingRow";
@@ -66,10 +65,15 @@ export default async function AccountPage({ params }: { params: Promise<{ slug: 
       .catch(() => []),
   ]);
 
-  // This account's meetings: slug match OR canonical-label match.
+  // This account's meetings: match the STABLE account slug (dedups every
+  // spelling), or the attributed customer_slug for direct slug links.
   const meetings = labeled.meetings.filter(
-    (m) => slugify(m.customer_slug) === slug || slugify(m.account) === slug,
+    (m) => m.accountSlug === slug || slugify(m.customer_slug) === slug || slugify(m.account) === slug,
   );
+  // Prefer the resolver's authoritative company id carried on the meetings over
+  // re-resolving by name (which can disagree). Fall back to the name lookup.
+  const hsId = meetings.find((m) => m.hubspotCompanyId)?.hubspotCompanyId ?? facts?.id ?? null;
+  const accountName = facts?.name ?? meetings.find((m) => m.account)?.account ?? display;
   const rows: MeetingRowData[] = meetings.map((m) => ({
     botId: m.bot_id,
     title: m.title,
@@ -103,15 +107,15 @@ export default async function AccountPage({ params }: { params: Promise<{ slug: 
     <AppShell
       active="meetings"
       viewer={viewer}
-      title={facts?.name ?? display}
+      title={accountName}
       subtitle={
         facts?.domain ? `${facts.domain} · ${meetings.length} meeting${meetings.length === 1 ? "" : "s"} in 90 days` : `${meetings.length} meeting${meetings.length === 1 ? "" : "s"} in 90 days`
       }
       actions={
         <>
-          {facts?.id && (
+          {hsId && (
             <a
-              href={`https://app.hubspot.com/contacts/39896015/record/0-2/${facts.id}`}
+              href={`https://app.hubspot.com/contacts/39896015/record/0-2/${hsId}`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-zinc-600 no-underline hover:border-zinc-300"
@@ -120,7 +124,7 @@ export default async function AccountPage({ params }: { params: Promise<{ slug: 
               <ExternalLink size={13} /> HubSpot
             </a>
           )}
-          <AccountAsk account={facts?.name ?? display} botIds={chatIds} />
+          <AccountAsk account={accountName} botIds={chatIds} />
         </>
       }
       maxWidth="max-w-5xl"
@@ -156,8 +160,8 @@ export default async function AccountPage({ params }: { params: Promise<{ slug: 
           <section className="rounded-xl border bg-white" style={{ borderColor: BORDER }}>
             <div className="flex items-center justify-between border-b px-4 py-2.5" style={{ borderColor: BORDER_SOFT }}>
               <h2 className="text-sm font-semibold" style={{ color: PLUM }}>Open commitments</h2>
-              <Link href={`/board?customer=${slug}`} className="text-xs text-zinc-400 no-underline hover:text-zinc-600">
-                board →
+              <Link href={`/tasks?customer=${slug}`} className="text-xs text-zinc-400 no-underline hover:text-zinc-600">
+                tasks →
               </Link>
             </div>
             <div className="divide-y" style={{ borderColor: "#F4EEF3" }}>
