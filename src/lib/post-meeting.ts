@@ -298,7 +298,7 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     // recording/transcript link + a per-company HubSpot account link (even with
     // no deal) and board-filtered link. Best-effort — never blocks the post.
     const accounts = await resolveAccountLinks(parsed.items.map((i) => i.company)).catch(() => [] as AccountLink[]);
-    const recUrl = `${selfBaseUrl()}/board/meeting/${botId}`;
+    const recUrl = `${selfBaseUrl()}/m/${botId}`;
 
     let slackTs: string | undefined;
     const channel = salesChannel();

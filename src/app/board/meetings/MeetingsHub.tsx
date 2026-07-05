@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import MeetingChatStream from "../meeting/MeetingChatStream";
+import { Video, FileText, Link2 } from "lucide-react";
+import MeetingChatStream from "@/components/MeetingChatStream";
+import CopyButton from "@/components/CopyButton";
+import { fmtDuration } from "@/lib/fmt";
 
 const PLUM = "#773D72";
 
@@ -13,6 +16,7 @@ export type HubMeeting = {
   account: string;
   hubspotCompanyId: string | null;
   startedAt: string | null;
+  endedAt: string | null;
   platform: string | null;
   attendees: string[];
   hasTranscript: boolean;
@@ -45,10 +49,14 @@ export default function MeetingsHub({
   meetings,
   days,
   initialAccount,
+  shareBase,
 }: {
   meetings: HubMeeting[];
   days: number;
   initialAccount?: string;
+  /** Canonical origin for share links (PUBLIC_BASE_URL) — keeps copied links
+   * identical to the viewer's, even on preview deploys. */
+  shareBase?: string;
 }) {
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState<string>(initialAccount || "all");
@@ -167,21 +175,25 @@ export default function MeetingsHub({
         </p>
 
         <div className="flex flex-col gap-2">
-          {filtered.map((m) => (
-            <Link
-              key={m.botId}
-              href={`/board/meeting/${m.botId}?customer=${encodeURIComponent(m.slug)}`}
-              className="block rounded-xl border bg-white px-4 py-3 no-underline transition-colors hover:border-zinc-300"
-              style={{ borderColor: "#E4DCE3" }}
-            >
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
+          {filtered.map((m) => {
+            const duration = fmtDuration(m.startedAt, m.endedAt);
+            return (
+              <div
+                key={m.botId}
+                className="group flex items-start gap-2 rounded-xl border bg-white px-4 py-3 transition-colors hover:border-zinc-300"
+                style={{ borderColor: "#E4DCE3" }}
+              >
+                <Link
+                  href={`/m/${m.botId}?customer=${encodeURIComponent(m.slug)}`}
+                  className="min-w-0 flex-1 no-underline"
+                >
                   <p className="truncate text-sm font-semibold text-zinc-900">
                     {m.title || "(untitled meeting)"}
                   </p>
                   <p className="mt-0.5 text-xs text-zinc-500">
                     <span style={{ color: PLUM }}>{m.account}</span>
                     {m.startedAt && <> · {fmtPT(m.startedAt)}</>}
+                    {duration && <> · {duration}</>}
                     {m.attendees.length > 0 && <> · {m.attendees.slice(0, 4).join(", ")}{m.attendees.length > 4 ? "…" : ""}</>}
                   </p>
                   {m.tasks.length > 0 && (
@@ -201,14 +213,22 @@ export default function MeetingsHub({
                       )}
                     </div>
                   )}
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5 text-sm">
-                  {m.hasVideo && <span title="Has recording">🎥</span>}
-                  {m.hasTranscript && <span title="Has transcript">📄</span>}
+                </Link>
+                <div className="flex shrink-0 items-center gap-2 text-zinc-400">
+                  <span className="opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+                    <CopyButton
+                      text={() => `${shareBase || window.location.origin}/m/${m.botId}`}
+                      label="Copy link"
+                      icon={<Link2 size={12} />}
+                      title="Permanent share link — never expires"
+                    />
+                  </span>
+                  {m.hasVideo && <Video size={14} aria-label="Has recording" />}
+                  {m.hasTranscript && <FileText size={14} aria-label="Has transcript" />}
                 </div>
               </div>
-            </Link>
-          ))}
+            );
+          })}
           {filtered.length === 0 && (
             <p className="rounded-xl border bg-white px-4 py-6 text-center text-sm text-zinc-400" style={{ borderColor: "#E4DCE3" }}>
               No meetings match these filters.
@@ -220,7 +240,7 @@ export default function MeetingsHub({
       {/* right: corpus chat */}
       <div className="lg:col-span-2">
         <div
-          className="lg:sticky lg:top-7 flex h-[80vh] flex-col overflow-hidden rounded-xl border bg-white"
+          className="flex h-[80vh] flex-col overflow-hidden rounded-xl border bg-white lg:sticky lg:top-[calc(var(--header-h)+16px)]"
           style={{ borderColor: "#E4DCE3" }}
         >
           <MeetingChatStream

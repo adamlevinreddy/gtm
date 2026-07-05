@@ -197,7 +197,7 @@ export default async function WorkItemDetailPage({
         {item.source === "post_meeting" && item.sourceRef && (
           <section className="mt-5">
             <Link
-              href={`/board/meeting/${item.sourceRef}${item.customerSlug ? `?from=${item.id}&customer=${item.customerSlug}` : `?from=${item.id}`}`}
+              href={`/m/${item.sourceRef}${item.customerSlug ? `?from=${item.id}&customer=${item.customerSlug}` : `?from=${item.id}`}`}
               className="flex items-center gap-3 rounded-xl border px-4 py-3 no-underline transition-colors hover:bg-white"
               style={{ borderColor: "#E4DCE3", background: "#FBF8FB" }}
             >

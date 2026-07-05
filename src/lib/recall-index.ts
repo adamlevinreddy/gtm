@@ -7,6 +7,7 @@ import { buildVideoLink } from "./video-link";
 import { signedPlayerUrl } from "./mux";
 import { listActiveBots, type RecallBot } from "./recall";
 import { kv } from "./kv-client";
+import { readMeetingIndex, type MeetingIndexRow } from "./meeting-index";
 
 const GH_API = "https://api.github.com";
 const REPO = { owner: "ReddySolutions", name: "reddy-gtm" };
@@ -20,6 +21,7 @@ type MetaJson = {
   attendees?: Array<{ name: string | null; email: string | null; is_host: boolean | null }>;
   attribution?: { customer_slug?: string; confidence?: string };
   has_transcript?: boolean;
+  has_chat?: boolean;
   video?: { oid: string; size: number } | null;
   mux?: { asset_id: string; playback_id: string } | null;
 };
@@ -29,11 +31,14 @@ export type IndexedMeeting = {
   bot_id: string;
   title: string | null;
   started_at: string | null;
+  ended_at: string | null;
   attendees: Array<{ name: string | null; email: string | null }>;
   has_transcript: boolean;
   has_video: boolean;
+  has_chat: boolean;
   has_mux: boolean;
   platform: string | null;
+  attribution_confidence: string | null;
   // Pre-minted clickable playback URL when the meeting has a video.
   // Prefers a Mux signed player URL (no auth required, embeds Mux's
   // web player) when meta.mux.playback_id is present; falls back to
@@ -51,12 +56,31 @@ export type IndexedMeeting = {
 // If `videoLinkOpts` is supplied, also pre-mints a clickable video
 // URL for each meeting that has a video — saves the agent from
 // having to curl /api/recall/video-link.
-export async function recentMeetingIndex(
-  pat: string,
-  sinceDays = 7,
-  limit = 20,
-  videoLinkOpts?: { baseUrl: string; secret: string; ttlSeconds?: number },
-): Promise<IndexedMeeting[]> {
+export type IndexedRow = IndexedMeeting & { _muxPlaybackId: string | null };
+
+function rowFromKvIndex(r: MeetingIndexRow): IndexedRow {
+  return {
+    customer_slug: r.customer_slug,
+    bot_id: r.bot_id,
+    title: r.title,
+    started_at: r.started_at,
+    ended_at: r.ended_at,
+    attendees: r.attendees ?? [],
+    has_transcript: r.has_transcript,
+    has_video: r.has_video,
+    has_chat: r.has_chat,
+    has_mux: !!r.mux_playback_id,
+    platform: r.platform,
+    attribution_confidence: r.attribution_confidence,
+    _muxPlaybackId: r.mux_playback_id,
+  };
+}
+
+// Walk the ENTIRE KB for meeting metas via the GitHub API: ref → commit →
+// recursive tree → blob per meta.json. This is the 3+-round-trip slow path
+// (10-30s cold) that Daybreak Phase 3 demotes to (a) the backfill source and
+// (b) a fallback when the KV index is empty. Cached by tree SHA.
+export async function walkAllKbMeetings(pat: string): Promise<IndexedRow[]> {
   // Get the latest commit's tree SHA on main
   const refRes = await fetch(`${GH_API}/repos/${REPO.owner}/${REPO.name}/git/ref/heads/main`, {
     headers: ghHeaders(pat),
@@ -84,16 +108,11 @@ export async function recentMeetingIndex(
 
   if (metaPaths.length === 0) return [];
 
-  type IndexedRow = IndexedMeeting & { _muxPlaybackId: string | null };
-
-  // Parse EVERY meeting's meta, then sort by recency. We must NOT rely on tree
-  // (lexicographic) order — `_unsorted/` sorts in the MIDDLE, so a tail slice
-  // buries recent unsorted meetings and silently drops them. Cache the full
-  // parsed set keyed on the tree SHA: a cold render fetches all blobs once
-  // (bounded concurrency); steady state is a single kv.get until the kb commits
-  // again (SHA changes → auto-invalidate). video_url is minted per request
-  // below, never cached (its token TTL differs from the cache TTL).
-  const cacheKey = `mtgidx:${commit.tree.sha}`;
+  // Parse EVERY meeting's meta. We must NOT rely on tree (lexicographic)
+  // order — `_unsorted/` sorts in the MIDDLE, so a tail slice buries recent
+  // unsorted meetings. Cache the full parsed set keyed on the tree SHA
+  // (v2 suffix: rows gained ended_at/has_chat/confidence fields).
+  const cacheKey = `mtgidx2:${commit.tree.sha}`;
   let rows = await kv.get<IndexedRow[]>(cacheKey).catch(() => null);
   if (!rows) {
     rows = [];
@@ -123,11 +142,14 @@ export async function recentMeetingIndex(
             bot_id: parsed.recall_bot_id ?? segs[5] ?? "",
             title: parsed.title ?? null,
             started_at: parsed.started_at ?? null,
+            ended_at: parsed.ended_at ?? null,
             attendees: (parsed.attendees ?? []).map((a) => ({ name: a.name ?? null, email: a.email ?? null })),
             has_transcript: !!parsed.has_transcript,
             has_video: !!parsed.video,
+            has_chat: !!parsed.has_chat,
             has_mux: !!parsed.mux?.playback_id,
             platform: parsed.platform ?? null,
+            attribution_confidence: parsed.attribution?.confidence ?? null,
             _muxPlaybackId: parsed.mux?.playback_id ?? null,
           };
           return row;
@@ -137,19 +159,38 @@ export async function recentMeetingIndex(
     }
     await kv.set(cacheKey, rows, { ex: 3600 }).catch(() => {});
   }
+  return rows;
+}
 
+export async function recentMeetingIndex(
+  pat: string,
+  sinceDays = 7,
+  limit = 20,
+  videoLinkOpts?: { baseUrl: string; secret: string; ttlSeconds?: number },
+): Promise<IndexedMeeting[]> {
   // Cutoff anchored to PT midnight, sinceDays back. Users are all on
   // Pacific time — a UTC-anchored cutoff at 11pm PT silently rolls into
   // the next day and excludes meetings from the start of the user's day.
   const cutoff = ptMidnightDaysAgo(sinceDays);
-  const filtered = rows
-    .filter((m): m is IndexedRow => !!m && !!m.started_at)
-    .filter((m) => {
-      const t = Date.parse(m.started_at as string);
-      return Number.isFinite(t) && t >= cutoff;
-    })
-    .sort((a, b) => Date.parse(b.started_at as string) - Date.parse(a.started_at as string))
-    .slice(0, limit);
+
+  // FAST PATH (Daybreak Phase 3): the webhook-maintained KV index — one
+  // ZRANGE + one HMGET instead of 3+ GitHub round-trips. Falls back to the
+  // full KB walk only while the index is empty (pre-backfill).
+  let filtered = (await readMeetingIndex({ sinceMs: cutoff, limit }).catch(() => []))
+    .map(rowFromKvIndex)
+    .filter((m) => !!m.bot_id && !!m.started_at);
+
+  if (filtered.length === 0) {
+    const rows = await walkAllKbMeetings(pat);
+    filtered = rows
+      .filter((m): m is IndexedRow => !!m && !!m.started_at)
+      .filter((m) => {
+        const t = Date.parse(m.started_at as string);
+        return Number.isFinite(t) && t >= cutoff;
+      })
+      .sort((a, b) => Date.parse(b.started_at as string) - Date.parse(a.started_at as string))
+      .slice(0, limit);
+  }
 
   if (videoLinkOpts) {
     const ttl = videoLinkOpts.ttlSeconds ?? 30 * 86400;

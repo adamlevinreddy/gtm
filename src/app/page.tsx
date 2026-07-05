@@ -15,7 +15,7 @@ import {
 import { getBlockChecker, eventUid } from "@/lib/meeting-optout";
 import { personName } from "./board/ui-shared";
 import AppShell, { resolveViewer } from "./AppShell";
-import MeetingChatStream from "./board/meeting/MeetingChatStream";
+import MeetingChatStream from "@/components/MeetingChatStream";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -222,7 +222,7 @@ export default async function HomePage() {
                 {recentCustomer.map((m) => (
                   <Link
                     key={m.bot_id}
-                    href={`/board/meeting/${m.bot_id}?customer=${encodeURIComponent(m.customer_slug)}`}
+                    href={`/m/${m.bot_id}?customer=${encodeURIComponent(m.customer_slug)}`}
                     className="block px-4 py-2 no-underline hover:bg-zinc-50"
                   >
                     <p className="truncate text-sm font-medium text-zinc-900">{m.title || "(untitled)"}</p>

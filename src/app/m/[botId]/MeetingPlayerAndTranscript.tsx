@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import MuxPlayer from "@mux/mux-player-react";
+import { FileText, Link2 } from "lucide-react";
+import CopyButton from "@/components/CopyButton";
 
 const PLUM = "#773D72";
 
@@ -26,15 +28,39 @@ export default function MeetingPlayerAndTranscript({
   video,
   timed,
   fallback,
+  initialT,
+  shareUrl,
 }: {
   video: Video;
   timed: TimedLine[] | null;
   fallback: string | null;
+  /** ?t= deep link — seek here once the media can play (no autoplay). */
+  initialT?: number | null;
+  /** Canonical /m/{botId} URL — used by "copy link at current time". */
+  shareUrl?: string;
 }) {
   // One ref for whichever media element renders (MuxPlayer and <video> both
   // expose a settable .currentTime).
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   const [active, setActive] = useState(-1);
+
+  // ?t= deep link: seek once, as soon as the media is ready. Paused seek —
+  // the viewer decides when to press play.
+  useEffect(() => {
+    if (initialT == null || initialT <= 0) return;
+    const el = mediaRef.current;
+    if (!el) return;
+    const apply = () => {
+      try {
+        el.currentTime = initialT;
+      } catch {
+        /* not seekable yet */
+      }
+    };
+    if (el.readyState >= 1) apply();
+    el.addEventListener("loadedmetadata", apply, { once: true });
+    return () => el.removeEventListener("loadedmetadata", apply);
+  }, [initialT, video.kind]);
 
   const seekTo = (t: number) => {
     const el = mediaRef.current;
@@ -93,11 +119,24 @@ export default function MeetingPlayerAndTranscript({
       {/* transcript */}
       <section className="rounded-xl border bg-white" style={{ borderColor: "#E4DCE3" }}>
         <div className="flex items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: "#EFE5EE" }}>
-          <span>📄</span>
+          <FileText size={14} style={{ color: PLUM }} />
           <h2 className="text-sm font-semibold" style={{ color: PLUM }}>Transcript</h2>
-          {timed && timed.length > 0 && (
-            <span className="ml-auto text-xs text-zinc-400">click a line to jump the video</span>
-          )}
+          <div className="ml-auto flex items-center gap-2">
+            {timed && timed.length > 0 && (
+              <span className="text-xs text-zinc-400">click a line to jump the video</span>
+            )}
+            {shareUrl && video.kind !== "none" && (
+              <CopyButton
+                text={() => {
+                  const sec = Math.floor(mediaRef.current?.currentTime ?? 0);
+                  return sec > 0 ? `${shareUrl}?t=${sec}` : shareUrl;
+                }}
+                label="Copy link at current time"
+                icon={<Link2 size={12} />}
+                title="Link opens the video seeked to this moment"
+              />
+            )}
+          </div>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-2 py-2">
           {timed && timed.length > 0 ? (

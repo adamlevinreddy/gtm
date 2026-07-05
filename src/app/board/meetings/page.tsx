@@ -92,6 +92,7 @@ export default async function MeetingsPage({
       account: r?.canonical ?? raw,
       hubspotCompanyId: r?.hubspotCompanyId ?? null,
       startedAt: m.started_at,
+      endedAt: m.ended_at,
       platform: m.platform,
       attendees: m.attendees
         .map((a) => a.name || a.email || "")
@@ -108,7 +109,12 @@ export default async function MeetingsPage({
       title="Meetings"
       subtitle="Watch recordings, read transcripts, and chat across them."
     >
-      <MeetingsHub meetings={data} days={days} initialAccount={account} />
+      <MeetingsHub
+        meetings={data}
+        days={days}
+        initialAccount={account}
+        shareBase={process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app"}
+      />
     </AppShell>
   );
 }

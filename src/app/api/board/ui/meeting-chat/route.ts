@@ -79,6 +79,7 @@ function buildPrompt(opts: {
 
   lines.push(
     `You have your full toolset: when the user asks you to ACT — create/update a board task (board_*), log to or update HubSpot, draft a follow-up, etc. — do it, following the usual guardrails (anything customer-facing is draft/suggest-only, never auto-sent; respect task ownership; confirm-first for risky changes). When you create or change something, state exactly what you did.`,
+    `FORMAT: standard GitHub-flavored Markdown (this panel renders it — tables, links, lists all work). NOT Slack mrkdwn: use **bold**, [link](url), and | tables |.`,
     `Be concise and conversational — this is a chat panel, not a report. No preamble.`,
     ``,
     `CONVERSATION SO FAR (oldest first):`,
@@ -90,14 +91,20 @@ function buildPrompt(opts: {
   return lines.filter((l, i) => l !== `` || lines[i - 1] !== ``).join("\n");
 }
 
-async function runOneshot(question: string, userEmail: string): Promise<string | null> {
+async function runOneshot(
+  question: string,
+  userEmail: string,
+  requestId?: string,
+): Promise<string | null> {
   const secret = process.env.MCP_INTERNAL_SECRET;
   if (!secret) return null;
   try {
     const res = await fetch(`${selfBaseUrl()}/api/agent/oneshot`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-reddy-internal": secret },
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 250_000 }),
+      // requestId: the client minted it and re-polls mcp:result:{id} if this
+      // stream dies — the answer lands late instead of never (Daybreak P1).
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 250_000, requestId }),
     });
     const json = (await res.json().catch(() => null)) as { ok?: boolean; answer?: string } | null;
     if (json?.ok && json.answer) return json.answer;
@@ -107,7 +114,9 @@ async function runOneshot(question: string, userEmail: string): Promise<string |
   return null;
 }
 
-type Body = { botIds?: unknown; messages?: unknown; scopeNote?: unknown; as?: string };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type Body = { botIds?: unknown; messages?: unknown; scopeNote?: unknown; requestId?: unknown; as?: string };
 
 export async function POST(req: NextRequest) {
   let body: Body;
@@ -138,6 +147,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "missing messages" }, { status: 400 });
   }
 
+  const requestId =
+    typeof body.requestId === "string" && UUID_RE.test(body.requestId) ? body.requestId : undefined;
   const viewer = resolveViewer(req, body.as);
   const encoder = new TextEncoder();
   const line = (obj: Record<string, unknown>) => encoder.encode(JSON.stringify(obj) + "\n");
@@ -175,12 +186,26 @@ export async function POST(req: NextRequest) {
         }
       }, 5_000);
 
-      const answer =
-        (await runOneshot(
-          buildPrompt({ botIds, truncatedFrom, scopeNote, messages, viewer }),
-          viewer,
-        )) ?? "⚠️ The assistant didn't respond in time — try again.";
+      const answer = await runOneshot(
+        buildPrompt({ botIds, truncatedFrom, scopeNote, messages, viewer }),
+        viewer,
+        requestId,
+      );
       clearInterval(ticker);
+
+      if (answer === null) {
+        // Agent outran the poll window (or errored). The run may still finish
+        // and write mcp:result:{requestId} — tell the client to re-poll
+        // instead of pretending the answer is gone.
+        send(requestId ? { t: "timeout", requestId } : { t: "delta", text: "⚠️ The assistant didn't respond in time — try again." });
+        send({ t: "done" });
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+        return;
+      }
 
       // Type the answer out in chunks.
       const chunkSize = 48;

@@ -33,7 +33,7 @@ const CRM_TTL = 7 * 24 * 3600;
 
 function recordingUrl(botId: string): string {
   const base = process.env.PUBLIC_BASE_URL ?? "https://gtm-jet.vercel.app";
-  return `${base}/board/meeting/${botId}`;
+  return `${base}/m/${botId}`;
 }
 
 export type CrmFieldSuggestion = {

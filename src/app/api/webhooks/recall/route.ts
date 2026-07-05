@@ -32,6 +32,7 @@ import { getCompanyContacts } from "@/lib/hubspot";
 import { kv } from "@/lib/kv-client";
 import { detectConeOfSilence, isConeOfSilence, markConeOfSilence } from "@/lib/cone-of-silence";
 import { getBlockChecker } from "@/lib/meeting-optout";
+import { upsertMeetingIndex, removeFromMeetingIndex } from "@/lib/meeting-index";
 
 export const maxDuration = 300;
 
@@ -449,7 +450,33 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
     filesToCommit.push({ path: `${dir}/meta.json`, utf8: metaText });
   }
 
+  // Daybreak Phase 3: keep the KV meeting index in lockstep with the KB.
+  // Ordering matters — the index must only ever advertise artifacts that are
+  // DURABLY in the KB, so it's written after commitToKb succeeds (a thrown
+  // commit leaves the index at its previous truthful state; Recall retries +
+  // the backstop cron's ground-truth heal converge it). Failures are
+  // swallowed: an Upstash blip must never fail the reconcile.
+  const writeIndex = () =>
+    upsertMeetingIndex({
+      bot_id: botId,
+      customer_slug: slug,
+      title: liveTitle ?? bot.bot_name ?? null,
+      started_at: bot.recordings?.[0]?.started_at ?? bot.join_at ?? null,
+      ended_at: bot.recordings?.[0]?.completed_at ?? null,
+      platform: typeof bot.meeting_url === "object" ? bot.meeting_url?.platform ?? null : null,
+      attendees: liveParticipants.map((p) => ({ name: p.name ?? null, email: p.email ?? null })),
+      has_transcript: hasTranscript,
+      has_video: !!videoOid,
+      has_chat: hasChat,
+      mux_playback_id: muxPlaybackId,
+      attribution_confidence: attribution.confidence ?? null,
+    }).catch((err) => {
+      console.warn(`[recall webhook] meeting-index upsert failed bot=${botId}: ${err instanceof Error ? err.message : err}`);
+    });
+
   if (filesToCommit.length === 0) {
+    // Nothing new to commit → the KB already reflects this state; safe to index.
+    await writeIndex();
     console.log(`[recall webhook] reconcile ${eventName} bot=${botId} slug=${slug}: nothing to commit`);
     return;
   }
@@ -459,6 +486,7 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
     message: `recall: ${reasons.length ? reasons.join(" + ") : "meta"} ${slug}/${botId}`,
     files: filesToCommit,
   });
+  await writeIndex();
   console.log(
     `[recall webhook] committed bot=${botId} slug=${slug} reasons=[${reasons.join(",")}] confidence=${attribution.confidence}`,
   );
@@ -502,6 +530,7 @@ async function suppressConeMeeting(
   via: string,
 ): Promise<void> {
   await markConeOfSilence(botId);
+  await removeFromMeetingIndex(botId); // never list a suppressed meeting
   const deletions: CommitFile[] = [];
   if (existingMetaText !== null) deletions.push({ path: `${dir}/meta.json`, delete: true });
   if (existing.has_transcript) deletions.push({ path: `${dir}/transcript.txt`, delete: true });

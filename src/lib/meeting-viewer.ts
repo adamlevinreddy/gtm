@@ -35,6 +35,7 @@ export type LoadedMeeting = {
   found: boolean;
   title: string;
   startedAt: string | null;
+  endedAt: string | null;
   platform: string | null;
   companyName: string | null;
   attendees: Array<{ name?: string; email?: string }>;
@@ -149,7 +150,7 @@ export async function loadMeeting(
   opts?: { customerHint?: string | null; videoTtlSeconds?: number }
 ): Promise<LoadedMeeting> {
   const empty: LoadedMeeting = {
-    botId, slug: null, found: false, title: "Meeting", startedAt: null,
+    botId, slug: null, found: false, title: "Meeting", startedAt: null, endedAt: null,
     platform: null, companyName: null, attendees: [], transcript: null,
     timedTranscript: null, video: { kind: "none", url: null },
   };
@@ -227,6 +228,7 @@ export async function loadMeeting(
     found: true,
     title: meta.title || "Meeting",
     startedAt: meta.started_at ?? null,
+    endedAt: meta.ended_at ?? null,
     platform: meta.platform ?? null,
     companyName: meta.attribution?.company_name ?? null,
     attendees: (meta.attendees ?? []).map((a) => ({ name: a.name, email: a.email })),

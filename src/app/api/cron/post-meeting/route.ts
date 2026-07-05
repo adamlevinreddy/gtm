@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@/lib/kv-client";
-import { recentMeetingIndex } from "@/lib/recall-index";
+import { walkAllKbMeetings } from "@/lib/recall-index";
+import { upsertMeetingIndex } from "@/lib/meeting-index";
 import { proposeFromMeeting } from "@/lib/post-meeting";
 import { proposeCrmFromMeeting } from "@/lib/post-meeting-crm";
 
@@ -48,7 +49,41 @@ export async function GET(req: NextRequest) {
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   if (!pat) return NextResponse.json({ ok: true, skipped: "no kb PAT" });
 
-  const meetings = await recentMeetingIndex(pat, SINCE_DAYS, SCAN_LIMIT).catch(() => []);
+  // GROUND TRUTH: this backstop must not read the KV meeting index it is
+  // partly responsible for healing — a meeting whose index write was missed
+  // would then be invisible to the very sweep meant to catch misses. Walk the
+  // KB directly (tree-SHA cached, so steady-state is one KV read).
+  const walked = await walkAllKbMeetings(pat).catch(() => []);
+  const cutoffMs = Date.now() - SINCE_DAYS * 24 * 60 * 60 * 1000;
+  const meetings = walked
+    .filter((m) => m.started_at && Date.parse(m.started_at) >= cutoffMs)
+    .sort((a, b) => Date.parse(b.started_at!) - Date.parse(a.started_at!))
+    .slice(0, SCAN_LIMIT);
+
+  // Self-heal the KV meeting index from ground truth: any row the webhook
+  // failed to upsert (Upstash blip, pre-index deploys) gets repaired here
+  // within a cron tick. Idempotent; ≤SCAN_LIMIT small writes.
+  let healed = 0;
+  for (const m of meetings) {
+    const ok = await upsertMeetingIndex({
+      bot_id: m.bot_id,
+      customer_slug: m.customer_slug,
+      title: m.title,
+      started_at: m.started_at,
+      ended_at: m.ended_at,
+      platform: m.platform,
+      attendees: m.attendees,
+      has_transcript: m.has_transcript,
+      has_video: m.has_video,
+      has_chat: m.has_chat,
+      mux_playback_id: m._muxPlaybackId,
+      attribution_confidence: m.attribution_confidence,
+    })
+      .then(() => true)
+      .catch(() => false);
+    if (ok) healed++;
+  }
+
   const candidates = meetings.filter((m) => m.has_transcript && m.bot_id);
 
   const driven: Array<Record<string, unknown>> = [];
@@ -83,6 +118,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     scanned: candidates.length,
+    indexHealed: healed,
     driven: driven.length,
     results: driven,
   });
