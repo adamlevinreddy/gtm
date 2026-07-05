@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidEmail, signViewer } from "@/lib/viewer";
-import { ssoEnabled } from "@/lib/workos";
+import { ssoEnabled } from "@/lib/auth";
 import { VIEWER_COOKIE } from "@/lib/team";
 
 export const dynamic = "force-dynamic";

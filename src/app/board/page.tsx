@@ -14,9 +14,6 @@ import {
   type WorkItemKind,
 } from "@/lib/work-items";
 import type { WorkItem } from "@/lib/schema";
-import { cookies } from "next/headers";
-import { verifyViewerCookie } from "@/lib/viewer";
-import { ssoEnabled } from "@/lib/workos";
 import {
   labelsFor,
   listLabels,
@@ -36,15 +33,13 @@ import {
   UNTAGGED,
   type BoardFilters,
 } from "./filters";
-import AppShell from "@/app/AppShell";
+import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export const metadata = { title: "Board" };
-
-const VIEWER_COOKIE = "board_viewer";
 
 const COLUMN_ACCENT: Record<BoardColumn, string> = {
   Unsorted: "#8A7C8A",
@@ -238,11 +233,8 @@ export default async function BoardPage({
   // viewer identity for "My work" + saved views ownership. Cookie is the
   // SIGNED Daybreak-P6 form — verify + strip, never use raw. Anonymous →
   // the gate; no silent adam@ fallback.
-  const cookieStore = await cookies();
   const asParam = typeof sp.as === "string" ? sp.as : undefined;
-  const viewer =
-    (!ssoEnabled() && asParam && asParam.includes("@") ? asParam : null) ||
-    verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
+  const viewer = await resolveViewer(asParam);
   if (!viewer) return <Gate />;
 
   let boards: BoardTab[] = [];

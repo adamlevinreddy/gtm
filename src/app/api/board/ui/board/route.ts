@@ -6,7 +6,7 @@ import {
 } from "@/lib/work-items";
 import { itemIdsForFilters } from "@/lib/board-filter-query";
 import { resolveApiViewer } from "@/lib/viewer";
-import { ssoEnabled } from "@/lib/workos";
+import { ssoEnabled } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

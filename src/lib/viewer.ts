@@ -9,7 +9,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
-import { ssoEnabled } from "@/lib/workos";
+import { ssoEnabled } from "@/lib/auth";
 import { VIEWER_COOKIE } from "@/lib/team";
 
 // Rejects '%' too: Next decodes cookie values once and we decode again, so a

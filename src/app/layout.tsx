@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import ChatDock from "@/components/ChatDock";
 import "./globals.css";
+
+// Enforced-auth mode is gated on the Clerk publishable key so local dev (no
+// keys) renders without a provider and stays on the picker gate.
+const CLERK_ON = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,7 +33,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return (
+  const tree = (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
@@ -41,4 +46,7 @@ export default function RootLayout({
       </body>
     </html>
   );
+  // afterSignOutUrl routes Clerk sign-out through our logout route, which
+  // clears the signed viewer cookie before landing on home.
+  return CLERK_ON ? <ClerkProvider afterSignOutUrl="/api/auth/logout">{tree}</ClerkProvider> : tree;
 }

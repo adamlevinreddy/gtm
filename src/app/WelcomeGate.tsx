@@ -7,9 +7,10 @@ import { personName } from "./board/ui-shared";
 import { PLUM, BORDER } from "@/lib/tokens";
 
 // Blocking identity gate (Daybreak Phase 6 → Arc V). Until someone proves
-// who they are, the app renders THIS instead of any page. With WorkOS SSO
-// configured (`sso` prop) the only way in is a reddy.io Google sign-in;
-// otherwise the honor-system picker applies.
+// who they are, the app renders THIS instead of any page. In picker mode
+// (`sso` false) the honor-system picker applies. Under enforced auth (Clerk)
+// pages redirect straight to the Google sign-in, so the `sso` branch here is
+// a belt-and-suspenders fallback only.
 export default function WelcomeGate({ sso = false }: { sso?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -53,7 +54,7 @@ export default function WelcomeGate({ sso = false }: { sso?: boolean }) {
         {sso ? (
           <div>
             <a
-              href="/api/auth/login"
+              href="/auth/sync"
               className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white no-underline"
               style={{ background: PLUM }}
             >

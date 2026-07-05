@@ -1,13 +1,23 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { unreadNotificationCount } from "@/lib/board-world";
 import { VIEWER_COOKIE } from "@/lib/team";
 import { verifyViewerCookie } from "@/lib/viewer";
 import ViewerPicker from "./board/ViewerPicker";
+import HeaderUser from "./HeaderUser";
 import Gate from "@/app/Gate";
 import CommandK from "@/components/CommandK";
-import { ssoEnabled } from "@/lib/workos";
+import { ssoEnabled } from "@/lib/auth";
+
+// Enforced auth (Clerk): middleware has already required a Clerk session for
+// this page, but our signed cookie may not exist yet (first visit / expiry).
+// Bounce to /auth/sync to mint it from the Clerk identity, returning here.
+async function syncRedirect(): Promise<never> {
+  const h = await headers();
+  redirect(`/auth/sync?next=${encodeURIComponent(h.get("x-pathname") || "/")}`);
+}
 
 // ---------------------------------------------------------------------------
 // The ONE app chrome. Every page renders inside this shell so navigation
@@ -35,16 +45,20 @@ const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: "settings", label: "Settings", href: "/settings" },
 ];
 
-/** ?as= override or the verified cookie — NULL when anonymous. Pages that
- * pass the result to AppShell get the blocking gate for free; never re-add
- * a default here (that's how "everyone is adam@" came back once already).
- * The ?as= convenience is honor-system: it dies the moment SSO is on. */
+/** ?as= override or the verified cookie — NULL when anonymous (picker mode).
+ * Pages that pass the result to AppShell get the blocking gate for free; never
+ * re-add a default here (that's how "everyone is adam@" came back once already).
+ * The ?as= convenience is honor-system and dies the moment SSO is on. Under
+ * SSO, a missing cookie means "signed into Clerk but not minted yet" → redirect
+ * to /auth/sync rather than returning null. */
 export async function resolveViewer(asParam?: string): Promise<string | null> {
   const cookieStore = await cookies();
-  return (
-    (!ssoEnabled() && asParam && asParam.includes("@") ? asParam : null) ||
-    verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value)
-  );
+  const cookieViewer = verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
+  if (ssoEnabled()) {
+    if (cookieViewer) return cookieViewer;
+    await syncRedirect();
+  }
+  return (asParam && asParam.includes("@") ? asParam : null) || cookieViewer;
 }
 
 export default async function AppShell({
@@ -71,10 +85,13 @@ export default async function AppShell({
   const cookieStore = await cookies();
   const cookieViewer = verifyViewerCookie(cookieStore.get(VIEWER_COOKIE)?.value);
 
-  // No identity → the gate, nothing else. (?as= via viewerProp keeps
-  // automation/deep-link flows working without a browser cookie.)
+  // No identity → mint from Clerk (SSO) or show the picker gate (dev).
+  // (?as= via viewerProp keeps automation/deep-link flows working.)
   const viewer = viewerProp ?? cookieViewer ?? null;
-  if (!viewer) return <Gate />;
+  if (!viewer) {
+    if (ssoEnabled()) await syncRedirect();
+    return <Gate />;
+  }
 
   const unread = await unreadNotificationCount(viewer).catch(() => 0);
 
@@ -130,7 +147,7 @@ export default async function AppShell({
 
           <div className="ml-auto flex shrink-0 items-center gap-3">
             <CommandK />
-            <ViewerPicker viewer={viewer} sso={ssoEnabled()} />
+            {ssoEnabled() ? <HeaderUser /> : <ViewerPicker viewer={viewer} sso={false} />}
           </div>
         </div>
       </header>
