@@ -19,6 +19,8 @@ import { personName } from "./board/ui-shared";
 import AppShell, { resolveViewer } from "./AppShell";
 import Gate from "@/app/Gate";
 import HomeAsk from "./HomeAsk";
+import ConnectBanner from "./ConnectBanner";
+import { getConnectionStatus, availableToolkits } from "@/lib/composio";
 import CopyButton from "@/components/CopyButton";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +122,7 @@ export default async function HomePage() {
   // ONE meetings read (30d) feeds today/overnight/needs-you AND the account
   // rollup — the review caught a second serial 30d fetch that doubled the
   // page's KV work for identical data.
-  const [labeled, upcoming, myTasks, overnightTasks] = await Promise.all([
+  const [labeled, upcoming, myTasks, overnightTasks, connStatus] = await Promise.all([
     pat
       ? labeledMeetings(pat, 30, 400)
       : Promise.resolve({ meetings: [] as LabeledMeeting[], uncachedEvidence: [] }),
@@ -139,7 +141,14 @@ export default async function HomePage() {
       .orderBy(desc(workItems.createdAt))
       .limit(6)
       .catch(() => []),
+    // Connection status for the post-sign-in "connect your tools" nudge.
+    // Best-effort — null (unknown / Composio off) shows no banner.
+    process.env.COMPOSIO_API_KEY ? getConnectionStatus(viewer).catch(() => null) : Promise.resolve(null),
   ]);
+
+  const missingTools = connStatus
+    ? availableToolkits().filter((t) => !connStatus[t.slug]).map((t) => t.label)
+    : [];
 
   if (labeled.uncachedEvidence.length > 0) {
     after(async () => {
@@ -201,6 +210,7 @@ export default async function HomePage() {
       subtitle="Everything since you last looked — and one box that answers anything."
     >
       <div className="flex flex-col gap-5">
+        <ConnectBanner missing={missingTools} />
         <HomeAsk starters={starters} />
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
