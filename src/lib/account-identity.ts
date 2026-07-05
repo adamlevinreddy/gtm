@@ -71,3 +71,12 @@ export function accountCanon(rawLabel: string, slug?: string | null): AccountCan
   const alias = ACCOUNT_ALIASES[norm];
   return { key: alias?.canon ?? norm, aliasDisplay: alias?.display ?? null };
 }
+
+/** Alias-canonical company name for `name`, else `name` unchanged. Applied at
+ * ingest (webhook attribution) so an aliased company always kebab-cases to the
+ * same customer_slug — e.g. "800 Flowers" and "1-800-Flowers.com" both file
+ * under one slug. Only touches names in the alias map; everything else (already
+ * HubSpot-resolved by attributeCustomer) is left as-is. */
+export function canonicalCompanyName(name: string): string {
+  return ACCOUNT_ALIASES[normalizeName(name)]?.display ?? name;
+}

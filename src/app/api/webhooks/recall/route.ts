@@ -29,6 +29,7 @@ import {
   kvKeyBotInvitees,
 } from "@/lib/recall-calendar-v2";
 import { getCompanyContacts } from "@/lib/hubspot";
+import { canonicalCompanyName } from "@/lib/account-identity";
 import { kv } from "@/lib/kv-client";
 import { detectConeOfSilence, isConeOfSilence, markConeOfSilence } from "@/lib/cone-of-silence";
 import { getBlockChecker } from "@/lib/meeting-optout";
@@ -576,13 +577,17 @@ async function customerSlugForBot(
     ? liveParticipants
     : (bot.meeting_metadata?.participants ?? []);
   const attribution = await attributeCustomer(participants, { titleHint: liveTitle });
+  // Canonicalize aliased company names at the source so every spelling files
+  // under ONE slug (e.g. "800 Flowers" → "1-800-Flowers.com"). No-op for names
+  // not in the alias map.
+  const slugFor = (name: string) => kebabCase(canonicalCompanyName(name));
   if (attribution.confidence === "high" || attribution.confidence === "medium") {
-    if (attribution.companyName) return { slug: kebabCase(attribution.companyName), attribution };
+    if (attribution.companyName) return { slug: slugFor(attribution.companyName), attribution };
   }
   // Title-based fallback (confidence "low") still attributes — better
   // than dumping every meeting into _unsorted/ when emails are missing.
   if (attribution.confidence === "low" && attribution.companyName) {
-    return { slug: kebabCase(attribution.companyName), attribution };
+    return { slug: slugFor(attribution.companyName), attribution };
   }
   return { slug: "_unsorted", attribution };
 }

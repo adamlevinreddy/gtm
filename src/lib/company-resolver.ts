@@ -11,6 +11,7 @@
 
 import { kv } from "@/lib/kv-client";
 import { selfBaseUrl } from "@/lib/work-items";
+import { accountCanon } from "@/lib/account-identity";
 import {
   canonicalizeCompany,
   findCompanyByDomain,
@@ -40,6 +41,36 @@ function canonKey(ev: LabelEvidence): string {
   const lbl = ev.rawLabel.toLowerCase().replace(/\s+/g, " ").trim();
   const dom = [...new Set(ev.emailDomains)].sort().join(",");
   return `canon:v1:${lbl}|${dom}`;
+}
+
+// Enrichment keyed by the STABLE accountKey (not the raw label): once ANY
+// spelling of a company is resolved to HubSpot, every other spelling that
+// normalizes to the same key inherits the id + canonical name WITHOUT
+// re-warming. This is what keys accounts end-to-end off the HubSpot company id.
+export type AccountInfo = { canonical: string; hubspotCompanyId: string; domain: string | null };
+const acctInfoKey = (key: string) => `acctinfo:v1:${key}`;
+
+/** Batch-read HubSpot enrichment for distinct accountKeys (render path). */
+export async function readAccountInfo(keys: string[]): Promise<Map<string, AccountInfo>> {
+  const out = new Map<string, AccountInfo>();
+  await Promise.all(
+    [...new Set(keys)].map(async (k) => {
+      const v = await kv.get<AccountInfo>(acctInfoKey(k)).catch(() => null);
+      if (v) out.set(k, v);
+    }),
+  );
+  return out;
+}
+
+/** Persist enrichment under the accountKey — only for real HubSpot matches. */
+async function writeAccountInfo(ev: LabelEvidence, r: ResolvedCompany): Promise<void> {
+  if (!r.hubspotCompanyId) return;
+  const realSlug = ev.slugs.find((s) => s && s !== "_unsorted");
+  const { key } = accountCanon(ev.rawLabel, realSlug);
+  if (key === "internal") return;
+  await kv
+    .set(acctInfoKey(key), { canonical: r.canonical, hubspotCompanyId: r.hubspotCompanyId, domain: r.domain }, { ex: CANON_TTL })
+    .catch(() => {});
 }
 
 function pretty(s: string): string {
@@ -165,8 +196,10 @@ export async function warmLabels(evidence: LabelEvidence[], opts: { userEmail: s
       chunk.map(async (ev) => {
         if (await kv.get<ResolvedCompany>(canonKey(ev)).catch(() => null)) return; // already warmed
         const det = guardOwnCompany(await resolveDeterministic(ev).catch(() => null));
-        if (det) await kv.set(canonKey(ev), det, { ex: CANON_TTL }).catch(() => {});
-        else needBot.push(ev);
+        if (det) {
+          await kv.set(canonKey(ev), det, { ex: CANON_TTL }).catch(() => {});
+          await writeAccountInfo(ev, det);
+        } else needBot.push(ev);
       })
     );
   }
@@ -184,5 +217,6 @@ export async function warmLabels(evidence: LabelEvidence[], opts: { userEmail: s
       resolved ?? { canonical: ev.rawLabel, hubspotCompanyId: null, domain: null, source: "fallback", confidence: "low" };
     // Bot-picks cached 7d; fallbacks short so a new CRM company is picked up soon.
     await kv.set(canonKey(ev), final, { ex: final.source === "fallback" ? 24 * 3600 : CANON_TTL }).catch(() => {});
+    await writeAccountInfo(ev, final);
   }
 }

@@ -4,7 +4,7 @@
 // on the render path; uncached labels warm in the background via after()).
 
 import { recentMeetingIndex, deriveAccountLabel, type IndexedMeeting } from "@/lib/recall-index";
-import { readCachedLabels, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
+import { readCachedLabels, readAccountInfo, type LabelEvidence, type ResolvedCompany } from "@/lib/company-resolver";
 import { accountCanon, slugifyAccount, prettyAccount } from "@/lib/account-identity";
 
 // reddy.io is excluded as evidence: our own people attend every meeting, and
@@ -92,14 +92,24 @@ export async function labeledMeetings(
     };
   });
 
+  // Enrichment keyed by the STABLE accountKey — once any spelling is resolved
+  // to HubSpot, every spelling here inherits the canonical name + company id
+  // (no per-spelling re-warm). Highest-priority source of truth.
+  const acctInfo = await readAccountInfo(rows.map((r) => r.key)).catch(() => new Map());
+
   // Pass 2: choose ONE display + one hubspotCompanyId per key, so the whole
   // group renders identically (this is what actually collapses the dropdown).
-  // Preference: alias > resolver canonical > most-frequent raw pretty.
+  // Preference: accountKey enrichment > alias > resolver canonical > raw pretty.
   const displayByKey = new Map<string, string>();
   const hsIdByKey = new Map<string, string>();
   const rawVotes = new Map<string, Map<string, number>>();
+  for (const [key, info] of acctInfo) {
+    displayByKey.set(key, info.canonical);
+    if (info.hubspotCompanyId) hsIdByKey.set(key, info.hubspotCompanyId);
+  }
   for (const row of rows) {
     if (row.key === "internal") continue;
+    // Human alias overrides the CRM name; otherwise fill from resolver canonical.
     if (row.aliasDisplay) displayByKey.set(row.key, row.aliasDisplay);
     else if (row.resolverCanonical && !displayByKey.has(row.key)) displayByKey.set(row.key, row.resolverCanonical);
     if (row.hubspotCompanyId && !hsIdByKey.has(row.key)) hsIdByKey.set(row.key, row.hubspotCompanyId);
