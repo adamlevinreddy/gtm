@@ -54,8 +54,12 @@ function normalize(text: string): string {
 }
 
 export async function GET(req: NextRequest) {
-  const viewer = resolveApiViewer(req);
-  if (!viewer) return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
+  // Auth: a signed-in teammate (board_viewer cookie) OR the internal secret
+  // (x-reddy-internal, same as the oneshot lane) for a server-to-server run.
+  const internalOk = !!process.env.MCP_INTERNAL_SECRET && req.headers.get("x-reddy-internal") === process.env.MCP_INTERNAL_SECRET;
+  if (!internalOk && !resolveApiViewer(req)) {
+    return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
+  }
 
   const dryRun = req.nextUrl.searchParams.get("run") !== "1";
   const channel = process.env.SLACK_CHANNEL_ID || process.env.SALES_CHANNEL_ID || process.env.SALES_TESTING_CHANNEL_ID;
