@@ -8,6 +8,7 @@ import {
   deleteBotForEvent,
   kvClaimIcalOwner,
   kvKeyBotInvitees,
+  kvKeyBotMeetingRef,
   type CalendarEvent,
 } from "@/lib/recall-calendar-v2";
 import {
@@ -20,6 +21,7 @@ import {
   type BlockScope,
   type MeetingBlock,
 } from "@/lib/meeting-optout";
+import { addCardMute, removeCardMute, listCardMutes } from "@/lib/card-mute";
 import { kv } from "@/lib/kv-client";
 import type { RecallParticipant } from "@/lib/recall";
 
@@ -61,13 +63,15 @@ export type UpcomingMeeting = {
   isRecurring: boolean;
   hasBot: boolean;
   blocked: BlockScope | null;
+  /** Post-meeting Play card muted for this meeting/series (bot still records). */
+  cardMuted: BlockScope | null;
   /** Which teammates' calendars carry this event. */
   calendars: string[];
 };
 
 export async function GET() {
   try {
-    const [calendars, blocks] = await Promise.all([listAllCalendars(), listBlocks()]);
+    const [calendars, blocks, cardMutes] = await Promise.all([listAllCalendars(), listBlocks(), listCardMutes()]);
     const connected = calendars.filter((c) => c.status === "connected");
     const startGte = new Date().toISOString();
     const startLte = new Date(Date.now() + UPCOMING_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -81,6 +85,7 @@ export async function GET() {
     );
 
     const blockByKey = new Map(blocks.map((b) => [b.key, b]));
+    const cardMuteByKey = new Map(cardMutes.map((b) => [b.key, b]));
     const rows = new Map<string, UpcomingMeeting>();
     for (const { email, events } of perCalendar) {
       for (const e of events) {
@@ -99,6 +104,11 @@ export async function GET() {
           : blockByKey.has(occurrenceBlockKey(uid, e.start_time))
             ? ("occurrence" as const)
             : null;
+        const cardMuted = cardMuteByKey.has(seriesBlockKey(uid))
+          ? ("series" as const)
+          : cardMuteByKey.has(occurrenceBlockKey(uid, e.start_time))
+            ? ("occurrence" as const)
+            : null;
         rows.set(rowKey, {
           icalUid: uid,
           startTime: e.start_time,
@@ -111,13 +121,14 @@ export async function GET() {
           isRecurring: !!e.raw?.recurringEventId,
           hasBot: (e.bots?.length ?? 0) > 0,
           blocked,
+          cardMuted,
           calendars: [email],
         });
       }
     }
 
     const meetings = [...rows.values()].sort((a, b) => a.startTime.localeCompare(b.startTime));
-    return NextResponse.json({ ok: true, meetings, blocks });
+    return NextResponse.json({ ok: true, meetings, blocks, cardMutes });
   } catch (err) {
     console.error(`[bot-schedule] GET failed: ${err instanceof Error ? err.message : err}`);
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
@@ -130,6 +141,8 @@ type PostBody = {
   icalUid?: unknown;
   startTime?: unknown;
   title?: unknown;
+  /** "bot" (default) = notetaker opt-out; "card" = mute the post-meeting card. */
+  intent?: unknown;
   as?: unknown;
 };
 
@@ -154,6 +167,26 @@ export async function POST(req: NextRequest) {
   }
   const viewer = resolveApiViewer(req, body.as);
   if (!viewer) return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
+
+  // Card-mute is a pure preference toggle: it only decides whether the
+  // post-meeting Play card gets posted, never whether the bot joins/records.
+  // So it skips the whole eager bot teardown/reschedule below — just persist.
+  if (body.intent === "card") {
+    try {
+      let block: MeetingBlock | null = null;
+      if (action === "block") {
+        block = await addCardMute({ scope, icalUid, startTime, title, addedBy: viewer });
+      } else {
+        const key = scope === "series" ? seriesBlockKey(icalUid) : occurrenceBlockKey(icalUid, startTime!);
+        await removeCardMute(key);
+      }
+      console.log(`[bot-schedule] card-mute ${action} ${scope} uid=${icalUid.slice(0, 40)}… by=${viewer}`);
+      return NextResponse.json({ ok: true, block, intent: "card" });
+    } catch (err) {
+      console.error(`[bot-schedule] card-mute POST failed: ${err instanceof Error ? err.message : err}`);
+      return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+    }
+  }
 
   try {
     let block: MeetingBlock | null = null;
@@ -225,6 +258,9 @@ export async function POST(req: NextRequest) {
           botsScheduled += 1;
           if (botId) {
             await kv.set(`recall:cal:event:${cal.id}:${e.id}:bot`, botId).catch(() => {});
+            await kv
+              .set(kvKeyBotMeetingRef(botId), { icalUid: e.ical_uid || e.id, startTime: e.start_time }, { ex: 30 * 24 * 60 * 60 })
+              .catch(() => {});
             const invitees: RecallParticipant[] = (e.raw?.attendees ?? [])
               .filter((a) => !!a.email)
               .map((a) => ({ name: undefined, email: a.email, is_host: a.organizer ?? false }));

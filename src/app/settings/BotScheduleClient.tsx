@@ -16,6 +16,7 @@ type UpcomingMeeting = {
   isRecurring: boolean;
   hasBot: boolean;
   blocked: BlockScope | null;
+  cardMuted: BlockScope | null;
   calendars: string[];
 };
 
@@ -62,9 +63,12 @@ function dayKeyPT(iso: string): string {
 export default function BotScheduleClient() {
   const [meetings, setMeetings] = useState<UpcomingMeeting[]>([]);
   const [blocks, setBlocks] = useState<MeetingBlock[]>([]);
+  const [cardMutes, setCardMutes] = useState<MeetingBlock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // rowKey (or block key) currently mid-flight — disables its buttons.
+  // busy key currently mid-flight — disables its buttons. Bot ops key on the
+  // rowKey/block key; card ops prefix with "card:" so the two clusters on a row
+  // disable independently.
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -74,11 +78,13 @@ export default function BotScheduleClient() {
         ok: boolean;
         meetings?: UpcomingMeeting[];
         blocks?: MeetingBlock[];
+        cardMutes?: MeetingBlock[];
         error?: string;
       };
       if (!json.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setMeetings(json.meetings ?? []);
       setBlocks(json.blocks ?? []);
+      setCardMutes(json.cardMutes ?? []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -98,6 +104,7 @@ export default function BotScheduleClient() {
       icalUid: string;
       startTime?: string;
       title?: string;
+      intent?: "bot" | "card";
       busyKey: string;
     }) => {
       setBusy(opts.busyKey);
@@ -111,6 +118,7 @@ export default function BotScheduleClient() {
             icalUid: opts.icalUid,
             startTime: opts.startTime,
             title: opts.title,
+            intent: opts.intent ?? "bot",
           }),
         });
         const json = (await res.json()) as { ok: boolean; error?: string };
@@ -203,6 +211,53 @@ export default function BotScheduleClient() {
         </section>
       )}
 
+      {cardMutes.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-zinc-700">
+            Play card muted ({cardMutes.length})
+          </h2>
+          <div className="flex flex-col gap-1.5">
+            {cardMutes.map((b) => (
+              <div
+                key={b.key}
+                className="flex items-center gap-3 rounded-xl border bg-white px-4 py-2.5"
+                style={{ borderColor: "#E4DCE3" }}
+              >
+                <span className="text-base">🔕</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-zinc-900">
+                    {b.title || b.icalUid.slice(0, 40) + "…"}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {b.scope === "series" ? "Entire recurring series" : `Only ${fmtDayPT(b.startTime!)} · ${fmtTimePT(b.startTime!)} PT`}
+                    {b.addedBy && <> · muted by {b.addedBy}</>}
+                    {!visibleUids.has(b.icalUid) && <> · not in the next 14 days</>}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy === `card:${b.key}`}
+                  onClick={() =>
+                    toggle({
+                      action: "unblock",
+                      scope: b.scope,
+                      icalUid: b.icalUid,
+                      startTime: b.startTime,
+                      intent: "card",
+                      busyKey: `card:${b.key}`,
+                    })
+                  }
+                  className="shrink-0 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+                  style={{ borderColor: "#E4DCE3", color: "#52525b" }}
+                >
+                  {busy === `card:${b.key}` ? "Restoring…" : "Post card again"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="mb-2 text-sm font-semibold text-zinc-700">Next 14 days</h2>
         {byDay.length === 0 && (
@@ -219,7 +274,9 @@ export default function BotScheduleClient() {
               <div className="flex flex-col gap-1.5">
                 {dayMeetings.map((m) => {
                   const rowKey = `${m.icalUid}|${m.startTime}`;
+                  const cardKey = `card:${rowKey}`;
                   const skipped = m.blocked !== null;
+                  const cardMuted = m.cardMuted !== null;
                   return (
                     <div
                       key={rowKey}
@@ -258,66 +315,137 @@ export default function BotScheduleClient() {
                           )}
                         </p>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {skipped ? (
-                          <button
-                            type="button"
-                            disabled={busy === rowKey}
-                            onClick={() =>
-                              toggle({
-                                action: "unblock",
-                                scope: m.blocked!,
-                                icalUid: m.icalUid,
-                                startTime: m.blocked === "occurrence" ? m.startTime : undefined,
-                                busyKey: rowKey,
-                              })
-                            }
-                            className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
-                            style={{ borderColor: "#E4DCE3", color: "#52525b" }}
-                          >
-                            {busy === rowKey ? "Restoring…" : "Let bot rejoin"}
-                          </button>
-                        ) : (
-                          <>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {/* Notetaker — whether the bot joins & records at all. */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="mr-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Notetaker</span>
+                          {skipped ? (
                             <button
                               type="button"
                               disabled={busy === rowKey}
                               onClick={() =>
                                 toggle({
-                                  action: "block",
-                                  scope: "occurrence",
+                                  action: "unblock",
+                                  scope: m.blocked!,
                                   icalUid: m.icalUid,
-                                  startTime: m.startTime,
-                                  title: m.title,
+                                  startTime: m.blocked === "occurrence" ? m.startTime : undefined,
                                   busyKey: rowKey,
                                 })
                               }
-                              className="rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
-                              style={{ borderColor: "#E4DCE3" }}
+                              className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+                              style={{ borderColor: "#E4DCE3", color: "#52525b" }}
                             >
-                              {busy === rowKey ? "…" : "Skip once"}
+                              {busy === rowKey ? "Restoring…" : "Let bot rejoin"}
                             </button>
-                            {m.isRecurring && (
+                          ) : (
+                            <>
                               <button
                                 type="button"
                                 disabled={busy === rowKey}
                                 onClick={() =>
                                   toggle({
                                     action: "block",
-                                    scope: "series",
+                                    scope: "occurrence",
                                     icalUid: m.icalUid,
+                                    startTime: m.startTime,
                                     title: m.title,
                                     busyKey: rowKey,
                                   })
                                 }
-                                className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-90 disabled:opacity-50"
-                                style={{ borderColor: "#F0E8EF", background: "#F0E8EF", color: PLUM }}
+                                className="rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
+                                style={{ borderColor: "#E4DCE3" }}
                               >
-                                {busy === rowKey ? "…" : "Skip series"}
+                                {busy === rowKey ? "…" : "Skip once"}
                               </button>
-                            )}
-                          </>
-                        )}
+                              {m.isRecurring && (
+                                <button
+                                  type="button"
+                                  disabled={busy === rowKey}
+                                  onClick={() =>
+                                    toggle({
+                                      action: "block",
+                                      scope: "series",
+                                      icalUid: m.icalUid,
+                                      title: m.title,
+                                      busyKey: rowKey,
+                                    })
+                                  }
+                                  className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-90 disabled:opacity-50"
+                                  style={{ borderColor: "#F0E8EF", background: "#F0E8EF", color: PLUM }}
+                                >
+                                  {busy === rowKey ? "…" : "Skip series"}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        {/* Play card — the bot still records; this only mutes the
+                            post-meeting Slack card of suggested plays. */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="mr-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Play card</span>
+                          {cardMuted ? (
+                            <button
+                              type="button"
+                              disabled={busy === cardKey}
+                              onClick={() =>
+                                toggle({
+                                  action: "unblock",
+                                  scope: m.cardMuted!,
+                                  icalUid: m.icalUid,
+                                  startTime: m.cardMuted === "occurrence" ? m.startTime : undefined,
+                                  intent: "card",
+                                  busyKey: cardKey,
+                                })
+                              }
+                              className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+                              style={{ borderColor: "#E4DCE3", color: "#52525b" }}
+                            >
+                              {busy === cardKey ? "Restoring…" : "Post card again"}
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy === cardKey}
+                                onClick={() =>
+                                  toggle({
+                                    action: "block",
+                                    scope: "occurrence",
+                                    icalUid: m.icalUid,
+                                    startTime: m.startTime,
+                                    title: m.title,
+                                    intent: "card",
+                                    busyKey: cardKey,
+                                  })
+                                }
+                                className="rounded-lg border px-2.5 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
+                                style={{ borderColor: "#E4DCE3" }}
+                              >
+                                {busy === cardKey ? "…" : "Mute once"}
+                              </button>
+                              {m.isRecurring && (
+                                <button
+                                  type="button"
+                                  disabled={busy === cardKey}
+                                  onClick={() =>
+                                    toggle({
+                                      action: "block",
+                                      scope: "series",
+                                      icalUid: m.icalUid,
+                                      title: m.title,
+                                      intent: "card",
+                                      busyKey: cardKey,
+                                    })
+                                  }
+                                  className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-zinc-50 disabled:opacity-50"
+                                  style={{ borderColor: "#E4DCE3", color: "#52525b" }}
+                                >
+                                  {busy === cardKey ? "…" : "Mute series"}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -329,8 +457,11 @@ export default function BotScheduleClient() {
       </section>
 
       <p className="text-xs text-zinc-400">
-        Skipping removes the already-scheduled bot immediately and keeps it away on every future
-        calendar sync. Times shown in Pacific. Only meetings with a join link are listed.
+        <strong className="font-medium text-zinc-500">Notetaker</strong> — skipping removes the
+        already-scheduled bot immediately and keeps it away on every future calendar sync.{" "}
+        <strong className="font-medium text-zinc-500">Play card</strong> — muting keeps the bot
+        recording (the meeting stays searchable); it only stops the post-meeting card of suggested
+        plays from posting to Slack. Times shown in Pacific. Only meetings with a join link are listed.
       </p>
     </div>
   );

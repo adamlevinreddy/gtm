@@ -28,6 +28,7 @@ import {
 } from "@/lib/work-items";
 import { canonicalizeCompany, searchCompaniesByName, hubspotCompanyUrl } from "@/lib/hubspot";
 import { isConeOfSilence } from "@/lib/cone-of-silence";
+import { isCardMutedForBot } from "@/lib/card-mute";
 import { PLAYS, CARD_PLAY_IDS, isPlayId, type PlayId } from "@/lib/plays";
 
 type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
@@ -434,6 +435,12 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     // Cone of silence — a confidential meeting is never slacked, even via the
     // backstop cron or a forced replay.
     if (await isConeOfSilence(botId)) return { ok: true, proposed: 0, skipped: "cone-of-silence" };
+
+    // Card muted for this meeting/series (a Settings toggle). The bot still
+    // recorded — the meeting is searchable — we just don't push the card.
+    // Checked before the idempotency claim so un-muting + a forced replay can
+    // still post later.
+    if (await isCardMutedForBot(botId)) return { ok: true, proposed: 0, skipped: "card-muted" };
 
     if (!opts?.force) {
       const claimed = await kv

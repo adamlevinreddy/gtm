@@ -156,7 +156,7 @@ export default async function SettingsPage({
 
         <Section
           title="Notetaker schedule"
-          subtitle="Skip any upcoming meeting or recurring series; undo any time."
+          subtitle="Skip the bot on any meeting or series, or keep the recording but mute its post-meeting play card. Undo any time."
         >
           <BotScheduleClient />
         </Section>

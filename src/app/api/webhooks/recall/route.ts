@@ -27,6 +27,7 @@ import {
   kvRefreshIcalOwner,
   kvReleaseIcalOwner,
   kvKeyBotInvitees,
+  kvKeyBotMeetingRef,
 } from "@/lib/recall-calendar-v2";
 import { getCompanyContacts } from "@/lib/hubspot";
 import { canonicalCompanyName } from "@/lib/account-identity";
@@ -260,6 +261,11 @@ async function handleCalendarEvent(
       });
       if (botId) {
         await kv.set(`recall:cal:event:${calendarId}:${e.id}:bot`, botId).catch(() => {});
+        // Reverse lookup for the post-meeting card-mute: this bot's meeting is
+        // this ical_uid/start_time (proposeFromMeeting only has the botId).
+        await kv
+          .set(kvKeyBotMeetingRef(botId), { icalUid: e.ical_uid || e.id, startTime: e.start_time }, { ex: 30 * 24 * 60 * 60 })
+          .catch(() => {});
         // Capture invite attendee emails now (the invite always carries them,
         // even when Teams later strips them from the meeting roster).
         const invitees: RecallParticipant[] = (e.raw?.attendees ?? [])

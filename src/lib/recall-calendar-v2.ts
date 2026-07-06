@@ -105,6 +105,12 @@ export const kvKeyEventBot = (calendarId: string, eventId: string) => `recall:ca
 // bot. Teams strips emails from the in-meeting roster, but the invite carries
 // them — this is the durable source for attendee emails / attribution.
 export const kvKeyBotInvitees = (botId: string) => `recall:cal:bot:${botId}:invitees`;
+// botId → the calendar identity of the meeting it's recording ({ icalUid,
+// startTime }), captured at schedule time. The forward map (event→bot) and
+// meta.json don't carry ical_uid, but the post-meeting card-mute is keyed by
+// ical_uid/series and enforced against a botId — this is the reverse lookup
+// that bridges the two. See src/lib/card-mute.ts.
+export const kvKeyBotMeetingRef = (botId: string) => `recall:cal:bot:${botId}:meetingref`;
 // Cross-calendar dedup: a single ical_uid may appear on many teammates'
 // connected calendars (any meeting they're all invited to). We use a
 // "first calendar wins" claim so only one bot gets scheduled regardless
