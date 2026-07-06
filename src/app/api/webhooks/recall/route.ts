@@ -157,6 +157,25 @@ export async function GET(req: NextRequest) {
   }
   const botId = req.nextUrl.searchParams.get("botId") ?? "";
   if (!botId) return NextResponse.json({ ok: false, error: "missing botId" }, { status: 400 });
+
+  // ?probe=1 → just read the bot's state from Recall (fast, no commit) so we
+  // can see whether it recorded + whether the transcript/video are ready there.
+  if (req.nextUrl.searchParams.get("probe") === "1") {
+    try {
+      const bot = await fetchBot(botId);
+      const ms = bot.recordings?.[0]?.media_shortcuts;
+      return NextResponse.json({
+        ok: true,
+        botId,
+        recordings: bot.recordings?.length ?? 0,
+        transcriptStatus: ms?.transcript?.status?.code ?? null,
+        videoStatus: ms?.video_mixed?.status?.code ?? null,
+      });
+    } catch (err) {
+      return NextResponse.json({ ok: false, botId, probeError: err instanceof Error ? err.message : String(err) }, { status: 502 });
+    }
+  }
+
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   if (!pat) return NextResponse.json({ ok: false, error: "PRICING_LIBRARY_GITHUB_PAT not set" }, { status: 500 });
   try {
