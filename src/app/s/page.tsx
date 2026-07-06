@@ -10,6 +10,7 @@ import { PLUM, PLUM_TINT, BORDER } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
 import FilterBar from "@/components/FilterBar";
+import NewSessionButton from "./NewSessionButton";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -63,14 +64,17 @@ export default async function SessionsPage({
       subtitle="Every conversation the team has had here — across the web app, Slack, and email."
       maxWidth="max-w-3xl"
       actions={
-        <FilterBar
-          people={people}
-          viewer={viewer}
-          timeRange
-          channels={[...CHANNELS]}
-          search
-          searchPlaceholder="Search sessions…"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <NewSessionButton />
+          <FilterBar
+            people={people}
+            viewer={viewer}
+            timeRange
+            channels={[...CHANNELS]}
+            search
+            searchPlaceholder="Search sessions…"
+          />
+        </div>
       }
     >
       <div className="flex flex-col gap-4">

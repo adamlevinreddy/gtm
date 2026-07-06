@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
           process.env.PRICING_LIBRARY_GITHUB_PAT,
           7,
           25,
-          videoSecret ? { baseUrl, secret: videoSecret, ttlSeconds: 86400 } : undefined,
+          videoSecret ? { baseUrl, secret: videoSecret, ttlSeconds: 30 * 86400 } : undefined,
         );
         kbIndex = formatMeetingIndex(meetings);
       } catch (err) {

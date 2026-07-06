@@ -112,7 +112,10 @@ export function signPlaybackJwt(opts: {
   if (!kid || !privateKeyB64) {
     throw new Error("MUX_SIGNING_KEY_ID / MUX_SIGNING_KEY_PRIVATE not set");
   }
-  const ttl = opts.ttlSeconds ?? 7 * 24 * 60 * 60;
+  // Default 30 days: shareable recording links go to external clients and the
+  // 7-day expiry was a recurring "the link died, re-send it" fight. Callers
+  // that want a shorter-lived token (e.g. thumbnails) pass ttlSeconds explicitly.
+  const ttl = opts.ttlSeconds ?? 30 * 24 * 60 * 60;
   const aud = opts.aud ?? "v";
   const exp = Math.floor(Date.now() / 1000) + ttl;
 

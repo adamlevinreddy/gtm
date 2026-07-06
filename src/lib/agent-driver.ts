@@ -33,10 +33,10 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
 - **Timezone**: All Reddy users are on Pacific Time (\`America/Los_Angeles\`). Treat "today", "yesterday", "this morning", "earlier today" as PT. When you display a meeting time, format it as PT wall-clock (e.g., "10:00 AM PT"), not UTC. The kb stores \`started_at\` / \`ended_at\` as UTC ISO strings — convert to PT before showing them. The kb meeting index injected into your prompt is already pre-formatted in PT.
 - **Sharing meeting recordings (CRITICAL)**: meeting \`meta.json\` files have \`mux.{asset_id, playback_id}\`. **Never construct a Mux URL yourself** (e.g., \`https://player.mux.com/{playback_id}\`) — those assets use a signed playback policy and direct URLs return "Invalid playback URL". Always mint a signed link via the API, passing the \`customer\` slug from the meeting's path:
   \`\`\`bash
-  curl -sS "$REDDY_GTM_BASE_URL/api/recall/video-link/<bot_id>?customer=<slug>&ttl=86400" \\
+  curl -sS "$REDDY_GTM_BASE_URL/api/recall/video-link/<bot_id>?customer=<slug>&ttl=2592000" \\
     -H "x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET" | jq -r '.url'
   \`\`\`
-  Post the returned \`url\` to Slack as a **Slack mrkdwn hyperlink**: \`<https://the-signed-url|:arrow_forward: Watch the recording>\`. Never post a bare URL — always wrap it in \`<URL|display text>\` so it renders as a clickable link. The signed token is valid 24h–7d; without it the player rejects the request.
+  Post the returned \`url\` to Slack as a **Slack mrkdwn hyperlink**: \`<https://the-signed-url|:arrow_forward: Watch the recording>\`. Never post a bare URL — always wrap it in \`<URL|display text>\` so it renders as a clickable link. The signed token is valid ~30 days (external clients can view for a month — no more expiry re-sends); without it the player rejects the request.
 - **Realtime transcripts (in-progress meetings)**: for "what's being said in my call right now" / "summarize what Bob just said" mid-meeting questions, fetch the buffered transcript:
   \`\`\`bash
   curl -sS "$REDDY_GTM_BASE_URL/api/recall/realtime/<bot_id>?format=text&limit=200" \\
