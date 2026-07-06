@@ -60,7 +60,10 @@ function dayKeyPT(iso: string): string {
   }).format(new Date(iso));
 }
 
-export default function BotScheduleClient() {
+type Scope = "all" | "mine" | "attending";
+
+export default function BotScheduleClient({ viewerEmail }: { viewerEmail: string }) {
+  const [scope, setScope] = useState<Scope>("all");
   const [meetings, setMeetings] = useState<UpcomingMeeting[]>([]);
   const [blocks, setBlocks] = useState<MeetingBlock[]>([]);
   const [cardMutes, setCardMutes] = useState<MeetingBlock[]>([]);
@@ -133,16 +136,30 @@ export default function BotScheduleClient() {
     [load],
   );
 
+  // Filter to the viewer's own meetings. "mine" = they're the organizer (they
+  // scheduled it). "attending" = it's on their calendar / they're invited
+  // (organizer counts too). Emails are lowercased; Teams meetings with null
+  // organizer/attendees fall out of the narrowed views (can't attribute).
+  const filtered = useMemo(() => {
+    if (scope === "all") return meetings;
+    const me = viewerEmail.toLowerCase();
+    return meetings.filter((m) => {
+      const organizes = (m.organizer ?? "").toLowerCase() === me;
+      if (scope === "mine") return organizes;
+      return organizes || m.calendars.some((c) => c.toLowerCase() === me) || m.attendees.some((a) => a.toLowerCase() === me);
+    });
+  }, [meetings, scope, viewerEmail]);
+
   const byDay = useMemo(() => {
     const groups = new Map<string, UpcomingMeeting[]>();
-    for (const m of meetings) {
+    for (const m of filtered) {
       const k = dayKeyPT(m.startTime);
       const g = groups.get(k);
       if (g) g.push(m);
       else groups.set(k, [m]);
     }
     return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [meetings]);
+  }, [filtered]);
 
   // Series blocks (and any occurrence blocks for meetings outside the
   // 14-day window) shown up top so they're removable even when no
@@ -259,10 +276,37 @@ export default function BotScheduleClient() {
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-zinc-700">Next 14 days</h2>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-zinc-700">Next 14 days</h2>
+          <div className="inline-flex overflow-hidden rounded-lg border" style={{ borderColor: "#E4DCE3" }}>
+            {([
+              ["all", "Everyone"],
+              ["mine", "I organize"],
+              ["attending", "I'm attending"],
+            ] as [Scope, string][]).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setScope(val)}
+                className="border-l px-2.5 py-1 text-xs font-medium transition-colors first:border-l-0"
+                style={
+                  scope === val
+                    ? { background: "#F0E8EF", color: PLUM, borderColor: "#E4DCE3" }
+                    : { background: "white", color: "#6b7280", borderColor: "#E4DCE3" }
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {byDay.length === 0 && (
           <p className="rounded-xl border bg-white px-4 py-6 text-center text-sm text-zinc-400" style={{ borderColor: "#E4DCE3" }}>
-            No upcoming meetings with a join link found.
+            {scope === "mine"
+              ? "No upcoming meetings you organize in the next 14 days."
+              : scope === "attending"
+                ? "No upcoming meetings on your calendar in the next 14 days."
+                : "No upcoming meetings with a join link found."}
           </p>
         )}
         <div className="flex flex-col gap-4">
