@@ -3,7 +3,7 @@
 // the full turn history in its prompt on every ask (same mechanism as
 // before), so resume needs no sandbox state.
 
-import { desc, eq, and, asc, gte, sql } from "drizzle-orm";
+import { desc, eq, and, or, asc, gte, ilike, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { kv } from "@/lib/kv-client";
 import { chatSessions, chatTurns, type ChatSession, type ChatTurn } from "@/lib/schema";
@@ -192,6 +192,60 @@ export async function listSessions(
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(chatSessions.updatedAt))
     .limit(opts.limit ?? 200);
+}
+
+export type SessionSearchHit = ChatSession & { snippet: string | null };
+
+/** Show ~160 chars of `content` centered on the first match of `term`. */
+function excerpt(content: string, term: string): string {
+  const i = content.toLowerCase().indexOf(term.toLowerCase());
+  if (i < 0) return content.slice(0, 160).trim() + (content.length > 160 ? "…" : "");
+  const start = Math.max(0, i - 70);
+  const end = Math.min(content.length, i + term.length + 90);
+  return (start > 0 ? "…" : "") + content.slice(start, end).trim() + (end < content.length ? "…" : "");
+}
+
+/** Team-wide session search across TITLE + message CONTENT (not just titles).
+ * Everyone's sessions by default (sales is a team sport); pass `owner` to scope
+ * to one person, `sinceMs` to bound by last activity. Returns each matching
+ * session with a snippet from the matching message (null when only the title
+ * matched). Content match is bounded to the most-recent matching turns. */
+export async function searchSessions(
+  q: string,
+  opts: { owner?: string; sinceMs?: number; limit?: number } = {},
+): Promise<SessionSearchHit[]> {
+  const term = q.trim();
+  if (!term) return [];
+  const like = `%${term.replace(/[\\%_]/g, (m) => "\\" + m)}%`; // escape LIKE metacharacters
+
+  // Matching messages (newest first) → snippet + candidate session ids.
+  const turnHits = await db
+    .select({ sessionId: chatTurns.sessionId, content: chatTurns.content })
+    .from(chatTurns)
+    .where(ilike(chatTurns.content, like))
+    .orderBy(desc(chatTurns.createdAt))
+    .limit(600);
+  const snippetBy = new Map<string, string>();
+  for (const t of turnHits) if (!snippetBy.has(t.sessionId)) snippetBy.set(t.sessionId, t.content);
+  const turnIds = [...snippetBy.keys()];
+
+  const match = turnIds.length
+    ? or(ilike(chatSessions.title, like), inArray(chatSessions.id, turnIds))
+    : ilike(chatSessions.title, like);
+  const conds = [match];
+  if (opts.owner) conds.push(eq(chatSessions.viewer, opts.owner.toLowerCase()));
+  if (opts.sinceMs) conds.push(gte(chatSessions.updatedAt, new Date(opts.sinceMs)));
+
+  const rows = await db
+    .select()
+    .from(chatSessions)
+    .where(and(...conds))
+    .orderBy(desc(chatSessions.updatedAt))
+    .limit(opts.limit ?? 60);
+  return rows.map((s) => {
+    const hit = snippetBy.get(s.id);
+    return { ...s, snippet: hit ? excerpt(hit, term) : null };
+  });
 }
 
 /** Team-readable: any signed-in teammate can view any session (the `viewer`

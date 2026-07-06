@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { MessageSquareText } from "lucide-react";
-import { listSessions } from "@/lib/sessions";
+import { listSessions, searchSessions, type SessionSearchHit } from "@/lib/sessions";
 import { fmtDayTimePT, dayKeyPT, fmtWeekdayPT } from "@/lib/fmt";
 import { rangeSinceMs, CHANNELS } from "@/lib/view-filters";
 import { TEAM_EMAILS } from "@/lib/team";
@@ -33,9 +33,14 @@ export default async function SessionsPage({
   const owner = sp.who && sp.who !== "all" ? sp.who : undefined;
   const sinceMs = rangeSinceMs(sp.when) ?? undefined;
   const channel = sp.channel || "all";
-  const q = (sp.q || "").trim().toLowerCase();
+  const q = (sp.q || "").trim();
 
-  const all = await listSessions({ owner, sinceMs }).catch(() => []);
+  // With a query, search across everyone's sessions by TITLE + message CONTENT
+  // (server-side); otherwise just list recent sessions. Both are team-wide
+  // (narrowed by the who/when filters if set).
+  const all: SessionSearchHit[] = q
+    ? await searchSessions(q, { owner, sinceMs }).catch(() => [])
+    : (await listSessions({ owner, sinceMs }).catch(() => [])).map((s) => ({ ...s, snippet: null }));
   const sessions = all.filter((s) => {
     const scope = s.scope as { label?: string; source?: string } | null;
     const src =
@@ -47,7 +52,6 @@ export default async function SessionsPage({
             ? "play"
             : "web";
     if (channel !== "all" && src !== channel) return false;
-    if (q && !`${s.title} ${scope?.label ?? ""} ${personName(s.viewer)}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -79,7 +83,7 @@ export default async function SessionsPage({
             timeRange
             channels={[...CHANNELS]}
             search
-            searchPlaceholder="Search sessions…"
+            searchPlaceholder="Search everyone's sessions…"
           />
         </div>
       }
@@ -125,6 +129,9 @@ export default async function SessionsPage({
                           </>
                         )}
                       </span>
+                      {s.snippet && (
+                        <span className="mt-0.5 block truncate text-xs text-zinc-400">{s.snippet}</span>
+                      )}
                     </span>
                   </Link>
                 );
