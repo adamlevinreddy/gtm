@@ -29,7 +29,7 @@ import {
 import { canonicalizeCompany, searchCompaniesByName, hubspotCompanyUrl } from "@/lib/hubspot";
 import { isConeOfSilence } from "@/lib/cone-of-silence";
 import { isCardMutedForBot } from "@/lib/card-mute";
-import { PLAYS, CARD_PLAY_IDS, isPlayId, type PlayId } from "@/lib/plays";
+import { PLAYS, CARD_PLAY_IDS, ALL_PLAY_IDS, isPlayId, type PlayId } from "@/lib/plays";
 
 export type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
 
@@ -284,6 +284,7 @@ export type WatchSuggestion = {
   signal: "no_reply" | "no_activity" | "time_only";
   inDays: number; // whole days from now until the check
   domain: string | null; // account email domain, for no_reply
+  play: PlayId; // which Play the follow-up fires when it trips
   label: string; // "if no reply from Nike by next Mon"
 };
 
@@ -328,12 +329,13 @@ export function buildPlayCurationPrompt(botId: string): string {
     `    - signal: "no_reply" (we're waiting on THEM to email back — the common case) | "no_activity" (waiting on any movement on the deal) | "time_only" (just a scheduled reminder, no condition).`,
     `    - inDays: whole days from TODAY (Pacific) until the check — Monday ≈ days until next Mon, "two weeks" = 14, "next month" = 30. Your best estimate.`,
     `    - domain: the customer's email domain from meta.json attendees (e.g. "nike.com"), for no_reply; null if unknown.`,
+    `    - play: which Play should RUN when it trips — your judgment on what the follow-up owes. Usually "recap_email" (a nudge referencing the call), but "pricing" if they're waiting on a quote, "rfp" if a proposal is owed, "account_catchup" for a status recap, "recording_link" to resend the recording, "redline" if a contract's in flight. Choose ONE id from: ${ALL_PLAY_IDS.join(", ")}.`,
     `    - label: a short human line, e.g. "if no reply from Nike by next Mon".`,
     `  If there's no clear conditional, set "followup": null. NEVER invent one.`,
     ``,
     `Return ONLY a fenced json block, nothing else:`,
     "```json",
-    `{ "meetingType": "prospect", "meetingTitle": "...", "account": "Acme or null", "read": "...", "plays": ["recap_email","recording_link"], "followup": { "signal": "no_reply", "inDays": 4, "domain": "acme.com", "label": "if no reply from Acme by Mon" } }`,
+    `{ "meetingType": "prospect", "meetingTitle": "...", "account": "Acme or null", "read": "...", "plays": ["recap_email","recording_link"], "followup": { "signal": "no_reply", "inDays": 4, "domain": "acme.com", "play": "recap_email", "label": "if no reply from Acme by Mon" } }`,
     "```",
     `(set "followup": null when nothing conditional was said.)`,
   ].join("\n");
@@ -372,6 +374,7 @@ function coerceFollowup(f: unknown): WatchSuggestion | null {
     signal,
     inDays,
     domain: typeof o.domain === "string" && o.domain.trim() && o.domain.toLowerCase() !== "null" ? o.domain.trim().toLowerCase() : null,
+    play: isPlayId(o.play) ? o.play : "recap_email",
     label: typeof o.label === "string" ? o.label.slice(0, 160) : "",
   };
 }

@@ -1,24 +1,16 @@
 import { postToChannel, salesChannel, slackIdForEmail } from "@/lib/slack";
-import { playRunPrompt, isPlayId, type PlayId } from "@/lib/plays";
+import { PLAYS, playRunPrompt, isPlayId, type PlayId } from "@/lib/plays";
+import { selfBaseUrl } from "@/lib/work-items";
 import { runAgentAnswer } from "@/lib/proactive-run";
-import {
-  getWatch,
-  markFired,
-  markSatisfied,
-  noteAttempt,
-  type Watch,
-} from "@/lib/watchers";
+import { getWatch, markFired, markSatisfied, noteAttempt, type Watch } from "@/lib/watchers";
 
-// Evaluate + fire a conditional follow-up. Runs the agent AS the watch owner
-// (so it has their Gmail/HubSpot), which (1) checks the signal and (2) if the
-// condition trips, drafts the follow-up as a real Gmail draft — never sends.
-// The cron posts the "draft ready" card; nothing goes outbound autonomously.
-
-// Slack action_ids for the fire card (unique prefix; handled in interactivity).
-export const WATCH_ACTION_PREFIX = "watch_";
-export const WATCH_EDIT_ACTION = "watch_edit";
-export const WATCH_SNOOZE_ACTION = "watch_snooze";
-export const WATCH_DISMISS_ACTION = "watch_dismiss";
+// Evaluate a due conditional follow-up and, if it trips, FIRE ITS PLAY. Two
+// phases: (1) a check that runs AS THE OWNER (their Gmail/HubSpot) and returns
+// only a verdict; (2) if tripped, kick off the watch's chosen play in #sales as
+// the owner — exactly like a play button — so a watch can fire ANY play (recap
+// draft, pricing, RFP, catch-up, redline, …), each with its own normal output.
+// Draft-only: the play posts to the thread and, for emails, saves a Gmail draft.
+// Nothing is ever auto-sent, and no one's inbox but the owner's is read.
 
 function fmtDatePT(ms: number): string {
   return new Intl.DateTimeFormat("en-US", {
@@ -29,18 +21,11 @@ function fmtDatePT(ms: number): string {
   }).format(new Date(ms));
 }
 
-export type WatchVerdict = {
-  tripped: boolean;
-  reason: string;
-  draftCreated: boolean;
-  draftLink: string | null;
-  preview: string | null;
-};
+export type WatchVerdict = { tripped: boolean; reason: string };
 
 export function buildWatchEvalPrompt(w: Watch): string {
   const since = fmtDatePT(w.anchor);
   const who = w.domain || w.account || "the account";
-  const play = (isPlayId(w.play) ? w.play : "recap_email") as PlayId;
   const check =
     w.signal === "no_reply"
       ? `Search ${w.owner}'s Gmail for ANY inbound message from anyone at ${who} since ${since} (e.g. \`from:${w.domain || ""} after:${new Date(w.anchor).toISOString().slice(0, 10)}\`). If even one exists → NOT tripped (they replied). If none → TRIPPED.`
@@ -48,24 +33,16 @@ export function buildWatchEvalPrompt(w: Watch): string {
         ? `Check HubSpot for ${w.account || "the account"} — any activity since ${since} (inbound/outbound email, meeting, note, deal-stage change)? Also check the KB for any new meeting with them since ${since}. If ANY activity → NOT tripped. If none → TRIPPED.`
         : `This is a time-based reminder — it is ALWAYS tripped (no condition to check).`;
   return [
-    `A "conditional follow-up" you (${w.owner}) set up is due for a check. You are running AS ${w.owner} and have their connected Gmail + HubSpot tools. Decide whether it should TRIP, and if so, prepare the draft. Do NOT send anything.`,
+    `A "conditional follow-up" you (${w.owner}) set up is due for a check. You are running AS ${w.owner} with their connected Gmail + HubSpot. Decide ONLY whether the condition has TRIPPED — do not draft anything yet.`,
     ``,
-    `WATCH:`,
-    `  - account: ${w.account || "(unspecified)"}`,
-    `  - what I asked: "${w.note}"`,
-    `  - set up from: ${w.botId ? `meeting bot_id ${w.botId}` : "a chat request"}`,
+    `WATCH: account ${w.account || "(unspecified)"} · what I asked: "${w.note}" · set up ${w.botId ? `from meeting bot_id ${w.botId}` : "in chat"}`,
     ``,
-    `STEP 1 — CHECK THE CONDITION:`,
-    `  ${check}`,
-    `  If you do NOT have the tools to verify this (e.g. ${w.owner}'s Gmail/HubSpot isn't in your connected tools), do NOT guess — return tripped:false with reason "could not verify — connect Gmail/HubSpot via /reddy-connect".`,
+    `CHECK: ${check}`,
+    `If you do NOT have the tools to verify this (e.g. ${w.owner}'s Gmail/HubSpot isn't connected), do NOT guess — return tripped:false with reason "could not verify — connect Gmail/HubSpot via /reddy-connect".`,
     ``,
-    `STEP 2 — ONLY IF TRIPPED, DRAFT (never send):`,
-    `  Draft the follow-up: ${playRunPrompt(play, { botId: w.botId || undefined, account: w.account || undefined })}`,
-    `  Keep it a light, warm nudge that references our last conversation. Then save it as a Gmail DRAFT in ${w.owner}'s mailbox using your Gmail tools (create-draft — do NOT send). If your Gmail tools return a draft URL/id, capture it. If you have no Gmail tool connected, skip the draft and just return the full draft text in "preview".`,
-    ``,
-    `RETURN ONLY a fenced json block, nothing else:`,
+    `Return ONLY a fenced json block, nothing else:`,
     "```json",
-    `{ "tripped": true, "reason": "one line — e.g. 'no reply from ${who} since ${since}' or 'they replied Jul 9'", "draftCreated": true, "draftLink": "https://mail.google.com/... or null", "preview": "2-3 line preview of the drafted email, or the full text if no draft was created" }`,
+    `{ "tripped": true, "reason": "one line — e.g. 'no reply from ${who} since ${since}' or 'they replied Jul 9'" }`,
     "```",
   ].join("\n");
 }
@@ -80,39 +57,10 @@ export function parseWatchVerdict(answer: string | null): WatchVerdict | null {
     return {
       tripped: o.tripped === true || o.tripped === "true",
       reason: typeof o.reason === "string" ? o.reason.slice(0, 300) : "",
-      draftCreated: o.draftCreated === true,
-      draftLink: typeof o.draftLink === "string" && /^https?:\/\//.test(o.draftLink) ? o.draftLink : null,
-      preview: typeof o.preview === "string" ? o.preview.slice(0, 1200) : null,
     };
   } catch {
     return null;
   }
-}
-
-function buildFireCard(w: Watch, v: WatchVerdict, ownerSlackId: string | null): { text: string; blocks: object[] } {
-  const owner = ownerSlackId ? `<@${ownerSlackId}>` : `@${w.owner.split("@")[0]}`;
-  const acct = w.account || "this account";
-  const elements: object[] = [];
-  if (v.draftLink) {
-    elements.push({ type: "button", text: { type: "plain_text", text: "✉️ Open draft", emoji: true }, url: v.draftLink });
-  }
-  elements.push(
-    { type: "button", action_id: WATCH_EDIT_ACTION, style: "primary" as const, text: { type: "plain_text", text: "✏️ Edit with me", emoji: true }, value: w.id },
-    { type: "button", action_id: WATCH_SNOOZE_ACTION, text: { type: "plain_text", text: "🕒 Snooze 3d", emoji: true }, value: w.id },
-    { type: "button", action_id: WATCH_DISMISS_ACTION, text: { type: "plain_text", text: "Dismiss", emoji: true }, value: w.id },
-  );
-  const blocks: object[] = [
-    { type: "section", text: { type: "mrkdwn", text: `⏰ *Follow-up ready — ${acct}* ${owner}\n_${v.reason}_` } },
-  ];
-  if (v.preview) {
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: v.draftCreated ? `Drafted in your Gmail:\n>${v.preview.replace(/\n/g, "\n>")}` : `Draft:\n>${v.preview.replace(/\n/g, "\n>")}` } });
-  }
-  blocks.push({ type: "actions", elements });
-  blocks.push({
-    type: "context",
-    elements: [{ type: "mrkdwn", text: v.draftLink ? "Open it to edit + send, or refine it with me. Nothing is sent until you do." : "Edit it with me or copy it out — nothing is sent until you do." }],
-  });
-  return { text: `⏰ Follow-up ready for ${acct} — ${v.reason}`, blocks };
 }
 
 export type RunWatchResult = { ok: boolean; tripped?: boolean; reason?: string; retried?: boolean; skipped?: string; error?: string };
@@ -124,23 +72,26 @@ export async function runWatch(input: Watch): Promise<RunWatchResult> {
   const w = (await getWatch(input.id)) ?? input;
   if (w.status !== "pending") return { ok: true, skipped: `status=${w.status}` };
   try {
-    const answer = await runAgentAnswer(buildWatchEvalPrompt(w), {
-      userEmail: w.owner, // run as the owner → their Gmail/HubSpot
-      requestId: `watch:${w.id}`,
-      pollTimeoutMs: 300_000,
-    });
-    const verdict = parseWatchVerdict(answer);
+    // A time-only reminder has no condition to verify — skip the check pass.
+    let verdict: WatchVerdict | null;
+    if (w.signal === "time_only") {
+      verdict = { tripped: true, reason: `scheduled reminder — ${w.note || "reach out"}` };
+    } else {
+      const answer = await runAgentAnswer(buildWatchEvalPrompt(w), {
+        userEmail: w.owner, // check runs as the owner → their Gmail/HubSpot
+        requestId: `watch:${w.id}`,
+        pollTimeoutMs: 240_000, // a Gmail/HubSpot check is quick; the play fires async
+      });
+      verdict = parseWatchVerdict(answer);
+    }
     if (!verdict) {
       await noteAttempt(w.id);
       return { ok: false, retried: true, error: "no parseable verdict" };
     }
 
-    // Team sport: fires ALWAYS land in #sales with the owner @-mentioned, so a
-    // teammate can chime in ("Nike did reach out to me — you just weren't
-    // copied"). Thread it only when the watch was armed in #sales (a meeting
-    // card's thread there); otherwise post top-level. (The condition check ran
-    // as the owner against THEIR inbox — no one reads anyone else's mail; the
-    // team only ever sees the resulting draft, which is fine.)
+    // Team sport: everything lands in #sales with the owner @-mentioned, so a
+    // teammate can chime in ("they replied to me, you weren't copied"). Thread
+    // into the meeting card's thread when armed in #sales, else top-level.
     const ownerSlackId = await slackIdForEmail(w.owner).catch(() => null);
     const owner = ownerSlackId ? `<@${ownerSlackId}>` : `@${w.owner.split("@")[0]}`;
     const channel = salesChannel();
@@ -157,9 +108,28 @@ export async function runWatch(input: Watch): Promise<RunWatchResult> {
       return { ok: true, tripped: false, reason: verdict.reason };
     }
 
+    // Tripped → fire the chosen play into #sales, AS THE OWNER (so it uses their
+    // Gmail to draft/save). Any play works — the play posts its own output.
+    const playId: PlayId = isPlayId(w.play) ? w.play : "recap_email";
+    const label = PLAYS[playId].label;
     if (channel) {
-      const card = buildFireCard(w, verdict, ownerSlackId);
-      await postToChannel(channel, { ...card, threadTs }).catch(() => {});
+      let fireThread = threadTs;
+      const intro = await postToChannel(channel, {
+        text: `⏰ ${owner} — *${w.account || "this account"}*: ${verdict.reason}. Kicking off *${label}*…`,
+        threadTs: fireThread,
+      }).catch(() => null);
+      // With no meeting thread, thread the play under this intro message.
+      if (!fireThread && intro?.ts) fireThread = intro.ts;
+      const secret = process.env.BOARD_API_SECRET;
+      if (secret) {
+        const prompt = `${playRunPrompt(playId, { botId: w.botId || undefined, account: w.account || undefined })}\n\n[This is an automated conditional follow-up that just tripped: ${verdict.reason}. If this produces an email, ALSO save it as a Gmail draft in the mailbox (do NOT send) and share the draft link. Post the result in this thread.]`;
+        // Slack lane, as the owner (slackUser → their email → their Composio).
+        await fetch(`${selfBaseUrl()}/api/agent`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-board-secret": secret },
+          body: JSON.stringify({ userText: prompt, slackChannel: channel, slackThreadTs: fireThread, slackUser: ownerSlackId ?? undefined }),
+        }).catch(() => {});
+      }
     }
     await markFired(w.id);
     return { ok: true, tripped: true, reason: verdict.reason };

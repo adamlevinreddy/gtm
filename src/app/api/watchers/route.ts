@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addWatch, listWatches, getWatch, cancelWatch, snoozeWatch, type WatchSignal, type WatchStatus } from "@/lib/watchers";
+import { isPlayId } from "@/lib/plays";
 import { resolveApiViewer } from "@/lib/viewer";
 
 // Conditional-follow-up ("watch") API.
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
     botId: typeof b.botId === "string" && b.botId ? b.botId : null,
     slackChannel: typeof b.slackChannel === "string" && b.slackChannel ? b.slackChannel : null,
     slackThreadTs: typeof b.slackThreadTs === "string" && b.slackThreadTs ? b.slackThreadTs : null,
-    play: typeof b.play === "string" && b.play ? b.play : "recap_email",
+    play: isPlayId(b.play) ? b.play : "recap_email",
     signal,
     checkAfter,
     anchor: toMs(b.anchor) ?? now,
