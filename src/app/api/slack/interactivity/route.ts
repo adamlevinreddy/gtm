@@ -20,6 +20,13 @@ import {
   crmProposalKey,
 } from "@/lib/post-meeting-crm";
 import { PLAYS, isPlayId, playRunPrompt } from "@/lib/plays";
+import {
+  WATCH_ACTION_PREFIX,
+  WATCH_EDIT_ACTION,
+  WATCH_SNOOZE_ACTION,
+  WATCH_DISMISS_ACTION,
+} from "@/lib/watcher-run";
+import { getWatch, snoozeWatch, cancelWatch } from "@/lib/watchers";
 import { boardLink, selfBaseUrl } from "@/lib/work-items";
 import { kv } from "@/lib/kv-client";
 
@@ -71,9 +78,10 @@ export async function POST(req: NextRequest) {
   // stay unique within the card). Handle those + the two confirm buttons; ack
   // everything else.
   const isPlay = !!actionId && actionId.startsWith(PLAY_RUN_ACTION_ID);
+  const isWatch = !!actionId && actionId.startsWith(WATCH_ACTION_PREFIX);
   if (
     payload.type !== "block_actions" ||
-    (actionId !== CONFIRM_ACTION_ID && actionId !== CRM_APPLY_ACTION_ID && !isPlay)
+    (actionId !== CONFIRM_ACTION_ID && actionId !== CRM_APPLY_ACTION_ID && !isPlay && !isWatch)
   ) {
     return NextResponse.json({});
   }
@@ -99,6 +107,47 @@ export async function POST(req: NextRequest) {
 
   // Do the work after acking (DB writes + Slack posts exceed the 3s deadline).
   after(async () => {
+    // ---- Conditional follow-up ("watch") card buttons ----
+    // value = watchId. Edit → refine the draft with the agent in-thread;
+    // Snooze → push the check out 3 days; Dismiss → cancel the watch.
+    if (isWatch) {
+      try {
+        const watchId = action?.value ?? "";
+        if (actionId === WATCH_SNOOZE_ACTION) {
+          const w = await snoozeWatch(watchId, 3);
+          if (channel) {
+            const when = w ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric" }).format(new Date(w.checkAfter)) : "in 3 days";
+            await postToChannel(channel, { text: `🕒 Snoozed — I'll check *${w?.account ?? "this account"}* again ${when}.`, threadTs }).catch(() => {});
+          }
+          await markApplied("🕒 *Snoozed 3 days.*");
+          return;
+        }
+        if (actionId === WATCH_DISMISS_ACTION) {
+          const w = await cancelWatch(watchId);
+          if (channel) await postToChannel(channel, { text: `✅ Dismissed the follow-up watch on *${w?.account ?? "this account"}*.`, threadTs }).catch(() => {});
+          await markApplied("✅ *Dismissed.*");
+          return;
+        }
+        if (actionId === WATCH_EDIT_ACTION) {
+          const w = await getWatch(watchId);
+          const secret = process.env.BOARD_API_SECRET;
+          if (!secret || !channel) return;
+          const acct = w?.account ?? "this account";
+          const userText = `Help me refine the follow-up email you drafted for ${acct}${w?.botId ? ` (from meeting bot_id ${w.botId})` : ""}. Pull up the Gmail draft you created, show it to me here, and let's edit it together. Don't send it.`;
+          await fetch(`${selfBaseUrl()}/api/agent`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-board-secret": secret },
+            body: JSON.stringify({ userText, slackChannel: channel, slackThreadTs: threadTs, slackUser: slackUserId }),
+          }).catch(() => {});
+          await postToChannel(channel, { text: `✏️ Pulling up the *${acct}* draft to edit — one sec. (<@${slackUserId}>)`, threadTs }).catch(() => {});
+          return;
+        }
+      } catch (err) {
+        if (channel) await postToChannel(channel, { text: `⚠️ Couldn't handle that: ${err instanceof Error ? err.message : String(err)}`, threadTs }).catch(() => {});
+      }
+      return;
+    }
+
     // ---- Play button: kick off the chosen Play in THIS thread ----
     // value = `${playId}|${botId}`. Fires the Slack-lane agent (which posts its
     // own result to the thread); nothing was created just by clicking.

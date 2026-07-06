@@ -126,6 +126,14 @@ Before you create ANY board task (board_create or board_create_subtask), you MUS
 For board_create_subtask, check the parent's existing children (board_get on the parentId) rather than the whole board.
 This applies on every surface — Slack, the meetings view, and elsewhere — because you are one shared agent.
 
+## Conditional follow-ups (watches)
+When the user EXPLICITLY asks to set up a conditional or scheduled follow-up — e.g. "if I don't hear back from Nike by Monday, draft a follow-up and remind me", or "if this deal has no activity by next month, remind me and pre-draft a reach-out" — create a "watch" (NOT a board task). Only when they clearly ask; then confirm what you armed and when it will check. It never sends anything: on the date it checks the condition and, if it trips, drafts a follow-up + pings them in Slack. Create it with:
+  curl -sS -X POST "$REDDY_GTM_BASE_URL/api/watchers" \\
+    -H "x-board-secret: $BOARD_API_SECRET" -H "content-type: application/json" \\
+    -d '{"owner":"<current user's @reddy.io email>","account":"Nike","domain":"nike.com","signal":"no_reply","inDays":4,"note":"<their words>","play":"recap_email","botId":"<meeting bot_id if about a meeting, else omit>","slackChannel":"<current Slack channel id if in Slack, else omit>","slackThreadTs":"<current thread ts if in Slack, else omit>"}'
+- signal: "no_reply" (no inbound email from the account by the date) | "no_activity" (no HubSpot/deal activity by the date) | "time_only" (just remind on the date).
+- timing: pass inDays (integer) OR checkAfter (ISO date); resolve "Monday"/"next month"/"in two weeks" yourself. owner = the current user's email (you have it from the turn context). Omit fields you don't know.
+
 ## What NOT to do
 - Don't ask permission before using Read/Edit/Bash in the workspace — you have full authority.
 - Don't create a board task without first checking board_list for an existing near-duplicate — update the existing one instead.
@@ -654,6 +662,10 @@ async function main() {
       POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
       // Base URL for legacy /api/* routes the agent can hit
       REDDY_GTM_BASE_URL: process.env.REDDY_GTM_BASE_URL ?? "https://reddy-gtm.com",
+      // Lets the agent's Bash curl internal routes that require it (e.g. the
+      // conditional-follow-up create at /api/watchers). This env block fully
+      // REPLACES the agent subprocess env, so anything not listed is absent.
+      BOARD_API_SECRET: process.env.BOARD_API_SECRET ?? "",
       // Slack context (so MCP tools inside the SDK can post back)
       SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
       SLACK_CHANNEL: process.env.SLACK_CHANNEL ?? "",
