@@ -3,7 +3,7 @@ import { WebClient } from "@slack/web-api";
 import { resolveApiViewer } from "@/lib/viewer";
 import { kv } from "@/lib/kv-client";
 import { emailForSlackId } from "@/lib/slack";
-import { createSession, addTurn, extSessionKey, findSessionByThreadKey, type SessionScope } from "@/lib/sessions";
+import { createSession, addTurn, backdateSession, extSessionKey, findSessionByThreadKey, type SessionScope } from "@/lib/sessions";
 
 // ONE-TIME backfill: seed historical reddy-gtm Slack bot conversations into the
 // web session store so past Slack threads show up in /s + team-wide search.
@@ -156,6 +156,10 @@ export async function GET(req: NextRequest) {
         const turn = await addTurn({ sessionId: session.id, viewer: ownerEmail, role: isBot ? "assistant" : "user", content: attributed });
         if (turn) summary.turns++;
       }
+      // Backdate to the thread's true times so it sorts correctly in /s (Slack
+      // ts is epoch seconds).
+      const lastTs = msgs[msgs.length - 1].ts ?? rootTs;
+      await backdateSession(session.id, Math.round(Number(rootTs) * 1000), Math.round(Number(lastTs) * 1000)).catch(() => {});
     } catch (e) {
       summary.errors.push(`${rootTs}: ${e instanceof Error ? e.message : String(e)}`);
     }

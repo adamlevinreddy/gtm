@@ -140,6 +140,15 @@ export type SessionScope = {
   slackThreadTs?: string;
 } | null;
 
+/** Backfill only: set a session's timestamps to its true Slack times so it
+ * sorts correctly in /s (createSession/addTurn otherwise stamp "now"). */
+export async function backdateSession(id: string, createdAtMs: number, updatedAtMs: number): Promise<void> {
+  await db
+    .update(chatSessions)
+    .set({ createdAt: new Date(createdAtMs), updatedAt: new Date(updatedAtMs) })
+    .where(eq(chatSessions.id, id));
+}
+
 /** Durable dedup for Slack-origin sessions: the KV `sess:ext:` map expires
  * (90d) but the Postgres row persists, so a backfill must check here too. */
 export async function findSessionByThreadKey(threadKey: string): Promise<string | null> {
