@@ -178,9 +178,12 @@ export async function GET(req: NextRequest) {
 
   const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
   if (!pat) return NextResponse.json({ ok: false, error: "PRICING_LIBRARY_GITHUB_PAT not set" }, { status: 500 });
+  // Default to transcript-only (safe, fast); ?video=1 attempts the video too
+  // (heavier — may OOM/time out on long meetings).
+  const skipVideo = req.nextUrl.searchParams.get("video") !== "1";
   try {
-    await reconcile(botId, pat, "manual-reingest");
-    return NextResponse.json({ ok: true, botId, note: "reconciled — re-check has_transcript" });
+    await reconcile(botId, pat, "manual-reingest", { skipVideo });
+    return NextResponse.json({ ok: true, botId, skipVideo, note: "reconciled — re-check has_transcript" });
   } catch (err) {
     return NextResponse.json({ ok: false, botId, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
@@ -349,7 +352,7 @@ type ExistingMeta = {
   schema_version?: number;
 };
 
-async function reconcile(botId: string, pat: string, eventName: string): Promise<void> {
+async function reconcile(botId: string, pat: string, eventName: string, opts?: { skipVideo?: boolean }): Promise<void> {
   const bot = await fetchBot(botId);
   // Pull participants from the artifact (the inline list is empty on
   // current Recall bots); pull title from the recordings[0] location.
@@ -400,7 +403,10 @@ async function reconcile(botId: string, pat: string, eventName: string): Promise
   let muxPlaybackId = existing.mux?.playback_id ?? null;
   const videoStatus = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.status?.code;
   const videoUrl = bot.recordings?.[0]?.media_shortcuts?.video_mixed?.data?.download_url;
-  if (videoStatus === "done" && videoUrl) {
+  // skipVideo (recovery re-ingest): the video path downloads the full recording
+  // into memory for LFS + waits on Mux — the heavy/OOM-prone part. Skipping it
+  // lets the small transcript + meta commit fast; video can be re-ingested after.
+  if (!opts?.skipVideo && videoStatus === "done" && videoUrl) {
     if (!existing.video) {
       const dl = await fetch(videoUrl);
       if (!dl.ok) throw new Error(`recall video download ${botId} -> ${dl.status}`);
