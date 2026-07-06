@@ -414,13 +414,23 @@ async function reconcile(botId: string, pat: string, eventName: string, opts?: {
     if (!existing.video && !opts?.muxOnly) {
       const dl = await fetch(videoUrl);
       if (!dl.ok) throw new Error(`recall video download ${botId} -> ${dl.status}`);
-      const bytes = Buffer.from(await dl.arrayBuffer());
-      console.log(`[recall webhook] downloaded video bot=${botId} bytes=${bytes.length}`);
-      const { oid, size } = await uploadLfsBlob(pat, KB_REPO, bytes);
-      videoOid = oid;
-      videoSize = size;
-      filesToCommit.push({ path: `${dir}/video.mp4`, utf8: lfsPointerText(oid, size) });
-      reasons.push("video");
+      // Guard the OOM: buffering the whole video for LFS crashes the function on
+      // long meetings (which then drops the transcript too). Above the cap, skip
+      // the LFS backup and let Mux (server-side pull, below) be the playback.
+      const len = Number(dl.headers.get("content-length") || 0);
+      const MAX_LFS_BYTES = 200 * 1024 * 1024;
+      if (len > MAX_LFS_BYTES) {
+        await dl.body?.cancel().catch(() => {});
+        console.warn(`[recall webhook] video ${len}B > LFS cap bot=${botId} — Mux only`);
+      } else {
+        const bytes = Buffer.from(await dl.arrayBuffer());
+        console.log(`[recall webhook] downloaded video bot=${botId} bytes=${bytes.length}`);
+        const { oid, size } = await uploadLfsBlob(pat, KB_REPO, bytes);
+        videoOid = oid;
+        videoSize = size;
+        filesToCommit.push({ path: `${dir}/video.mp4`, utf8: lfsPointerText(oid, size) });
+        reasons.push("video");
+      }
     }
     if (!existing.mux && process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET) {
       try {
