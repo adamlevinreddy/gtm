@@ -10,6 +10,8 @@ import {
   getStoredProposal,
   executeProposal,
   proposalKeyForBot,
+  PLAY_RUN_ACTION_ID,
+  getPlayCardStash,
 } from "@/lib/post-meeting";
 import {
   CRM_APPLY_ACTION_ID,
@@ -17,7 +19,8 @@ import {
   executeCrmProposal,
   crmProposalKey,
 } from "@/lib/post-meeting-crm";
-import { boardLink } from "@/lib/work-items";
+import { PLAYS, isPlayId, playRunPrompt } from "@/lib/plays";
+import { boardLink, selfBaseUrl } from "@/lib/work-items";
 import { kv } from "@/lib/kv-client";
 
 // Slack Interactivity Request URL. Slack POSTs button clicks here as
@@ -64,8 +67,14 @@ export async function POST(req: NextRequest) {
 
   const action = payload.actions?.[0];
   const actionId = action?.action_id;
-  // Only the post-meeting buttons are handled here; ack everything else.
-  if (payload.type !== "block_actions" || (actionId !== CONFIRM_ACTION_ID && actionId !== CRM_APPLY_ACTION_ID)) {
+  // Play buttons share a prefix (each is `pm_play_run:<playId>` so action_ids
+  // stay unique within the card). Handle those + the two confirm buttons; ack
+  // everything else.
+  const isPlay = !!actionId && actionId.startsWith(PLAY_RUN_ACTION_ID);
+  if (
+    payload.type !== "block_actions" ||
+    (actionId !== CONFIRM_ACTION_ID && actionId !== CRM_APPLY_ACTION_ID && !isPlay)
+  ) {
     return NextResponse.json({});
   }
 
@@ -90,6 +99,53 @@ export async function POST(req: NextRequest) {
 
   // Do the work after acking (DB writes + Slack posts exceed the 3s deadline).
   after(async () => {
+    // ---- Play button: kick off the chosen Play in THIS thread ----
+    // value = `${playId}|${botId}`. Fires the Slack-lane agent (which posts its
+    // own result to the thread); nothing was created just by clicking.
+    if (isPlay) {
+      try {
+        const [playId, playBotId] = (action?.value ?? "").split("|");
+        if (!isPlayId(playId) || !playBotId || !channel) {
+          if (channel) await postToChannel(channel, { text: "⚠️ Couldn't identify that play — re-run the meeting card.", threadTs }).catch(() => {});
+          return;
+        }
+        const secret = process.env.BOARD_API_SECRET;
+        if (!secret) {
+          await postToChannel(channel, { text: "⚠️ Plays are temporarily unavailable (service secret missing) — ping an admin.", threadTs }).catch(() => {});
+          return;
+        }
+        // Serialize plays per thread. The sandbox runs one turn at a time and
+        // keys the session by thread ts, so two near-simultaneous clicks (a
+        // double-tap, or two buttons at once) would race the turn counter and
+        // silently drop one play. A short lock turns the rapid second click into
+        // a "still working" reply instead; it self-heals in 150s so a play
+        // clicked deliberately minutes later runs normally. Fail OPEN on a KV
+        // blip (better a rare race than blocking every play).
+        const lockKey = `postmeeting:playlock:${threadTs ?? playBotId}`;
+        const gotLock = await kv.set(lockKey, playId, { nx: true, ex: 150 }).catch(() => "err");
+        if (gotLock === null) {
+          await postToChannel(channel, { text: "⏳ Still kicking off the last play in this thread — give me a moment, then tap again.", threadTs }).catch(() => {});
+          return;
+        }
+        const stash = await getPlayCardStash(playBotId);
+        const prompt = playRunPrompt(playId, { botId: playBotId, account: stash?.account ?? undefined });
+        // Server fetch sends no Origin header → passes assertInternalNoOrigin.
+        // The sandbox driver posts the play's output straight into this thread.
+        await fetch(`${selfBaseUrl()}/api/agent`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-board-secret": secret },
+          body: JSON.stringify({ userText: prompt, slackChannel: channel, slackThreadTs: threadTs, slackUser: slackUserId }),
+        }).catch(() => {});
+        await postToChannel(channel, {
+          text: `${PLAYS[playId].emoji} Kicking off *${PLAYS[playId].label}* — I'll post it in this thread. (<@${slackUserId}>)`,
+          threadTs,
+        }).catch(() => {});
+      } catch (err) {
+        if (channel) await postToChannel(channel, { text: `⚠️ Couldn't start that play: ${err instanceof Error ? err.message : String(err)}`, threadTs }).catch(() => {});
+      }
+      return;
+    }
+
     // ---- CRM apply (HubSpot stage/field updates; gated to the allowlist) ----
     if (actionId === CRM_APPLY_ACTION_ID) {
       try {

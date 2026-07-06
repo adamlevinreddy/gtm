@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { kv } from "@/lib/kv-client";
-import { postToChannel, slackIdForEmail, salesChannel } from "@/lib/slack";
+import { postToChannel, salesChannel } from "@/lib/slack";
 import {
   boardUrl,
   selfBaseUrl,
@@ -28,6 +28,7 @@ import {
 } from "@/lib/work-items";
 import { canonicalizeCompany, searchCompaniesByName, hubspotCompanyUrl } from "@/lib/hubspot";
 import { isConeOfSilence } from "@/lib/cone-of-silence";
+import { PLAYS, CARD_PLAY_IDS, isPlayId, type PlayId } from "@/lib/plays";
 
 type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
 
@@ -255,8 +256,167 @@ async function runOneshot(question: string, userEmail: string, reqId: string): P
   return null;
 }
 
+// ============================================================================
+// GENERATIVE POST-MEETING CARD (Arc VII). Instead of auto-extracting a task
+// list, a sandbox reads the meeting and CURATES which Plays fit — the card
+// offers those as buttons the human chooses to run. Internal / no-play meetings
+// stay quiet. Task extraction moves to the end-of-day digest (later phase);
+// the triage functions above are kept for that.
+// ============================================================================
+
+// One shared prefix; each play button gets a UNIQUE action_id (Slack requires
+// action_ids unique within a message) and carries `${playId}|${botId}` in value.
+export const PLAY_RUN_ACTION_ID = "pm_play_run";
+export const playCardKey = (botId: string) => `postmeeting:playcard:${botId}`;
+
+export type PlayCuration = {
+  meetingType: TriageResult["meetingType"];
+  meetingTitle: string | null;
+  account: string | null;
+  read: string;
+  plays: PlayId[];
+};
+
+export function buildPlayCurationPrompt(botId: string): string {
+  const catalog = CARD_PLAY_IDS.map((id) => `  - ${id}: ${PLAYS[id].label} — ${PLAYS[id].blurb}`).join("\n");
+  return [
+    `A meeting just ended. Read it and decide which Reddy GTM "Plays" the team should be offered as one-click buttons. You do NOT run anything or create tasks — you only CHOOSE which plays fit. Be selective: only plays that clearly match what happened.`,
+    ``,
+    `MEETING BOT ID: ${botId}`,
+    `READ THE MEETING (KB is cloned in your sandbox; '_unsorted' is a real slug, so glob):`,
+    "  - transcript: `corpora/success/customers/*/meetings/" + botId + "/transcript.txt`",
+    "  - metadata (title, attendees+emails): `corpora/success/customers/*/meetings/" + botId + "/meta.json`",
+    ``,
+    `CLASSIFY:`,
+    `  - meetingType: internal | prospect | signed_customer | pilot | partner. "internal" = every attendee is @reddy.io (team sync/standup/pipeline review). Internal meetings get NO plays.`,
+    `  - account: the customer/prospect company name (null for internal).`,
+    `  - read: ONE sentence — what happened + where it stands / our posture. No fluff.`,
+    ``,
+    `AVAILABLE PLAYS (choose ONLY from these ids):`,
+    catalog,
+    ``,
+    `CHOOSE the plays that fit, most-relevant first:`,
+    `  - External meeting with a real conversation → usually recap_email (first), then recording_link.`,
+    `  - Pricing / commercials / cost discussed → pricing.`,
+    `  - A contract / NDA / DPA / redline came up → redline.`,
+    `  - Complex account / they want the full picture → account_catchup.`,
+    `  - A formal RFP / RFI / requirements list → rfp.`,
+    `  - Internal, or a pure status call with no external next step → plays: [] (stay quiet).`,
+    `  - Do NOT suggest booking a meeting — if a next meeting was set live, that's already handled.`,
+    ``,
+    `Return ONLY a fenced json block, nothing else:`,
+    "```json",
+    `{ "meetingType": "prospect", "meetingTitle": "...", "account": "Acme or null", "read": "...", "plays": ["recap_email","recording_link"] }`,
+    "```",
+  ].join("\n");
+}
+
+const PLAY_MEETING_TYPES = ["internal", "prospect", "signed_customer", "pilot", "partner"] as const;
+
+function coercePlayCuration(o: Record<string, unknown>): PlayCuration {
+  const meetingType = (PLAY_MEETING_TYPES as readonly string[]).includes(o.meetingType as string)
+    ? (o.meetingType as PlayCuration["meetingType"])
+    : "prospect";
+  const account =
+    typeof o.account === "string" && o.account.trim() && o.account.toLowerCase() !== "null" ? o.account.trim() : null;
+  const plays = Array.isArray(o.plays)
+    ? [...new Set(o.plays.filter((p): p is PlayId => isPlayId(p) && CARD_PLAY_IDS.includes(p as PlayId)))].slice(0, 5)
+    : [];
+  return {
+    meetingType,
+    meetingTitle: typeof o.meetingTitle === "string" ? o.meetingTitle : null,
+    account,
+    read: typeof o.read === "string" ? o.read.slice(0, 400) : "",
+    plays,
+  };
+}
+
+export function parsePlayCuration(answer: string): PlayCuration | null {
+  if (!answer || typeof answer !== "string") return null;
+  // Same tolerance as parseTriage: try every fenced block AND every balanced
+  // {...} run (prose, a leading non-JSON fence, or embedded tool output around
+  // the real answer would all defeat a naive first-fence / greedy-brace match).
+  const candidates: string[] = [];
+  const fenced = answer.match(/```(?:json)?\s*([\s\S]*?)```/gi);
+  if (fenced) for (const b of fenced) candidates.push(b.replace(/```(?:json)?\s*/i, "").replace(/```$/, "").trim());
+  candidates.push(...extractBalancedObjects(answer));
+  let fallback: PlayCuration | null = null;
+  for (const c of candidates) {
+    let o: unknown;
+    try { o = JSON.parse(c); } catch { continue; }
+    if (!o || typeof o !== "object") continue;
+    const cur = coercePlayCuration(o as Record<string, unknown>);
+    // Prefer the candidate the model clearly meant — a recognized meetingType
+    // or a real play set; otherwise keep looking, falling back to the first
+    // object that parsed at all.
+    const recognized = (PLAY_MEETING_TYPES as readonly string[]).includes(String((o as Record<string, unknown>).meetingType));
+    if (recognized || cur.plays.length > 0) return cur;
+    if (!fallback) fallback = cur;
+  }
+  return fallback;
+}
+
+function buildPlayCard(
+  botId: string,
+  cur: PlayCuration,
+  recUrl: string,
+  account: AccountLink | null,
+): { text: string; blocks: object[] } {
+  const title = cur.meetingTitle ?? "the meeting";
+  const acctBits = account
+    ? account.hubspotUrl
+      ? ` · <${account.hubspotUrl}|HubSpot>`
+      : ""
+    : "";
+  const blocks: object[] = [
+    { type: "header", text: { type: "plain_text", text: "📋  Suggested plays", emoji: true } },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `From *${title}*${cur.account ? ` · ${cur.account}${acctBits}` : ""}\n▶ <${recUrl}|Watch recording & read transcript>`,
+        },
+      ],
+    },
+  ];
+  if (cur.read) blocks.push({ type: "section", text: { type: "mrkdwn", text: `_${cur.read}_` } });
+
+  const elements: object[] = cur.plays.map((id, i) => ({
+    type: "button",
+    action_id: `${PLAY_RUN_ACTION_ID}:${id}`,
+    ...(i === 0 ? { style: "primary" as const } : {}),
+    text: { type: "plain_text", text: `${PLAYS[id].emoji} ${PLAYS[id].label}`, emoji: true },
+    value: `${id}|${botId}`,
+  }));
+  // "Open a session" is a url button (the /m Theater Ask tab is scoped to this
+  // meeting) — no action_id, so Slack never POSTs it.
+  elements.push({
+    type: "button",
+    text: { type: "plain_text", text: "💬 Open a session", emoji: true },
+    url: recUrl,
+  });
+  blocks.push({ type: "actions", elements });
+
+  blocks.push({
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text: "Tap a play to kick it off in this thread — nothing runs until you do. Or open a session to dig in.",
+      },
+    ],
+  });
+  return { text: `Suggested plays from ${title}`, blocks };
+}
+
+/** The play-button handler reads this to build the run prompt with the account. */
+export async function getPlayCardStash(botId: string): Promise<{ botId: string; account: string | null } | null> {
+  return (await kv.get<{ botId: string; account: string | null }>(playCardKey(botId)).catch(() => null)) ?? null;
+}
+
 // ----------------------------------------------------------------------------
-// proposeFromMeeting — triage → SUGGEST in Slack (no creation). Never throws.
+// proposeFromMeeting — read the meeting → SUGGEST PLAYS in Slack. Never throws.
 // ----------------------------------------------------------------------------
 
 export async function proposeFromMeeting(botId: string, opts?: { force?: boolean }): Promise<ProposeResult> {
@@ -284,41 +444,38 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     }
 
     const runnerEmail = process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io";
-    const answer = await runOneshot(buildTriagePrompt(botId), runnerEmail, `postmeeting:${botId}`);
-    if (!answer) { await releaseClaim(); return { ok: false, proposed: 0, error: "triage agent unavailable or empty" }; }
+    const answer = await runOneshot(buildPlayCurationPrompt(botId), runnerEmail, `postmeeting:${botId}`);
+    if (!answer) { await releaseClaim(); return { ok: false, proposed: 0, error: "curation agent unavailable or empty" }; }
 
-    const parsed = parseTriage(answer);
-    if (!parsed) { await releaseClaim(); return { ok: false, proposed: 0, error: "could not parse triage JSON" }; }
+    const cur = parsePlayCuration(answer);
+    if (!cur) { await releaseClaim(); return { ok: false, proposed: 0, error: "could not parse curation JSON" }; }
 
-    const owners = Array.from(new Set(parsed.items.map((i) => i.ownerEmail).filter((e): e is string => !!e)));
-    const slackIds: Record<string, string | null> = {};
-    await Promise.all(owners.map(async (e) => { slackIds[e] = await slackIdForEmail(e); }));
+    // Internal meetings, and meetings where nothing fits, stay QUIET — no card.
+    // (Task extraction moved to the end-of-day digest; the per-meeting moment is
+    // now the generative play card, opt-in only.)
+    if (cur.meetingType === "internal" || cur.plays.length === 0) {
+      return { ok: true, meetingType: cur.meetingType, proposed: 0, skipped: cur.meetingType === "internal" ? "internal" : "no-plays" };
+    }
 
-    // Enrich the card with the same links the CRM card carries: a direct
-    // recording/transcript link + a per-company HubSpot account link (even with
-    // no deal) and board-filtered link. Best-effort — never blocks the post.
-    const accounts = await resolveAccountLinks(parsed.items.map((i) => i.company)).catch(() => [] as AccountLink[]);
+    // One HubSpot account link for the card header. Best-effort.
+    const accounts = await resolveAccountLinks([cur.account]).catch(() => [] as AccountLink[]);
     const recUrl = `${selfBaseUrl()}/m/${botId}`;
+
+    // Stash the account BEFORE posting the card so a button clicked the instant
+    // the card lands still resolves its account (the play-button handler reads
+    // this to scope each run prompt).
+    await kv.set(playCardKey(botId), { botId, account: cur.account }, { ex: PROPOSAL_TTL }).catch(() => {});
 
     let slackTs: string | undefined;
     const channel = salesChannel();
     if (channel) {
       try {
-        const res = await postToChannel(channel, buildSuggestionMessage(parsed, slackIds, botId, accounts, recUrl));
+        const res = await postToChannel(channel, buildPlayCard(botId, cur, recUrl, accounts[0] ?? null));
         slackTs = res.ts;
       } catch { /* ignore Slack failures */ }
     }
-    // Stash the proposal under TWO keys: by message ts (the text-reply
-    // "@Reddy-GTM confirm" path looks up via thread_ts) and by botId (the
-    // Confirm button carries botId as its value).
-    const stored = { botId, ...parsed };
-    if (slackTs) {
-      await kv.set(`postmeeting:proposal:${slackTs}`, stored, { ex: PROPOSAL_TTL }).catch(() => {});
-    }
-    await kv.set(proposalKeyForBot(botId), stored, { ex: PROPOSAL_TTL }).catch(() => {});
 
-    const boards = Array.from(new Set(parsed.items.map((i) => i.boardKey)));
-    return { ok: true, meetingType: parsed.meetingType, proposed: parsed.items.length, boards, ...(slackTs ? { slackTs } : {}) };
+    return { ok: true, meetingType: cur.meetingType, proposed: cur.plays.length, ...(slackTs ? { slackTs } : {}) };
   } catch (err) {
     await releaseClaim();
     return { ok: false, proposed: 0, error: err instanceof Error ? err.message : String(err) };
@@ -448,7 +605,12 @@ function rowFor(it: TriageItem, slackIds: Record<string, string | null>): string
   return `• 🆕 ${it.title} · _${it.kind}_ · ${owner}`;
 }
 
-function buildSuggestionMessage(
+// Exported for the planned end-of-day task digest, which reuses the triage
+// toolkit (buildTriagePrompt → parseTriage → this) to post one confirm-first
+// card for the day's meetings. The per-meeting card no longer posts tasks —
+// it curates Plays — but the confirm handler in slack/interactivity is still
+// wired for this path.
+export function buildSuggestionMessage(
   parsed: TriageResult,
   slackIds: Record<string, string | null>,
   botId: string,
