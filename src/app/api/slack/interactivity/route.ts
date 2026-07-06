@@ -11,6 +11,7 @@ import {
   executeProposal,
   proposalKeyForBot,
   PLAY_RUN_ACTION_ID,
+  PM_WATCH_ARM_ACTION,
   getPlayCardStash,
 } from "@/lib/post-meeting";
 import {
@@ -26,7 +27,7 @@ import {
   WATCH_SNOOZE_ACTION,
   WATCH_DISMISS_ACTION,
 } from "@/lib/watcher-run";
-import { getWatch, snoozeWatch, cancelWatch } from "@/lib/watchers";
+import { addWatch, getWatch, snoozeWatch, cancelWatch } from "@/lib/watchers";
 import { boardLink, selfBaseUrl } from "@/lib/work-items";
 import { kv } from "@/lib/kv-client";
 
@@ -81,7 +82,11 @@ export async function POST(req: NextRequest) {
   const isWatch = !!actionId && actionId.startsWith(WATCH_ACTION_PREFIX);
   if (
     payload.type !== "block_actions" ||
-    (actionId !== CONFIRM_ACTION_ID && actionId !== CRM_APPLY_ACTION_ID && !isPlay && !isWatch)
+    (actionId !== CONFIRM_ACTION_ID &&
+      actionId !== CRM_APPLY_ACTION_ID &&
+      actionId !== PM_WATCH_ARM_ACTION &&
+      !isPlay &&
+      !isWatch)
   ) {
     return NextResponse.json({});
   }
@@ -144,6 +149,44 @@ export async function POST(req: NextRequest) {
         }
       } catch (err) {
         if (channel) await postToChannel(channel, { text: `⚠️ Couldn't handle that: ${err instanceof Error ? err.message : String(err)}`, threadTs }).catch(() => {});
+      }
+      return;
+    }
+
+    // ---- Arm a conditional follow-up from the post-meeting card (P2) ----
+    // value = botId; the suggestion details live in the play-card stash.
+    if (actionId === PM_WATCH_ARM_ACTION) {
+      try {
+        const armBotId = action?.value ?? "";
+        const stash = await getPlayCardStash(armBotId);
+        if (!stash?.followup || !channel) {
+          if (channel) await postToChannel(channel, { text: "⚠️ That follow-up suggestion expired — re-run the meeting card.", threadTs }).catch(() => {});
+          return;
+        }
+        const email = (await emailForSlackId(slackUserId)) || process.env.POST_MEETING_AGENT_EMAIL || "adam@reddy.io";
+        const f = stash.followup;
+        const now = Date.now();
+        const checkAfter = now + f.inDays * 24 * 60 * 60 * 1000;
+        await addWatch({
+          owner: email,
+          account: stash.account,
+          domain: f.domain,
+          botId: armBotId,
+          slackChannel: channel,
+          slackThreadTs: threadTs ?? null,
+          play: "recap_email",
+          signal: f.signal,
+          checkAfter,
+          anchor: now,
+          note: f.label || `follow-up on ${stash.account ?? "this account"}`,
+        });
+        const when = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric" }).format(new Date(checkAfter));
+        await postToChannel(channel, {
+          text: `⏰ Armed — I'll check *${stash.account ?? "this account"}* around ${when} and, if it's warranted, draft a follow-up here and tag you. (<@${slackUserId}>)`,
+          threadTs,
+        }).catch(() => {});
+      } catch (err) {
+        if (channel) await postToChannel(channel, { text: `⚠️ Couldn't arm that watch: ${err instanceof Error ? err.message : String(err)}`, threadTs }).catch(() => {});
       }
       return;
     }

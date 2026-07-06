@@ -275,7 +275,17 @@ async function runOneshot(question: string, userEmail: string, reqId: string): P
 // One shared prefix; each play button gets a UNIQUE action_id (Slack requires
 // action_ids unique within a message) and carries `${playId}|${botId}` in value.
 export const PLAY_RUN_ACTION_ID = "pm_play_run";
+export const PM_WATCH_ARM_ACTION = "pm_watch_arm";
 export const playCardKey = (botId: string) => `postmeeting:playcard:${botId}`;
+
+// A conditional follow-up the curator heard in the meeting ("they'll huddle,
+// regroup Monday"), offered as a one-tap "arm" button on the card (Arc VIII P2).
+export type WatchSuggestion = {
+  signal: "no_reply" | "no_activity" | "time_only";
+  inDays: number; // whole days from now until the check
+  domain: string | null; // account email domain, for no_reply
+  label: string; // "if no reply from Nike by next Mon"
+};
 
 export type PlayCuration = {
   meetingType: TriageResult["meetingType"];
@@ -283,6 +293,7 @@ export type PlayCuration = {
   account: string | null;
   read: string;
   plays: PlayId[];
+  followup: WatchSuggestion | null;
 };
 
 export function buildPlayCurationPrompt(botId: string): string {
@@ -312,10 +323,19 @@ export function buildPlayCurationPrompt(botId: string): string {
     `  - Internal, or a pure status call with no external next step → plays: [] (stay quiet).`,
     `  - Do NOT suggest booking a meeting — if a next meeting was set live, that's already handled.`,
     ``,
+    `DETECT A CONDITIONAL FOLLOW-UP (optional — only if you clearly hear one):`,
+    `  Listen for "they'll go quiet then we reconnect" language — "they're going to huddle internally", "let's regroup Monday", "if I don't hear back by <when>", "circle back in two weeks", "reach out next month". If there's a clear one, propose a "followup" watch the team can arm with one tap:`,
+    `    - signal: "no_reply" (we're waiting on THEM to email back — the common case) | "no_activity" (waiting on any movement on the deal) | "time_only" (just a scheduled reminder, no condition).`,
+    `    - inDays: whole days from TODAY (Pacific) until the check — Monday ≈ days until next Mon, "two weeks" = 14, "next month" = 30. Your best estimate.`,
+    `    - domain: the customer's email domain from meta.json attendees (e.g. "nike.com"), for no_reply; null if unknown.`,
+    `    - label: a short human line, e.g. "if no reply from Nike by next Mon".`,
+    `  If there's no clear conditional, set "followup": null. NEVER invent one.`,
+    ``,
     `Return ONLY a fenced json block, nothing else:`,
     "```json",
-    `{ "meetingType": "prospect", "meetingTitle": "...", "account": "Acme or null", "read": "...", "plays": ["recap_email","recording_link"] }`,
+    `{ "meetingType": "prospect", "meetingTitle": "...", "account": "Acme or null", "read": "...", "plays": ["recap_email","recording_link"], "followup": { "signal": "no_reply", "inDays": 4, "domain": "acme.com", "label": "if no reply from Acme by Mon" } }`,
     "```",
+    `(set "followup": null when nothing conditional was said.)`,
   ].join("\n");
 }
 
@@ -336,6 +356,23 @@ function coercePlayCuration(o: Record<string, unknown>): PlayCuration {
     account,
     read: typeof o.read === "string" ? o.read.slice(0, 400) : "",
     plays,
+    followup: coerceFollowup(o.followup),
+  };
+}
+
+function coerceFollowup(f: unknown): WatchSuggestion | null {
+  if (!f || typeof f !== "object") return null;
+  const o = f as Record<string, unknown>;
+  const signal = (["no_reply", "no_activity", "time_only"] as string[]).includes(o.signal as string)
+    ? (o.signal as WatchSuggestion["signal"])
+    : null;
+  const inDays = typeof o.inDays === "number" && o.inDays > 0 ? Math.min(Math.round(o.inDays), 90) : null;
+  if (!signal || !inDays) return null;
+  return {
+    signal,
+    inDays,
+    domain: typeof o.domain === "string" && o.domain.trim() && o.domain.toLowerCase() !== "null" ? o.domain.trim().toLowerCase() : null,
+    label: typeof o.label === "string" ? o.label.slice(0, 160) : "",
   };
 }
 
@@ -406,6 +443,18 @@ function buildPlayCard(
   });
   blocks.push({ type: "actions", elements });
 
+  // Conditional follow-up the curator heard — offer to arm it (Arc VIII P2).
+  if (cur.followup) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `⏰ *Set a conditional follow-up?* _${cur.followup.label || `watch ${cur.account ?? "this account"}`}_ — I'll check, and draft one only if it's warranted.` },
+    });
+    blocks.push({
+      type: "actions",
+      elements: [{ type: "button", action_id: PM_WATCH_ARM_ACTION, text: { type: "plain_text", text: "⏰ Arm follow-up watch", emoji: true }, value: botId }],
+    });
+  }
+
   blocks.push({
     type: "context",
     elements: [
@@ -419,8 +468,9 @@ function buildPlayCard(
 }
 
 /** The play-button handler reads this to build the run prompt with the account. */
-export async function getPlayCardStash(botId: string): Promise<{ botId: string; account: string | null } | null> {
-  return (await kv.get<{ botId: string; account: string | null }>(playCardKey(botId)).catch(() => null)) ?? null;
+export type PlayCardStash = { botId: string; account: string | null; followup?: WatchSuggestion | null };
+export async function getPlayCardStash(botId: string): Promise<PlayCardStash | null> {
+  return (await kv.get<PlayCardStash>(playCardKey(botId)).catch(() => null)) ?? null;
 }
 
 // ----------------------------------------------------------------------------
@@ -464,10 +514,10 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     const cur = parsePlayCuration(answer);
     if (!cur) { await releaseClaim(); return { ok: false, proposed: 0, error: "could not parse curation JSON" }; }
 
-    // Internal meetings, and meetings where nothing fits, stay QUIET — no card.
-    // (Task extraction moved to the end-of-day digest; the per-meeting moment is
-    // now the generative play card, opt-in only.)
-    if (cur.meetingType === "internal" || cur.plays.length === 0) {
+    // Internal meetings, and meetings where nothing fits (no plays AND no
+    // conditional follow-up), stay QUIET — no card. (Task extraction moved to
+    // the end-of-day digest; the per-meeting moment is the play card, opt-in.)
+    if (cur.meetingType === "internal" || (cur.plays.length === 0 && !cur.followup)) {
       return { ok: true, meetingType: cur.meetingType, proposed: 0, skipped: cur.meetingType === "internal" ? "internal" : "no-plays" };
     }
 
@@ -478,7 +528,7 @@ export async function proposeFromMeeting(botId: string, opts?: { force?: boolean
     // Stash the account BEFORE posting the card so a button clicked the instant
     // the card lands still resolves its account (the play-button handler reads
     // this to scope each run prompt).
-    await kv.set(playCardKey(botId), { botId, account: cur.account }, { ex: PROPOSAL_TTL }).catch(() => {});
+    await kv.set(playCardKey(botId), { botId, account: cur.account, followup: cur.followup }, { ex: PROPOSAL_TTL }).catch(() => {});
 
     let slackTs: string | undefined;
     const channel = salesChannel();

@@ -135,18 +135,22 @@ export async function runWatch(input: Watch): Promise<RunWatchResult> {
       return { ok: false, retried: true, error: "no parseable verdict" };
     }
 
-    // Where to notify: the meeting card's thread for a watch armed from a
-    // meeting; otherwise DM the owner (chat-armed watches carry no Slack context
-    // — don't broadcast someone's private draft/close notes to #sales).
+    // Team sport: fires ALWAYS land in #sales with the owner @-mentioned, so a
+    // teammate can chime in ("Nike did reach out to me — you just weren't
+    // copied"). Thread it only when the watch was armed in #sales (a meeting
+    // card's thread there); otherwise post top-level. (The condition check ran
+    // as the owner against THEIR inbox — no one reads anyone else's mail; the
+    // team only ever sees the resulting draft, which is fine.)
     const ownerSlackId = await slackIdForEmail(w.owner).catch(() => null);
-    const channel = w.slackChannel || ownerSlackId || salesChannel();
-    const threadTs = w.slackThreadTs || undefined;
+    const owner = ownerSlackId ? `<@${ownerSlackId}>` : `@${w.owner.split("@")[0]}`;
+    const channel = salesChannel();
+    const threadTs = channel && w.slackChannel === channel ? w.slackThreadTs || undefined : undefined;
 
     if (!verdict.tripped) {
       await markSatisfied(w.id);
       if (channel) {
         await postToChannel(channel, {
-          text: `🔕 Closed the follow-up watch on *${w.account || "the account"}* — ${verdict.reason || "condition no longer applies"}.`,
+          text: `🔕 ${owner} — closed the follow-up watch on *${w.account || "the account"}*: ${verdict.reason || "condition no longer applies"}.`,
           threadTs,
         }).catch(() => {});
       }
