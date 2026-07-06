@@ -57,7 +57,11 @@ export async function GET(req: NextRequest) {
   const maxThreads = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit") ?? "120") || 120, 1), 400);
   const cursorKey = cursorKeyFor(channel);
 
-  const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
+  // rejectRateLimitedCalls: a 429 throws immediately instead of the SDK
+  // sleeping through Retry-After (which stacks up and hangs the whole function).
+  // The loop's catch then saves the cursor + returns what it imported — the
+  // next run continues after a gap. retries:0 for the same reason.
+  const slack = new WebClient(process.env.SLACK_BOT_TOKEN, { rejectRateLimitedCalls: true, retryConfig: { retries: 0 } });
   let botId: string;
   try {
     const auth = await slack.auth.test();
