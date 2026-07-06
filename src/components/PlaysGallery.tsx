@@ -4,12 +4,12 @@ import { PLAYS, ALL_PLAY_IDS, playRunPrompt } from "@/lib/plays";
 import { askReddy } from "@/components/ChatDock";
 import { PLUM, PLUM_TINT, BORDER, INK_2 } from "@/lib/tokens";
 
-// The Plays gallery (Arc VII). The same PLAYS registry that powers the
-// post-meeting Slack card, browsable on the web: click a play to run it in the
-// Ask Reddy dock. The session it opens is tagged "Play: <label>" so it shows up
-// filtered under Plays in /s. Meeting-scoped plays (recap, recording link)
-// launched cold will ask which meeting; the rest ask for the specifics they
-// need.
+// The Plays catalog (read-only). Browse what each play IS and what it actually
+// does (its instructions) — not a launch pad. "Use in a new chat" opens a
+// session with this play surfaced in the launcher, where the scope (which
+// meetings/account are pulled in) is visible before you run it. Running a play
+// with meeting context happens from a scoped session (e.g. "Ask about these
+// meetings" from the meetings view), not from a blind click here.
 
 export default function PlaysGallery() {
   return (
@@ -17,18 +17,9 @@ export default function PlaysGallery() {
       {ALL_PLAY_IDS.map((id) => {
         const play = PLAYS[id];
         return (
-          <button
+          <div
             key={id}
-            type="button"
-            onClick={() =>
-              askReddy({
-                question: playRunPrompt(id, {}),
-                title: `${play.emoji} ${play.label}`,
-                scopeLabel: `Play · ${play.label}`,
-                sessionScope: { label: `Play: ${play.label}`, source: "play" },
-              })
-            }
-            className="flex flex-col gap-2 rounded-xl border bg-white p-4 text-left transition-colors hover:bg-zinc-50 focus:outline-none focus:ring-2"
+            className="flex flex-col gap-2 rounded-xl border bg-white p-4"
             style={{ borderColor: BORDER }}
           >
             <div className="flex items-center gap-2">
@@ -40,13 +31,26 @@ export default function PlaysGallery() {
             <p className="text-xs leading-relaxed" style={{ color: INK_2 }}>
               {play.blurb}
             </p>
-            <span
-              className="mt-1 inline-flex w-fit items-center rounded px-1.5 py-0.5 text-[11px] font-medium"
-              style={{ background: PLUM_TINT, color: PLUM }}
+            <details className="text-xs">
+              <summary className="cursor-pointer font-medium" style={{ color: PLUM }}>
+                What it does
+              </summary>
+              <p
+                className="mt-1.5 whitespace-pre-wrap rounded-md border bg-zinc-50 p-2 text-[11px] leading-relaxed text-zinc-600"
+                style={{ borderColor: BORDER }}
+              >
+                {playRunPrompt(id, {})}
+              </p>
+            </details>
+            <button
+              type="button"
+              onClick={() => askReddy({ playId: id, title: `${play.emoji} ${play.label}` })}
+              className="mt-auto inline-flex w-fit items-center rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-90"
+              style={{ borderColor: PLUM_TINT, background: PLUM_TINT, color: PLUM }}
             >
-              Run play →
-            </span>
-          </button>
+              Use in a new chat →
+            </button>
+          </div>
         );
       })}
     </div>

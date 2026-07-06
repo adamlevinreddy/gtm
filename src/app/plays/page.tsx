@@ -22,7 +22,7 @@ export default async function PlaysPage() {
       active="plays"
       viewer={viewer}
       title="Plays"
-      subtitle="Templated workflows the team runs again and again — recaps, pricing, RFPs, redlines, catch-ups. Click one to kick it off."
+      subtitle="Templated workflows the team runs again and again — recaps, pricing, RFPs, redlines, catch-ups. Browse what each does; run one from a chat (its scope shows before it goes)."
       maxWidth="max-w-5xl"
     >
       <WatchesPanel />

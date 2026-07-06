@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check, Square, FileText, Download, Lock, Paperclip, X } from "lucide-react";
-import { PLUM, BORDER, BORDER_SOFT } from "@/lib/tokens";
+import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT } from "@/lib/tokens";
+import { PLAYS, CARD_PLAY_IDS, playRunPrompt, isPlayId, type PlayId } from "@/lib/plays";
 
 type Attachment = { name: string; kbPath: string };
 // A file the user attached to the composer (already uploaded; url points at
@@ -26,6 +27,7 @@ export default function MeetingChatStream({
   scopeLabel,
   sessionScope,
   starters,
+  suggestPlay,
   placeholder = "Ask a question…",
   unscoped = false,
   initialQuestion,
@@ -42,6 +44,9 @@ export default function MeetingChatStream({
    *  e.g. tagging a session started from a Play. */
   sessionScope?: { label?: string; source?: string };
   starters?: string[];
+  /** A play to surface FIRST in the launcher's play buttons (e.g. opened from
+   *  the Plays catalog). */
+  suggestPlay?: string;
   placeholder?: string;
   /** true → no meeting scope: the agent answers from everything it has. */
   unscoped?: boolean;
@@ -69,6 +74,11 @@ export default function MeetingChatStream({
   const scoped = !unscoped;
   const ids = botIds ?? [];
   const disabled = scoped && ids.length === 0;
+
+  // Launcher play buttons — a suggested play (opened from the Plays catalog)
+  // sorts first + is highlighted.
+  const suggested = suggestPlay && isPlayId(suggestPlay) && (CARD_PLAY_IDS as readonly string[]).includes(suggestPlay) ? (suggestPlay as PlayId) : null;
+  const playOrder: PlayId[] = suggested ? [suggested, ...CARD_PLAY_IDS.filter((id) => id !== suggested)] : [...CARD_PLAY_IDS];
 
   // Session persistence (Daybreak P8): created lazily on the first ask,
   // every completed turn appended. ALL writes are truly fire-and-forget —
@@ -432,6 +442,25 @@ export default function MeetingChatStream({
                     {s}
                   </button>
                 ))}
+              </div>
+            )}
+            {!disabled && (
+              <div className="pt-2">
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">Or run a play</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {playOrder.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      title={PLAYS[id].blurb}
+                      onClick={() => ask(playRunPrompt(id, { botId: ids.length === 1 ? ids[0] : undefined }))}
+                      className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition-colors hover:opacity-90"
+                      style={id === suggested ? { borderColor: PLUM, background: PLUM_TINT, color: PLUM } : { borderColor: BORDER, color: "#3f3f46" }}
+                    >
+                      {PLAYS[id].emoji} {PLAYS[id].label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>

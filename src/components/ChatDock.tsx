@@ -22,6 +22,9 @@ export type AskPayload = {
   // Persisted onto the created session's scope (label + source) even when
   // unscoped — e.g. tagging a session started from a Play.
   sessionScope?: { label?: string; source?: string };
+  // Surface this play first in the launcher's play buttons (opened from the
+  // Plays catalog) — the chat starts scoped-visible, you press to run.
+  playId?: string;
 };
 
 const ASK_EVENT = "reddy:ask";
@@ -188,6 +191,7 @@ export default function ChatDock() {
                     scopeLabel={c.scopeLabel ?? (scoped ? undefined : "meetings · HubSpot · documents · board")}
                     sessionScope={c.sessionScope}
                     starters={startersFor(c)}
+                    suggestPlay={c.playId}
                     placeholder="Ask anything…"
                     initialQuestion={c.question}
                     onStreamingChange={(s) => setStreaming(c.id, s)}
