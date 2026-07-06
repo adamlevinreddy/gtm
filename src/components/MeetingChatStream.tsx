@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Square, FileText, Download, Lock } from "lucide-react";
+import { Copy, Check, Square, FileText, Download, Lock, Paperclip, X } from "lucide-react";
 import { PLUM, BORDER, BORDER_SOFT } from "@/lib/tokens";
 
 type Attachment = { name: string; kbPath: string };
+// A file the user attached to the composer (already uploaded; url points at
+// /api/board/ui/upload, which the sandbox driver fetches).
+type PendingFile = { id: string; name: string; mimetype: string; size: number; url: string };
 type Msg = { role: "user" | "assistant"; content: string; stopped?: boolean; attachments?: Attachment[] };
 
 // The team chat surface (Daybreak Phase 1) — one component behind the home
@@ -52,6 +55,9 @@ export default function MeetingChatStream({
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const latePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -205,21 +211,65 @@ export default function MeetingChatStream({
     }, 6000);
   };
 
+  const uploadFiles = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setUploading(true);
+    setStatus("Uploading…");
+    try {
+      for (const file of Array.from(list).slice(0, 10)) {
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          const res = await fetch("/api/board/ui/upload", { method: "POST", body: fd });
+          const j = (await res.json().catch(() => null)) as
+            | { ok?: boolean; id?: string; name?: string; mimetype?: string; size?: number; url?: string; error?: string }
+            | null;
+          if (!res.ok || !j?.ok || !j.url || !j.id) {
+            setStatus(`Couldn't attach ${file.name}: ${j?.error || `HTTP ${res.status}`}`);
+            continue;
+          }
+          const added: PendingFile = {
+            id: j.id,
+            name: j.name || file.name,
+            mimetype: j.mimetype || file.type || "application/octet-stream",
+            size: j.size ?? file.size,
+            url: j.url,
+          };
+          setPendingFiles((prev) => [...prev.filter((f) => f.id !== added.id), added].slice(0, 10));
+          setStatus(null);
+        } catch (err) {
+          setStatus(`Couldn't attach ${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+  const removeFile = (id: string) => setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+
   async function ask(question: string) {
     const q = question.trim();
-    if (!q || streaming || disabled) return;
+    const filesToSend = pendingFiles;
+    if ((!q && filesToSend.length === 0) || streaming || disabled) return;
+    // Show + persist the attachment names on the user turn; the sandbox reads
+    // the actual files (the driver fetches each upload url into inbox/files/).
+    const qDisplay = filesToSend.length
+      ? `${q}${q ? "\n\n" : ""}_📎 ${filesToSend.map((f) => f.name).join(", ")}_`
+      : q;
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
     const requestId = crypto.randomUUID();
-    setMessages((m) => [...m, { role: "user", content: q }, { role: "assistant", content: "" }]);
+    setMessages((m) => [...m, { role: "user", content: qDisplay }, { role: "assistant", content: "" }]);
     setInput("");
+    setPendingFiles([]);
     setStreaming(true);
     setStatus("Sending…");
     scrollDown();
     // Controller FIRST (before any await) so Stop/unmount can always abort;
     // session creation runs in parallel and persistTurn awaits it internally.
     abortRef.current = new AbortController();
-    ensureSession(q);
-    persistTurn("user", q);
+    ensureSession(q || filesToSend[0]?.name || "Attachment");
+    persistTurn("user", qDisplay);
     let answerBuf = "";
     answerBufRef.current = "";
     // Set once the server accepts the run — gates whether an error is
@@ -233,7 +283,8 @@ export default function MeetingChatStream({
         body: JSON.stringify({
           ...(scoped ? { botIds: ids, scopeNote } : {}),
           requestId,
-          messages: [...history, { role: "user", content: q }],
+          ...(filesToSend.length ? { files: filesToSend } : {}),
+          messages: [...history, { role: "user", content: qDisplay }],
         }),
       });
       if (!res.ok || !res.body) {
@@ -439,43 +490,85 @@ export default function MeetingChatStream({
           e.preventDefault();
           void ask(input);
         }}
-        className="flex items-end gap-2 border-t px-3 py-3"
+        className="flex flex-col gap-2 border-t px-3 py-3"
         style={{ borderColor: BORDER_SOFT }}
       >
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void ask(input);
-            }
-          }}
-          rows={1}
-          placeholder={placeholder}
-          className="min-h-[40px] max-h-32 flex-1 resize-none rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
-          style={{ borderColor: BORDER }}
-        />
-        {streaming ? (
+        {pendingFiles.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {pendingFiles.map((f) => (
+              <span
+                key={f.id}
+                className="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] text-zinc-600"
+                style={{ borderColor: BORDER }}
+              >
+                <FileText size={11} className="shrink-0" />
+                <span className="truncate">{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(f.id)}
+                  className="ml-0.5 shrink-0 text-zinc-400 hover:text-zinc-700"
+                  aria-label={`Remove ${f.name}`}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2">
           <button
             type="button"
-            onClick={stop}
-            className="inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || streaming || disabled}
+            title="Attach a file"
+            aria-label="Attach a file"
+            className="inline-flex h-10 items-center rounded-lg border px-2.5 text-zinc-500 hover:bg-zinc-50 disabled:opacity-40"
             style={{ borderColor: BORDER }}
-            title="Stop this run"
           >
-            <Square size={12} fill="currentColor" /> Stop
+            <Paperclip size={15} />
           </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!input.trim() || disabled}
-            className="rounded-lg px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-40"
-            style={{ background: PLUM }}
-          >
-            Send
-          </button>
-        )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => void uploadFiles(e.target.files)}
+          />
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void ask(input);
+              }
+            }}
+            rows={1}
+            placeholder={placeholder}
+            className="min-h-[40px] max-h-32 flex-1 resize-none rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
+            style={{ borderColor: BORDER }}
+          />
+          {streaming ? (
+            <button
+              type="button"
+              onClick={stop}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+              style={{ borderColor: BORDER }}
+              title="Stop this run"
+            >
+              <Square size={12} fill="currentColor" /> Stop
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={(!input.trim() && pendingFiles.length === 0) || disabled || uploading}
+              className="rounded-lg px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              style={{ background: PLUM }}
+            >
+              Send
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );

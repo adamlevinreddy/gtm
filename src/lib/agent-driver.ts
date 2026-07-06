@@ -540,9 +540,10 @@ async function main() {
     ? \` [MODE: MCP one-shot — Claude Desktop/Code via the reddy-gtm MCP server, NOT Slack. Same answer-discipline as Slack (brief, cite precedent, link out instead of inlining raw artifacts). \${attachHint} Skip 🔒/save prompts. End the turn with one \\\`post_slack_message\\\`. CRITICAL FOR MEETING/TRANSCRIPT/RECORDING QUERIES: a kb meeting index is pre-injected at the top of this user message — it has bot_id, customer_slug, attendees, transcript/video flags, AND pre-minted \\\`video_url\\\` for every meeting that has a video. If the user asks for a video link, JUST RETURN THE \\\`video_url\\\` from the index — no need to curl \\\`/api/recall/video-link\\\`. If you do need to glob the kb for transcript content, use \\\`ls corpora/success/customers/*/meetings/*/transcript.txt\\\` (note the wildcard — \\\`_unsorted/\\\` is a real slug). Do NOT call Granola tools (\\\`mcp__composio__GRANOLA_*\\\`, \\\`list_meetings\\\`, etc.) for transcript queries unless the kb glob returns zero AND the index shows nothing.]\`
     : "";
 
-  // Download any Slack-attached files into the sandbox so the agent can
-  // Read / Bash on them. Slack url_private_download requires the bot token
-  // in the Authorization header. Files land at inbox/files/{name}.
+  // Download any user-attached files into the sandbox so the agent can
+  // Read / Bash on them. Slack url_private_download needs the bot token;
+  // web-lane uploads come from our own /api/board/ui/upload endpoint and need
+  // x-board-secret. Files land at inbox/files/{name}.
   const downloadedFiles = [];
   if (Array.isArray(META.slackFiles) && META.slackFiles.length > 0) {
     mkdirSync("inbox/files", { recursive: true });
@@ -551,7 +552,11 @@ async function main() {
       const dst = \`inbox/files/\${safeName}\`;
       const absDst = "/vercel/sandbox/" + dst;
       try {
-        const res = await fetch(f.url, { headers: { Authorization: "Bearer " + SLACK_TOKEN } });
+        const isSlackUrl = /slack\\.com/.test(String(f.url || ""));
+        const dlHeaders = isSlackUrl
+          ? { Authorization: "Bearer " + SLACK_TOKEN }
+          : (process.env.BOARD_API_SECRET ? { "x-board-secret": process.env.BOARD_API_SECRET } : {});
+        const res = await fetch(f.url, { headers: dlHeaders });
         if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
         const buf = Buffer.from(await res.arrayBuffer());
         await writeFile(dst, buf);
@@ -564,7 +569,7 @@ async function main() {
     }
   }
   const filesBlock = downloadedFiles.length > 0
-    ? " [Attached files (downloaded from Slack into the sandbox):\\n" + downloadedFiles.map((f) => \`  • \${f.path || "(download failed)"} — \${f.name} (\${f.mimetype}, \${Math.round((f.size || 0)/1024)}KB)\`).join("\\n") + "\\nThe user shared these files with their message — read them to answer. Use \\\`Read\\\` for text/markdown, \\\`Bash\\\` (e.g., pdftotext, csvkit, openpyxl via python) for PDFs/spreadsheets, \\\`Read\\\` directly for images.]"
+    ? " [Attached files (saved into the sandbox):\\n" + downloadedFiles.map((f) => \`  • \${f.path || "(download failed)"} — \${f.name} (\${f.mimetype}, \${Math.round((f.size || 0)/1024)}KB)\`).join("\\n") + "\\nThe user shared these files with their message — read them to answer. Use \\\`Read\\\` for text/markdown, \\\`Bash\\\` (e.g., pdftotext, csvkit, openpyxl via python) for PDFs/spreadsheets, \\\`Read\\\` directly for images.]"
     : "";
 
   const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}]\${mcpModeBlock}\${filesBlock} \${turn.userText}\`;

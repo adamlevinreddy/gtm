@@ -55,6 +55,9 @@ type OneshotRequest = {
   // Stable conversation key for session grouping (e.g. `mail:{gmailThreadId}`).
   // Defaults to a per-request key, i.e. each oneshot is its own session.
   threadKey?: string;
+  // Web-lane uploads (Slack parity): descriptors the driver fetches into the
+  // sandbox. Same shape as the Slack lane's slackFiles.
+  files?: Array<{ id?: string; name?: string; mimetype?: string; size?: number; url?: string }>;
 };
 
 type McpResult = {
@@ -167,7 +170,18 @@ export async function POST(req: NextRequest) {
       granolaMcp,
       isSharedChannel: false,
       mcpRequestId: requestId,
-      slackFiles: [],
+      // Web-lane uploads, normalized to the driver's file shape (drop any
+      // without a fetchable url, exactly like the Slack lane).
+      slackFiles: (body.files ?? [])
+        .filter((f) => !!f?.url)
+        .slice(0, 10)
+        .map((f) => ({
+          id: f.id ?? "",
+          name: f.name ?? "upload",
+          mimetype: f.mimetype ?? "application/octet-stream",
+          size: f.size ?? 0,
+          url: f.url ?? "",
+        })),
     };
 
     const turnPayload = {

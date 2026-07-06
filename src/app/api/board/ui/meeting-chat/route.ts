@@ -89,10 +89,13 @@ type OneshotResult = {
   attachmentsTotal: number;
 };
 
+type UploadRef = { id?: string; name?: string; mimetype?: string; size?: number; url?: string };
+
 async function runOneshot(
   question: string,
   userEmail: string,
   requestId?: string,
+  files?: UploadRef[],
 ): Promise<OneshotResult | null> {
   const secret = process.env.MCP_INTERNAL_SECRET;
   if (!secret) return null;
@@ -104,10 +107,11 @@ async function runOneshot(
       // stream dies — the answer lands late instead of never (Daybreak P1).
       // lane "web" arms the driver's artifact path: files the agent builds
       // persist to corpora/deliverables/ and surface as download cards.
+      // files: web-lane uploads (Slack parity) the driver fetches into the box.
       // Stay just under this route's 300s maxDuration so heavier builds (e.g. a
       // PDF + Drive upload) surface in-stream when they finish instead of
       // falling to the slower late-poll recovery path.
-      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 285_000, requestId, lane: "web" }),
+      body: JSON.stringify({ question, userEmail, pollTimeoutMs: 285_000, requestId, lane: "web", files }),
     });
     const json = (await res.json().catch(() => null)) as {
       ok?: boolean;
@@ -132,7 +136,7 @@ async function runOneshot(
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type Body = { botIds?: unknown; messages?: unknown; scopeNote?: unknown; requestId?: unknown; as?: string };
+type Body = { botIds?: unknown; messages?: unknown; scopeNote?: unknown; requestId?: unknown; files?: unknown; as?: string };
 
 export async function POST(req: NextRequest) {
   let body: Body;
@@ -165,6 +169,22 @@ export async function POST(req: NextRequest) {
 
   const requestId =
     typeof body.requestId === "string" && UUID_RE.test(body.requestId) ? body.requestId : undefined;
+  // Uploaded-file descriptors (from /api/board/ui/upload). Keep only ones with
+  // a same-origin upload url so we don't forward arbitrary fetch targets to the
+  // sandbox; cap at 10.
+  const uploadBase = `${selfBaseUrl()}/api/board/ui/upload?id=`;
+  const files: UploadRef[] = Array.isArray(body.files)
+    ? (body.files as UploadRef[])
+        .filter((f) => !!f && typeof f.url === "string" && f.url.startsWith(uploadBase))
+        .slice(0, 10)
+        .map((f) => ({
+          id: typeof f.id === "string" ? f.id : "",
+          name: typeof f.name === "string" ? f.name.slice(0, 200) : "upload",
+          mimetype: typeof f.mimetype === "string" ? f.mimetype : "application/octet-stream",
+          size: typeof f.size === "number" ? f.size : 0,
+          url: f.url,
+        }))
+    : [];
   const viewer = resolveApiViewer(req, body.as);
   if (!viewer) return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
   const encoder = new TextEncoder();
@@ -207,6 +227,7 @@ export async function POST(req: NextRequest) {
         buildPrompt({ botIds, truncatedFrom, scopeNote, messages, viewer }),
         viewer,
         requestId,
+        files,
       );
       clearInterval(ticker);
       const answer = result?.answer ?? null;
