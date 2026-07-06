@@ -146,6 +146,27 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+// Internal re-ingest: re-run reconcile for a bot whose recording.done was
+// missed (e.g. a webhook lost during a deploy) so its transcript/video get
+// committed once Recall has them. Idempotent + self-healing — safe to re-run;
+// a no-op if Recall's transcript isn't ready yet. x-reddy-internal only.
+export async function GET(req: NextRequest) {
+  const secret = process.env.MCP_INTERNAL_SECRET;
+  if (!secret || req.headers.get("x-reddy-internal") !== secret) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  const botId = req.nextUrl.searchParams.get("botId") ?? "";
+  if (!botId) return NextResponse.json({ ok: false, error: "missing botId" }, { status: 400 });
+  const pat = process.env.PRICING_LIBRARY_GITHUB_PAT;
+  if (!pat) return NextResponse.json({ ok: false, error: "PRICING_LIBRARY_GITHUB_PAT not set" }, { status: 500 });
+  try {
+    await reconcile(botId, pat, "manual-reingest");
+    return NextResponse.json({ ok: true, botId, note: "reconciled — re-check has_transcript" });
+  } catch (err) {
+    return NextResponse.json({ ok: false, botId, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
+}
+
 // ────────── Calendar V2 handler ──────────
 
 async function handleCalendarEvent(

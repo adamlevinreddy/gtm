@@ -50,7 +50,13 @@ export const PLAYS: Record<PlayId, Play> = {
     blurb: "A ready-to-send recap: thanks, what we discussed, next steps, 30-day recording link.",
     onCard: true,
     run: (ctx) =>
-      `Draft the post-meeting recap email for ${forMeeting(ctx)} (customer: ${acct(ctx)}). Reddy house style: a warm one-line thanks, a short "here's what we discussed," clear next steps, and a link to the recording. Mint the recording link with a 30-day TTL (ttl=2592000) so external clients can view it for a month. If a next meeting was already scheduled live on the call, reference THAT as the next step — do not invent a "schedule a meeting" task. Match the tone of our recent recap emails (search sent mail for examples, and attach the deck / trust-center link only if it fits what we discussed). Output the ready-to-send email body; do NOT send it — I'll review and send.`,
+      `Draft a SHORT follow-up email for ${forMeeting(ctx)} (customer: ${acct(ctx)}), in Adam's voice — first person, warm but direct, the way a busy founder actually writes. Keep it to ~3–5 sentences: a one-line open, a line or two on what we discussed / the agreed next step, the recording, and a brief sign-off. NO long recap, NO bullet-point essay, NO corporate filler — err short.
+` +
+      `VOICE: mirror how Adam really writes — pull a couple of his recent sent follow-up/recap emails from Gmail (in:sent) and match his greeting, brevity, phrasing, and sign-off. If you can't read his mail, still keep it short and plain-spoken.
+` +
+      `RECORDING: mint the link (30-day TTL, ttl=2592000) and ALWAYS present it as a hyperlink on the text "Meeting recording" — NEVER paste the raw URL. In an email use an HTML body with <a href="URL">Meeting recording</a>; in Slack use <URL|Meeting recording>.
+` +
+      `If a next meeting was already booked live on the call, reference THAT — don't add a "let's find time" line. Link the deck / trust-center page only if it clearly fits. Output the ready-to-send draft; do NOT send — I'll review.`,
   },
   recording_link: {
     id: "recording_link",
@@ -59,7 +65,7 @@ export const PLAYS: Record<PlayId, Play> = {
     blurb: "A shareable recording + transcript link, valid 30 days, safe to forward to clients.",
     onCard: true,
     run: (ctx) =>
-      `Get the shareable recording + transcript link for ${forMeeting(ctx)} with a 30-day TTL (ttl=2592000) and post it as a clickable Slack link I can forward to external clients.`,
+      `Get the shareable recording + transcript link for ${forMeeting(ctx)} (30-day TTL, ttl=2592000) and post it as a hyperlink on the text "Meeting recording" (Slack: <URL|Meeting recording>) — not a raw URL — so it's clean to forward to external clients.`,
   },
   pricing: {
     id: "pricing",
