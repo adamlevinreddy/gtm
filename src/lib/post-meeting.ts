@@ -31,7 +31,7 @@ import { isConeOfSilence } from "@/lib/cone-of-silence";
 import { isCardMutedForBot } from "@/lib/card-mute";
 import { PLAYS, CARD_PLAY_IDS, isPlayId, type PlayId } from "@/lib/plays";
 
-type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
+export type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string };
 
 /**
  * Resolve the distinct companies named on the triaged items to {HubSpot account
@@ -39,8 +39,9 @@ type AccountLink = { name: string; hubspotUrl: string | null; boardUrl: string }
  * NO deal yet, so we link the COMPANY record: exact-name match first, then a
  * fuzzy CONTAINS fallback. Best-effort + bounded (≤6 companies) — a miss just
  * drops the HubSpot link for that company, never blocks the Slack post.
+ * Exported for the end-of-day digest, which reuses the same account links.
  */
-async function resolveAccountLinks(companies: Array<string | null>): Promise<AccountLink[]> {
+export async function resolveAccountLinks(companies: Array<string | null>): Promise<AccountLink[]> {
   const distinct = Array.from(new Set(companies.map((c) => (c ?? "").trim()).filter(Boolean)));
   return Promise.all(
     distinct.slice(0, 6).map(async (name): Promise<AccountLink> => {
@@ -77,6 +78,12 @@ export type TriageItem = {
   targetId: string | null;
   targetTitle: string | null;
   note: string | null;
+  // Per-item idempotency ref. Per-meeting triage leaves this unset (all items
+  // share the meeting's botId — a repeat title IS a dup). The end-of-day digest
+  // aggregates many meetings under one proposal, so it sets a per-company ref
+  // here to keep the (sourceRef, kind, title) unique index from collapsing the
+  // same short title across different companies.
+  sourceRef?: string;
 };
 
 export type TriageResult = {
@@ -529,6 +536,8 @@ export async function executeProposal(
       // Tag the card with the company it's about (a meeting spans companies),
       // so it shows under the board's Company filter + the company board link.
       const customerSlug = companySlug(it.company);
+      // Per-item ref when set (digest), else the proposal's botId (per-meeting).
+      const sourceRef = it.sourceRef ?? botId;
 
       // update → append to the existing card's activity ledger (no new card).
       if (it.disposition === "update" && it.targetId) {
@@ -539,7 +548,7 @@ export async function executeProposal(
             actorKind: "human",
             actorEmail,
             body: it.note ?? it.title,
-            dedupeKey: `pm:${botId}:upd:${it.targetId}:${it.title}`.slice(0, 180),
+            dedupeKey: `pm:${sourceRef}:upd:${it.targetId}:${it.title}`.slice(0, 180),
           });
           if (wrote) res.updated += 1;
           else res.skipped += 1;
@@ -558,7 +567,7 @@ export async function executeProposal(
             status: "approved",
             source: "post_meeting",
             ownerEmail: it.ownerEmail ?? null,
-            sourceRef: botId,
+            sourceRef,
             customerSlug,
             payload,
             createdBy: actorEmail,
@@ -578,7 +587,7 @@ export async function executeProposal(
         source: "post_meeting",
         boardId: await resolveBoardId(it.boardKey),
         ownerEmail: it.ownerEmail ?? null,
-        sourceRef: botId,
+        sourceRef,
         customerSlug,
         payload,
         createdBy: actorEmail,
@@ -622,7 +631,8 @@ export function buildSuggestionMessage(
   slackIds: Record<string, string | null>,
   botId: string,
   accounts: AccountLink[] = [],
-  recUrl?: string
+  recUrl?: string,
+  headerText = "📋  Post-meeting suggestions",
 ): { text: string; blocks: object[] } {
   const title = parsed.meetingTitle ?? "the meeting";
   const boardsWithItems = (VALID_BOARDS as readonly BoardKey[]).filter((b) =>
@@ -636,7 +646,7 @@ export function buildSuggestionMessage(
   const ctx = `From *${title}* · ${parsed.items.length} task${parsed.items.length === 1 ? "" : "s"} · nothing created until you confirm`;
 
   const blocks: object[] = [
-    { type: "header", text: { type: "plain_text", text: "📋  Post-meeting suggestions", emoji: true } },
+    { type: "header", text: { type: "plain_text", text: headerText, emoji: true } },
     {
       type: "context",
       elements: [{
@@ -668,12 +678,21 @@ export function buildSuggestionMessage(
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_No action items found — looks like a pure status meeting._" } });
   } else {
     for (const b of boardsWithItems) {
-      const rows = parsed.items.filter((i) => i.boardKey === b).map((i) => rowFor(i, slackIds)).join("\n");
+      const boardItems = parsed.items.filter((i) => i.boardKey === b);
+      const rowStrs = boardItems.map((i) => rowFor(i, slackIds));
       blocks.push({ type: "divider" });
-      blocks.push({
-        type: "section",
-        text: { type: "mrkdwn", text: `${BOARD_EMOJI[b]} *${BOARD_LABEL[b]} board* · ${parsed.items.filter((i) => i.boardKey === b).length}\n${rows}` },
-      });
+      // Slack caps a section's text at 3000 chars; a busy digest can put enough
+      // rows on one board to exceed that, so chunk them across sections.
+      let buf = `${BOARD_EMOJI[b]} *${BOARD_LABEL[b]} board* · ${boardItems.length}`;
+      for (const r of rowStrs) {
+        if (`${buf}\n${r}`.length > 2800) {
+          blocks.push({ type: "section", text: { type: "mrkdwn", text: buf } });
+          buf = r;
+        } else {
+          buf = `${buf}\n${r}`;
+        }
+      }
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: buf } });
     }
     // Primary CTA = an interactive Confirm button (no `url`, so Slack POSTs a
     // block_actions payload to the interactivity endpoint). The per-board
