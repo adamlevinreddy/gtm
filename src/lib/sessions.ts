@@ -160,6 +160,17 @@ export async function findSessionByThreadKey(threadKey: string): Promise<string 
   return row?.id ?? null;
 }
 
+/** All threadKeys that already have a session — one query, for O(1) in-memory
+ * dedup during a bulk backfill (per-row jsonb lookups are seq scans without an
+ * index and don't scale to thousands of roots). */
+export async function allSessionThreadKeys(): Promise<Set<string>> {
+  const rows = await db
+    .select({ tk: sql<string | null>`${chatSessions.scope}->>'threadKey'` })
+    .from(chatSessions)
+    .where(sql`${chatSessions.scope}->>'threadKey' is not null`);
+  return new Set(rows.map((r) => r.tk).filter((t): t is string => !!t));
+}
+
 export async function createSession(opts: {
   viewer: string;
   title: string;

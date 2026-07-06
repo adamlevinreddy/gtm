@@ -3,7 +3,7 @@ import { WebClient } from "@slack/web-api";
 import { resolveApiViewer } from "@/lib/viewer";
 import { kv } from "@/lib/kv-client";
 import { emailForSlackId } from "@/lib/slack";
-import { createSession, addTurn, backdateSession, extSessionKey, findSessionByThreadKey, type SessionScope } from "@/lib/sessions";
+import { createSession, addTurn, backdateSession, allSessionThreadKeys, extSessionKey, type SessionScope } from "@/lib/sessions";
 
 // ONE-TIME backfill: seed historical reddy-gtm Slack bot conversations into the
 // web session store so past Slack threads show up in /s + team-wide search.
@@ -69,6 +69,10 @@ export async function GET(req: NextRequest) {
 
   const s = { channel, botId, dryRun, pages: 0, scanned: 0, botThreads: 0, imported: 0, skipped: 0, turns: 0, errors: [] as string[] };
 
+  // Load already-imported threadKeys ONCE for O(1) in-memory dedup (per-root
+  // jsonb lookups are seq scans and don't scale to thousands of roots).
+  const seen = await allSessionThreadKeys().catch(() => new Set<string>());
+
   // Resume from the saved cursor unless restarting.
   let cursor: string | undefined =
     req.nextUrl.searchParams.get("restart") === "1" ? undefined : (await kv.get<string>(cursorKey).catch(() => null)) || undefined;
@@ -83,8 +87,7 @@ export async function GET(req: NextRequest) {
         if (m.thread_ts && m.thread_ts !== m.ts) continue; // a reply, not a root
         const rootTs = m.ts;
         const threadKey = threadKeyFor(rootTs);
-        const already = (await kv.get(extSessionKey(threadKey)).catch(() => null)) || (await findSessionByThreadKey(threadKey).catch(() => null));
-        if (already) {
+        if (seen.has(threadKey)) {
           s.skipped++;
           continue;
         }
@@ -104,6 +107,7 @@ export async function GET(req: NextRequest) {
           continue;
         }
         const turnMsgs = msgs.filter((x) => x.user === botId || (x.user && x.user !== botId && (x.text ?? "").includes(`<@${botId}>`)));
+        seen.add(threadKey);
 
         if (dryRun) {
           s.imported++;
