@@ -94,14 +94,22 @@ export async function GET(req: NextRequest) {
         }
       }
       cursor = res.response_metadata?.next_cursor || undefined;
-    } while (cursor && rootTsList.length < maxThreads * 4);
+    } while (cursor && rootTsList.length < 3000);
   } catch (e) {
     summary.errors.push(`history: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // 2) For each root, pull the thread; import if it's a bot conversation.
   for (const rootTs of rootTsList) {
-    if (summary.imported + summary.skipped >= maxThreads) break;
+    if (summary.imported >= maxThreads) break; // cap NEW imports per run
+    const threadKey = threadKeyFor(rootTs);
+    // Cheap dedup FIRST (no replies call) — computable from the root ts alone —
+    // so re-runs skip already-imported threads fast and reach the whole channel.
+    const already = (await kv.get(extSessionKey(threadKey)).catch(() => null)) || (await findSessionByThreadKey(threadKey).catch(() => null));
+    if (already) {
+      summary.skipped++;
+      continue;
+    }
     summary.scanned++;
     try {
       const replies = await slack.conversations.replies({ channel, ts: rootTs, limit: 200 });
@@ -115,13 +123,6 @@ export async function GET(req: NextRequest) {
       // Only threads where a human asked the bot AND the bot replied are conversations.
       if (botMsgs.length === 0 || mentions.length === 0) continue;
       summary.botThreads++;
-
-      const threadKey = threadKeyFor(rootTs);
-      const already = (await kv.get(extSessionKey(threadKey)).catch(() => null)) || (await findSessionByThreadKey(threadKey).catch(() => null));
-      if (already) {
-        summary.skipped++;
-        continue;
-      }
 
       const firstMention = mentions[0];
       const ownerEmail = await emailForSlackId(firstMention.user!).catch(() => null);
