@@ -49,5 +49,6 @@ export const CHANNELS: readonly FilterOption[] = [
   { value: "web", label: "Web app" },
   { value: "slack", label: "Slack" },
   { value: "email", label: "Email" },
+  { value: "play", label: "Plays" },
   { value: "meeting", label: "Meeting" },
 ];

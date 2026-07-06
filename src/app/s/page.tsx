@@ -38,7 +38,14 @@ export default async function SessionsPage({
   const all = await listSessions({ owner, sinceMs }).catch(() => []);
   const sessions = all.filter((s) => {
     const scope = s.scope as { label?: string; source?: string } | null;
-    const src = scope?.source === "slack" ? "slack" : scope?.source === "email" ? "email" : "web";
+    const src =
+      scope?.source === "slack"
+        ? "slack"
+        : scope?.source === "email"
+          ? "email"
+          : scope?.source === "play"
+            ? "play"
+            : "web";
     if (channel !== "all" && src !== channel) return false;
     if (q && !`${s.title} ${scope?.label ?? ""} ${personName(s.viewer)}`.toLowerCase().includes(q)) return false;
     return true;

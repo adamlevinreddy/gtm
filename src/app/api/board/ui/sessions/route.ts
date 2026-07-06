@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
           : undefined,
         note: typeof body.scope.note === "string" ? body.scope.note.slice(0, 300) : undefined,
         label: typeof body.scope.label === "string" ? body.scope.label.slice(0, 120) : undefined,
+        source: typeof body.scope.source === "string" ? body.scope.source.slice(0, 40) : undefined,
       }
     : null;
   const session = await createSession({ viewer: v, title: body.title, scope });

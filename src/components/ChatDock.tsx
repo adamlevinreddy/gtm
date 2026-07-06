@@ -19,6 +19,10 @@ export type AskPayload = {
   scopeNote?: string;
   title?: string;
   scopeLabel?: string;
+  // Persisted onto the created session's scope (label + source), so an
+  // unscoped chat started from e.g. a Play is tagged + filterable in /s. Unlike
+  // scopeLabel (a live header-only hint), this survives to the record.
+  sessionScope?: { label?: string; source?: string };
 };
 
 const ASK_EVENT = "reddy:ask";
@@ -140,6 +144,7 @@ export default function ChatDock() {
               persist
               title={title}
               scopeLabel={chat.scopeLabel ?? (scoped ? undefined : "meetings · HubSpot · documents · board")}
+              sessionScope={chat.sessionScope}
               placeholder="Ask anything…"
               initialQuestion={chat.question}
               onStreamingChange={setStreaming}

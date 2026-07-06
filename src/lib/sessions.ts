@@ -130,6 +130,9 @@ export type SessionScope = {
   botIds?: string[];
   note?: string;
   label?: string;
+  /** Origin channel — "slack" | "email" | "play"; drives the /s channel filter
+   *  and pill. Absent for a plain web chat. */
+  source?: string;
 } | null;
 
 export async function createSession(opts: {

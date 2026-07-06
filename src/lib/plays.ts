@@ -35,7 +35,11 @@ export type Play = {
 };
 
 const forMeeting = (ctx: PlayContext) =>
-  ctx.botId ? `the meeting (bot_id ${ctx.botId})` : "the meeting we just discussed";
+  ctx.botId
+    ? `the meeting (bot_id ${ctx.botId})`
+    : // Launched without a meeting (e.g. from the Plays gallery) — have the
+      // agent pin it down first rather than guessing.
+      "the meeting in question — if it isn't clear which meeting, ask me for the meeting or customer first";
 const acct = (ctx: PlayContext) => ctx.account || "this account";
 
 export const PLAYS: Record<PlayId, Play> = {

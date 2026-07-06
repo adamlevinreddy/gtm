@@ -24,6 +24,7 @@ export default function MeetingChatStream({
   scopeNote,
   title = "Ask about this meeting",
   scopeLabel,
+  sessionScope,
   starters,
   placeholder = "Ask a question…",
   unscoped = false,
@@ -37,6 +38,9 @@ export default function MeetingChatStream({
   scopeNote?: string;
   title?: string;
   scopeLabel?: string;
+  /** Persisted onto the session scope (label + source) even when unscoped —
+   *  e.g. tagging a session started from a Play. */
+  sessionScope?: { label?: string; source?: string };
   starters?: string[];
   placeholder?: string;
   /** true → no meeting scope: the agent answers from everything it has. */
@@ -84,7 +88,11 @@ export default function MeetingChatStream({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             title: firstQuestion,
-            scope: scoped ? { botIds: ids, note: scopeNote, label: scopeLabel } : null,
+            scope: sessionScope
+              ? { ...(scoped ? { botIds: ids, note: scopeNote } : {}), ...sessionScope }
+              : scoped
+                ? { botIds: ids, note: scopeNote, label: scopeLabel }
+                : null,
           }),
         });
         const j = (await r.json()) as { ok?: boolean; session?: { id: string } };
