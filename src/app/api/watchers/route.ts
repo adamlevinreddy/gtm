@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addWatch, listWatches, getWatch, cancelWatch, type WatchSignal, type WatchStatus } from "@/lib/watchers";
+import { addWatch, listWatches, getWatch, cancelWatch, snoozeWatch, type WatchSignal, type WatchStatus } from "@/lib/watchers";
 import { resolveApiViewer } from "@/lib/viewer";
 
 // Conditional-follow-up ("watch") API.
@@ -119,5 +119,20 @@ export async function DELETE(req: NextRequest) {
   if (!existing) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   if (existing.owner !== viewer) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   const w = await cancelWatch(id);
+  return NextResponse.json({ ok: !!w, watch: w });
+}
+
+// Snooze a watch (push its check date out). Owner-scoped.
+export async function PATCH(req: NextRequest) {
+  const viewer = resolveApiViewer(req);
+  if (!viewer) return NextResponse.json({ ok: false, error: "sign in required" }, { status: 401 });
+  const id = req.nextUrl.searchParams.get("id") ?? "";
+  if (!id) return NextResponse.json({ ok: false, error: "need id" }, { status: 400 });
+  const daysRaw = Number(req.nextUrl.searchParams.get("days") ?? "3");
+  const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.round(daysRaw), 1), 90) : 3;
+  const existing = await getWatch(id);
+  if (!existing) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+  if (existing.owner !== viewer) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+  const w = await snoozeWatch(id, days);
   return NextResponse.json({ ok: !!w, watch: w });
 }

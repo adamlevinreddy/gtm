@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
 import PlaysGallery from "@/components/PlaysGallery";
+import WatchesPanel from "@/components/WatchesPanel";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,6 +25,7 @@ export default async function PlaysPage() {
       subtitle="Templated workflows the team runs again and again — recaps, pricing, RFPs, redlines, catch-ups. Click one to kick it off."
       maxWidth="max-w-5xl"
     >
+      <WatchesPanel />
       <PlaysGallery />
     </AppShell>
   );
