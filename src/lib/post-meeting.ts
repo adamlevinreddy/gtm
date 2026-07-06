@@ -325,6 +325,7 @@ export function buildPlayCurationPrompt(botId: string): string {
     `  - Do NOT suggest booking a meeting — if a next meeting was set live, that's already handled.`,
     ``,
     `DETECT A CONDITIONAL FOLLOW-UP (optional — only if you clearly hear one):`,
+    `  JUDGMENT CALL — now vs. later: an immediate play (above) = do it right after the meeting (send the recap today, build the pricing now). A "followup" watch = do it LATER, and only IF a condition holds. Most meetings just want immediate plays and NO watch. Only add a watch when the next step is genuinely deferred/conditional. And it's EITHER/OR for the same action — don't offer both an immediate recap play AND a recap watch; pick the one the transcript calls for.`,
     `  Listen for "they'll go quiet then we reconnect" language — "they're going to huddle internally", "let's regroup Monday", "if I don't hear back by <when>", "circle back in two weeks", "reach out next month". If there's a clear one, propose a "followup" watch the team can arm with one tap:`,
     `    - signal: "no_reply" (we're waiting on THEM to email back — the common case) | "no_activity" (waiting on any movement on the deal) | "time_only" (just a scheduled reminder, no condition).`,
     `    - inDays: whole days from TODAY (Pacific) until the check — Monday ≈ days until next Mon, "two weeks" = 14, "next month" = 30. Your best estimate.`,
