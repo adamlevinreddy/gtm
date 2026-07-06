@@ -133,7 +133,23 @@ export type SessionScope = {
   /** Origin channel — "slack" | "email" | "play"; drives the /s channel filter
    *  and pill. Absent for a plain web chat. */
   source?: string;
+  /** Slack/email lane cross-surface keys (written by the turns route + the
+   *  Slack backfill; read by the reverse-mirror). */
+  threadKey?: string;
+  slackChannel?: string;
+  slackThreadTs?: string;
 } | null;
+
+/** Durable dedup for Slack-origin sessions: the KV `sess:ext:` map expires
+ * (90d) but the Postgres row persists, so a backfill must check here too. */
+export async function findSessionByThreadKey(threadKey: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: chatSessions.id })
+    .from(chatSessions)
+    .where(sql`${chatSessions.scope}->>'threadKey' = ${threadKey}`)
+    .limit(1);
+  return row?.id ?? null;
+}
 
 export async function createSession(opts: {
   viewer: string;
