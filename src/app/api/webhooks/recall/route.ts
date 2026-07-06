@@ -36,7 +36,7 @@ import { detectConeOfSilence, isConeOfSilence, markConeOfSilence } from "@/lib/c
 import { getBlockChecker } from "@/lib/meeting-optout";
 import { upsertMeetingIndex, removeFromMeetingIndex } from "@/lib/meeting-index";
 
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 // Recall.ai → reddy-gtm-kb webhook. Signed by Svix. Lands transcripts +
 // videos directly into the KB so the success skill's fan-out reads the
@@ -180,9 +180,11 @@ export async function GET(req: NextRequest) {
   if (!pat) return NextResponse.json({ ok: false, error: "PRICING_LIBRARY_GITHUB_PAT not set" }, { status: 500 });
   // Default to transcript-only (safe, fast); ?video=1 attempts the video too
   // (heavier — may OOM/time out on long meetings).
+  // Default transcript-only; ?video=1 also ingests the recording via Mux only
+  // (server-side pull — no in-memory LFS download, so no OOM on long meetings).
   const skipVideo = req.nextUrl.searchParams.get("video") !== "1";
   try {
-    await reconcile(botId, pat, "manual-reingest", { skipVideo });
+    await reconcile(botId, pat, "manual-reingest", { skipVideo, muxOnly: !skipVideo });
     return NextResponse.json({ ok: true, botId, skipVideo, note: "reconciled — re-check has_transcript" });
   } catch (err) {
     return NextResponse.json({ ok: false, botId, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
@@ -352,7 +354,7 @@ type ExistingMeta = {
   schema_version?: number;
 };
 
-async function reconcile(botId: string, pat: string, eventName: string, opts?: { skipVideo?: boolean }): Promise<void> {
+async function reconcile(botId: string, pat: string, eventName: string, opts?: { skipVideo?: boolean; muxOnly?: boolean }): Promise<void> {
   const bot = await fetchBot(botId);
   // Pull participants from the artifact (the inline list is empty on
   // current Recall bots); pull title from the recordings[0] location.
@@ -407,7 +409,9 @@ async function reconcile(botId: string, pat: string, eventName: string, opts?: {
   // into memory for LFS + waits on Mux — the heavy/OOM-prone part. Skipping it
   // lets the small transcript + meta commit fast; video can be re-ingested after.
   if (!opts?.skipVideo && videoStatus === "done" && videoUrl) {
-    if (!existing.video) {
+    // muxOnly (recovery): skip the in-memory LFS download (the OOM culprit on
+    // long meetings) — Mux ingests server-side from the URL, no local buffer.
+    if (!existing.video && !opts?.muxOnly) {
       const dl = await fetch(videoUrl);
       if (!dl.ok) throw new Error(`recall video download ${botId} -> ${dl.status}`);
       const bytes = Buffer.from(await dl.arrayBuffer());
