@@ -192,6 +192,12 @@ export async function addTurn(opts: {
   viewer: string;
   role: "user" | "assistant";
   content: string;
+  /** Model spend for this turn (USD) — set on assistant turns from the SDK
+   *  result. Added to the session's running cost_usd total. */
+  costUsd?: number | null;
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
 }): Promise<ChatTurn | null> {
   // Team-writable: sales is a team sport, so any teammate can continue any
   // session (viewer is kept for attribution in the reverse-mirror, not as a
@@ -202,13 +208,26 @@ export async function addTurn(opts: {
     .where(eq(chatSessions.id, opts.sessionId))
     .limit(1);
   if (!session) return null;
+  const cost = typeof opts.costUsd === "number" && isFinite(opts.costUsd) && opts.costUsd > 0 ? opts.costUsd : null;
   const [turn] = await db
     .insert(chatTurns)
-    .values({ sessionId: opts.sessionId, role: opts.role, content: opts.content })
+    .values({
+      sessionId: opts.sessionId,
+      role: opts.role,
+      content: opts.content,
+      costUsd: cost,
+      model: opts.model ?? null,
+      inputTokens: opts.inputTokens ?? null,
+      outputTokens: opts.outputTokens ?? null,
+    })
     .returning();
   await db
     .update(chatSessions)
-    .set({ updatedAt: new Date() })
+    .set({
+      updatedAt: new Date(),
+      // Increment the running total only when this turn carried a cost.
+      ...(cost ? { costUsd: sql`${chatSessions.costUsd} + ${cost}` } : {}),
+    })
     .where(eq(chatSessions.id, opts.sessionId));
   return turn;
 }

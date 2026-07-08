@@ -720,6 +720,13 @@ async function main() {
 
   const q = query({ prompt: userContent, options: queryOptions });
 
+  // Roll up this run's model spend so the web lane can show per-session cost
+  // (matters most for the Fable marketing lane). The SDK emits one result
+  // message per run carrying total_cost_usd + usage; sum defensively.
+  let runCostUsd = 0;
+  let runInputTokens = 0;
+  let runOutputTokens = 0;
+
   // Only flip when a *Slack-posting* MCP tool succeeds — not Read/Bash/Skill/etc.
   // Set inside the tool handlers above; closed over here.
   for await (const message of q) {
@@ -742,6 +749,9 @@ async function main() {
         }
       }
     } else if (message.type === "result") {
+      runCostUsd += Number(message.total_cost_usd) || 0;
+      runInputTokens += Number(message.usage?.input_tokens) || 0;
+      runOutputTokens += Number(message.usage?.output_tokens) || 0;
       trace("result", {
         subtype: message.subtype,
         is_error: message.is_error,
@@ -767,6 +777,10 @@ async function main() {
       answer: finalAnswer,
       references: mcpBuffer.references,
       attachments: mcpBuffer.attachments,
+      costUsd: runCostUsd,
+      model: META.model || "claude-opus-4-8",
+      inputTokens: runInputTokens,
+      outputTokens: runOutputTokens,
       finishedAt: new Date().toISOString(),
     }, 3 * 60 * 60).catch(() => {});
     if (EMAIL_LANE) await recordTurn("assistant", finalAnswer); // sessions mirror

@@ -17,6 +17,10 @@ type McpResult = {
   answer?: string;
   error?: string;
   attachments?: Array<{ name?: string; kbPath?: string }>;
+  costUsd?: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 export async function GET(req: NextRequest) {
@@ -34,5 +38,9 @@ export async function GET(req: NextRequest) {
     ready: true,
     answer: result.answer || (result.error ? `⚠️ ${result.error}` : "⚠️ The run finished without an answer."),
     attachments: (result.attachments ?? []).filter((a) => a?.name && a?.kbPath).slice(0, 10),
+    costUsd: result.costUsd,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
   });
 }

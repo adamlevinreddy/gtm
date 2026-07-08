@@ -29,7 +29,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!v) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
   if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "bad id" }, { status: 400 });
-  const body = (await req.json().catch(() => null)) as { role?: string; content?: string } | null;
+  const body = (await req.json().catch(() => null)) as {
+    role?: string;
+    content?: string;
+    costUsd?: number;
+    model?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+  } | null;
   const role = body?.role === "assistant" ? "assistant" : body?.role === "user" ? "user" : null;
   if (!role || typeof body?.content !== "string" || !body.content) {
     return NextResponse.json({ ok: false, error: "need role + content" }, { status: 400 });
@@ -37,7 +44,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // Cap matches the route's validation posture elsewhere — an unbounded turn
   // would re-enter every subsequent prompt for the life of the session.
   const content = body.content.slice(0, 200_000);
-  const turn = await addTurn({ sessionId: id, viewer: v, role, content }).catch(() => null);
+  const turn = await addTurn({
+    sessionId: id,
+    viewer: v,
+    role,
+    content,
+    costUsd: typeof body?.costUsd === "number" ? body.costUsd : null,
+    model: typeof body?.model === "string" ? body.model.slice(0, 60) : null,
+    inputTokens: typeof body?.inputTokens === "number" ? body.inputTokens : null,
+    outputTokens: typeof body?.outputTokens === "number" ? body.outputTokens : null,
+  }).catch(() => null);
   if (!turn) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
 
   // Bi-directional sync (Arc V): continuing a Slack-born session on the web

@@ -53,6 +53,10 @@ type OneshotResult = {
   answer: string;
   attachments: Array<{ name: string; kbPath: string }>;
   attachmentsTotal: number;
+  costUsd?: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 type UploadRef = { id?: string; name?: string; mimetype?: string; size?: number; url?: string };
@@ -84,12 +88,24 @@ async function runOneshot(
       ok?: boolean;
       answer?: string;
       attachments?: Array<{ name?: string; kbPath?: string }>;
+      costUsd?: number;
+      model?: string;
+      inputTokens?: number;
+      outputTokens?: number;
     } | null;
     if (json?.ok && json.answer) {
       const valid = (json.attachments ?? []).filter(
         (a): a is { name: string; kbPath: string } => !!a?.name && !!a?.kbPath,
       );
-      return { answer: json.answer, attachments: valid.slice(0, 10), attachmentsTotal: valid.length };
+      return {
+        answer: json.answer,
+        attachments: valid.slice(0, 10),
+        attachmentsTotal: valid.length,
+        costUsd: json.costUsd,
+        model: json.model,
+        inputTokens: json.inputTokens,
+        outputTokens: json.outputTokens,
+      };
     }
   } catch {
     /* fall through */
@@ -193,6 +209,9 @@ export async function POST(req: NextRequest) {
       for (const a of atts) send({ t: "attachment", name: a.name, kbPath: a.kbPath });
       if (result && result.attachmentsTotal > atts.length) {
         send({ t: "status", text: `${result.attachmentsTotal - atts.length} more file(s) were produced — find them in the Library.` });
+      }
+      if (result?.costUsd) {
+        send({ t: "cost", costUsd: result.costUsd, model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens });
       }
       send({ t: "done" });
       try {

@@ -9,6 +9,12 @@ import { BORDER } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
 import MeetingChatStream from "@/components/MeetingChatStream";
+import {
+  MARKETING_CHAT_ENDPOINT,
+  MARKETING_PLAY_IDS,
+  MARKETING_FOOTER_ACTIONS,
+  isMarketingSession,
+} from "@/lib/marketing-chat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,9 +63,12 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
     }
   }
 
-  const scope = found.session.scope as { botIds?: string[]; note?: string; label?: string } | null;
+  const scope = found.session.scope as { botIds?: string[]; note?: string; label?: string; source?: string } | null;
   const botIds = scope?.botIds ?? [];
   const scoped = botIds.length > 0;
+  // Resuming a Marketing session must stay on Fable (+ website source + the
+  // marketing plays / Save-to-Docs action), not silently fall back to Opus.
+  const marketing = isMarketingSession(scope);
 
   return (
     <AppShell active="sessions" viewer={viewer} maxWidth="max-w-4xl">
@@ -75,8 +84,17 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         <MeetingChatStream
           {...(scoped ? { botIds, scopeNote: scope?.note } : { unscoped: true })}
           title={found.session.title}
-          scopeLabel={scope?.label ?? "meetings · HubSpot · documents · board"}
+          scopeLabel={scope?.label ?? (marketing ? "Fable" : "meetings · HubSpot · documents · board")}
           placeholder="Continue the conversation…"
+          showCost
+          initialCostUsd={found.session.costUsd ?? 0}
+          {...(marketing
+            ? {
+                endpoint: MARKETING_CHAT_ENDPOINT,
+                playIds: MARKETING_PLAY_IDS,
+                footerActions: MARKETING_FOOTER_ACTIONS,
+              }
+            : {})}
           initialSession={{
             id: found.session.id,
             turns: found.turns.map((t) => ({

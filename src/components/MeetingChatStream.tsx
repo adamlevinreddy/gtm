@@ -36,6 +36,9 @@ export default function MeetingChatStream({
   onStreamingChange,
   endpoint = "/api/board/ui/meeting-chat",
   playIds,
+  footerActions,
+  showCost = false,
+  initialCostUsd = 0,
 }: {
   botIds?: string[];
   /** Human description of the filter behind botIds — passed to the agent. */
@@ -66,6 +69,14 @@ export default function MeetingChatStream({
   /** Which plays the launcher offers (default: the post-meeting card plays).
    *  The Marketing surface passes just its own plays, e.g. ["blog_post"]. */
   playIds?: PlayId[];
+  /** Persistent action buttons rendered below the composer (always visible),
+   *  each of which sends its `prompt` as a turn. Marketing uses this for
+   *  "Save to Google Docs". */
+  footerActions?: Array<{ label: string; emoji?: string; prompt: string }>;
+  /** Show a running $ cost badge for the session (summed from each turn). */
+  showCost?: boolean;
+  /** Cost already accrued by a resumed session (from the DB). */
+  initialCostUsd?: number;
 }) {
   const [messages, setMessages] = useState<Msg[]>(initialSession?.turns ?? []);
   const [input, setInput] = useState("");
@@ -74,6 +85,10 @@ export default function MeetingChatStream({
   const [elapsed, setElapsed] = useState(0);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [sessionCostUsd, setSessionCostUsd] = useState(initialCostUsd);
+  // The most recent turn's cost, captured from the stream's "cost" event so it
+  // can ride along when we persist the assistant turn.
+  const costRef = useRef<{ costUsd?: number; model?: string; inputTokens?: number; outputTokens?: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -122,7 +137,11 @@ export default function MeetingChatStream({
       }
     })();
   };
-  const persistTurn = (role: "user" | "assistant", content: string) => {
+  const persistTurn = (
+    role: "user" | "assistant",
+    content: string,
+    cost?: { costUsd?: number; model?: string; inputTokens?: number; outputTokens?: number } | null,
+  ) => {
     if (!persistOn || !content) return;
     void (async () => {
       await sessionPromiseRef.current?.catch(() => {});
@@ -131,7 +150,7 @@ export default function MeetingChatStream({
       await fetch(`/api/board/ui/sessions/${id}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role, content }),
+        body: JSON.stringify({ role, content, ...(cost ?? {}) }),
       });
     })().catch(() => {});
   };
@@ -215,7 +234,15 @@ export default function MeetingChatStream({
       }
       try {
         const r = await fetch(`/api/board/ui/meeting-chat/result?id=${requestId}`, { cache: "no-store" });
-        const j = (await r.json()) as { ready?: boolean; answer?: string; attachments?: Attachment[] };
+        const j = (await r.json()) as {
+          ready?: boolean;
+          answer?: string;
+          attachments?: Attachment[];
+          costUsd?: number;
+          model?: string;
+          inputTokens?: number;
+          outputTokens?: number;
+        };
         // Re-check AFTER the await: the user may have hit Stop while this
         // tick's fetch was in flight — a stale tick must not overwrite the
         // "Stopped." state.
@@ -228,7 +255,12 @@ export default function MeetingChatStream({
           const attMd = atts
             .map((a) => `\n\n📎 [${a.name}](/api/library/file?path=${encodeURIComponent(a.kbPath)})`)
             .join("");
-          persistTurn("assistant", j.answer + attMd);
+          const cost =
+            typeof j.costUsd === "number" && j.costUsd > 0
+              ? { costUsd: j.costUsd, model: j.model, inputTokens: j.inputTokens, outputTokens: j.outputTokens }
+              : null;
+          if (cost) setSessionCostUsd((v) => v + (cost.costUsd ?? 0));
+          persistTurn("assistant", j.answer + attMd, cost);
           setStreaming(false);
           setStatus(null);
           scrollDown();
@@ -300,6 +332,7 @@ export default function MeetingChatStream({
     persistTurn("user", qDisplay);
     let answerBuf = "";
     answerBufRef.current = "";
+    costRef.current = null;
     // Set once the server accepts the run — gates whether an error is
     // recoverable (poll the result key) or terminal (show it immediately).
     let streamOpened = false;
@@ -352,6 +385,12 @@ export default function MeetingChatStream({
             answerBuf += `\n\n📎 [${a.name}](/api/library/file?path=${encodeURIComponent(a.kbPath)})`;
             answerBufRef.current = answerBuf;
           }
+        } else if (evt.t === "cost") {
+          const c = evt as unknown as { costUsd?: number; model?: string; inputTokens?: number; outputTokens?: number };
+          if (typeof c.costUsd === "number" && c.costUsd > 0) {
+            costRef.current = { costUsd: c.costUsd, model: c.model, inputTokens: c.inputTokens, outputTokens: c.outputTokens };
+            setSessionCostUsd((v) => v + c.costUsd!);
+          }
         } else if (evt.t === "timeout") {
           sawTimeout = true;
         } else if (evt.t === "done") {
@@ -377,7 +416,7 @@ export default function MeetingChatStream({
         beginLatePoll(requestId);
         return; // streaming stays true; the late poll owns completion
       }
-      persistTurn("assistant", answerBuf);
+      persistTurn("assistant", answerBuf, costRef.current);
       setStreaming(false);
       setStatus(null);
     } catch (err) {
@@ -426,7 +465,18 @@ export default function MeetingChatStream({
       <div className="flex items-center gap-2 border-b px-4 py-2.5" style={{ borderColor: BORDER_SOFT }}>
         <span>💬</span>
         <h2 className="text-sm font-semibold" style={{ color: PLUM }}>{title}</h2>
-        {scopeLabel && <span className="ml-auto text-xs text-zinc-400">{scopeLabel}</span>}
+        <div className="ml-auto flex items-center gap-2">
+          {showCost && sessionCostUsd > 0 && (
+            <span
+              title="Model spend for this session so far"
+              className="rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums"
+              style={{ borderColor: BORDER, color: "#63566A", background: "#FAFAFA" }}
+            >
+              {fmtUsd(sessionCostUsd)}
+            </span>
+          )}
+          {scopeLabel && <span className="text-xs text-zinc-400">{scopeLabel}</span>}
+        </div>
       </div>
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -616,6 +666,24 @@ export default function MeetingChatStream({
             </button>
           )}
         </div>
+        {footerActions && footerActions.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {footerActions.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                disabled={streaming || disabled}
+                onClick={() => void ask(a.prompt)}
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-50 disabled:opacity-40"
+                style={{ borderColor: BORDER, color: PLUM }}
+                title={a.label}
+              >
+                {a.emoji && <span>{a.emoji}</span>}
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
       </form>
     </div>
   );
@@ -700,6 +768,14 @@ function CopyAnswer({ text }: { text: string }) {
       {copied ? "Copied" : "Copy"}
     </button>
   );
+}
+
+// Small money formatter for the session cost badge — sub-dollar runs need more
+// precision than cents.
+function fmtUsd(n: number): string {
+  if (!n) return "$0";
+  if (n < 0.01) return "<$0.01";
+  return "$" + n.toFixed(n < 1 ? 3 : 2);
 }
 
 // react-markdown v10 passes the hast `node` into component overrides —

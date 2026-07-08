@@ -1632,6 +1632,10 @@ export const chatSessions = pgTable(
     viewer: text("viewer").notNull(),
     title: text("title").notNull(),
     scope: jsonb("scope"),
+    // Running total of model spend across this session's turns (USD). Summed
+    // from each turn's total_cost_usd as it completes; shown in the UI so we
+    // can track what a session costs — matters most for the Fable marketing lane.
+    costUsd: real("cost_usd").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -1647,6 +1651,12 @@ export const chatTurns = pgTable(
       .references(() => chatSessions.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     content: text("content").notNull(),
+    // Per-turn model spend (USD) + which model produced it + token usage. Set on
+    // the assistant turn from the SDK result; null for user turns / legacy rows.
+    costUsd: real("cost_usd"),
+    model: text("model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [index("idx_chat_turns_session").on(table.sessionId, table.createdAt)]

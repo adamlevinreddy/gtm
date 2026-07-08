@@ -72,6 +72,11 @@ type McpResult = {
   references?: Array<{ label: string; url: string; type: string }>;
   // Email lane: files the agent persisted to the KB for bot-mail to attach.
   attachments?: Array<{ name: string; mimetype: string; kbPath: string }>;
+  // Model spend for this run — surfaced so the web lane can track per-session cost.
+  costUsd?: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
   error?: string;
   finishedAt?: string;
 };

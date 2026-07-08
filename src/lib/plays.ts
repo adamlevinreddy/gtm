@@ -18,6 +18,7 @@ export type PlayId =
   | "redline"
   | "collateral"
   | "accounts_quiet"
+  | "blog_suggest"
   | "blog_post";
 
 export type PlayContext = { botId?: string; account?: string };
@@ -124,6 +125,27 @@ export const PLAYS: Record<PlayId, Play> = {
   },
   // Marketing surface (not a post-meeting card). Launched from /marketing, where
   // it runs on Fable with the website source cloned + the marketing corpus.
+  // The instruction is tuned from a real session so the FIRST answer is already
+  // SEO-vetted — no need to re-prompt for search-fit, full-suite, or anonymizing.
+  blog_suggest: {
+    id: "blog_suggest",
+    label: "Suggest this week's blog",
+    emoji: "🗞️",
+    blurb: "Mine this week's calls for a NEW, SEO/GEO-winnable blog topic we haven't covered — then draft it.",
+    onCard: false,
+    run: () =>
+      `Suggest a new blog post based on our customer conversations THIS WEEK. Work in this order and show your reasoning briefly:
+` +
+      `1) THEMES: read this week's meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) and pull the recurring pain points / stories that keep coming up.
+` +
+      `2) RULE OUT REPEATS: read our current published posts from the site source (../website-src — e.g. client/src/data/blogData.ts and shared/blogMeta.ts, including any not linked on /blog) and exclude anything we've already written. We want NEW content.
+` +
+      `3) SEO / GEO IS THE BAR (not internal resonance): for each candidate, judge it by what people actually search or ask an LLM — check the real search landscape (WebFetch). Favor topics with genuine, recurring queries AND thin/weak existing results we can beat. A theme that's great for customers but nobody searches is NOT a good pick — say so.
+` +
+      `4) RECOMMEND ONE, with 2–3 title options phrased the way people actually search, plus a one-line why-it-wins (search demand + how we out-rank what's there today).
+` +
+      `WHEN I SAY GO (or if I already told you the angle), draft the full post: follow the format of our Buyer's Guide / "10 best" posts (definitional opener, query-shaped H2s, stats welded to claims, a comparison table, and an FAQ block for the GEO play). Cover our FULL product suite where relevant (Simulations, Live Assist, Auto QA, coaching, Reporting) — not just simulations. Anonymize any named customers by default (keep the stories + stats, drop the names). Deliver in Markdown with title + alternates, an SEO meta description, and target keywords. Draft in the chat for review — do NOT publish.`,
+  },
   blog_post: {
     id: "blog_post",
     label: "Create a new blog post",

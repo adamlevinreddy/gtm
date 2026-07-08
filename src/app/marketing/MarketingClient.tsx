@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Upload, FileText, Check, Loader2, ExternalLink } from "lucide-react";
 import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT } from "@/lib/tokens";
 import MeetingChatStream from "@/components/MeetingChatStream";
+import { MARKETING_CHAT_ENDPOINT, MARKETING_PLAY_IDS, MARKETING_FOOTER_ACTIONS } from "@/lib/marketing-chat";
 
 type LibraryFile = {
   path: string;
@@ -78,19 +79,20 @@ export default function MarketingClient({ materials }: { materials: LibraryFile[
       >
         <MeetingChatStream
           unscoped
-          endpoint="/api/marketing/chat"
-          playIds={["blog_post"]}
-          suggestPlay="blog_post"
+          endpoint={MARKETING_CHAT_ENDPOINT}
+          playIds={MARKETING_PLAY_IDS}
+          suggestPlay="blog_suggest"
           title="Marketing studio · Fable"
           scopeLabel="Fable"
           placeholder="Describe the blog post you want to write…"
           persist
+          showCost
           sessionScope={{ label: "Marketing", source: "marketing" }}
           starters={[
-            "Let's write a new blog post.",
             "What have we already published, so we don't repeat ourselves?",
             "Draft a post on how contact centers cut ramp time with Reddy.",
           ]}
+          footerActions={MARKETING_FOOTER_ACTIONS}
         />
       </div>
 

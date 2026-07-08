@@ -133,6 +133,15 @@ export default async function SessionsPage({
                         <span className="mt-0.5 block truncate text-xs text-zinc-400">{s.snippet}</span>
                       )}
                     </span>
+                    {s.costUsd > 0 && (
+                      <span
+                        className="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-500"
+                        style={{ borderColor: "#ECE6EC" }}
+                        title="Model spend for this session"
+                      >
+                        {s.costUsd < 0.01 ? "<$0.01" : "$" + s.costUsd.toFixed(s.costUsd < 1 ? 3 : 2)}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
