@@ -52,6 +52,9 @@ type OneshotRequest = {
   // Override the Anthropic model for this run (e.g. the Marketing/blog lane sends
   // "claude-fable-5"). Unset → the driver's default (Opus 4.8).
   model?: string;
+  // Extra repos to clone alongside the KB (best-effort). The Marketing lane
+  // passes the website source so the blog writer works from real code.
+  extraRepos?: Array<{ url?: string; dir?: string }>;
   // Clean human-typed text for the sessions mirror (question often carries
   // injected context blocks the user never wrote).
   displayText?: string;
@@ -173,6 +176,18 @@ export async function POST(req: NextRequest) {
       granolaMcp,
       isSharedChannel: false,
       model: typeof body.model === "string" && body.model.length > 0 ? body.model : undefined,
+      // Only accept github.com repos with a safe host+path (no scheme, no shell
+      // metacharacters) — the driver injects the PAT and clones best-effort.
+      extraRepos: (Array.isArray(body.extraRepos) ? body.extraRepos : [])
+        .filter(
+          (r): r is { url: string; dir: string } =>
+            !!r &&
+            typeof r.url === "string" &&
+            /^github\.com\/[\w.-]+\/[\w.-]+(\.git)?$/.test(r.url) &&
+            typeof r.dir === "string" &&
+            /^[\w-]{1,40}$/.test(r.dir),
+        )
+        .slice(0, 3),
       mcpRequestId: requestId,
       // Web-lane uploads, normalized to the driver's file shape (drop any
       // without a fetchable url, exactly like the Slack lane).

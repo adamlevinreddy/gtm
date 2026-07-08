@@ -34,6 +34,8 @@ export default function MeetingChatStream({
   persist = false,
   initialSession,
   onStreamingChange,
+  endpoint = "/api/board/ui/meeting-chat",
+  playIds,
 }: {
   botIds?: string[];
   /** Human description of the filter behind botIds — passed to the agent. */
@@ -58,6 +60,12 @@ export default function MeetingChatStream({
   initialSession?: { id: string; turns: Array<{ role: "user" | "assistant"; content: string }> };
   /** ChatDock's minimized pill shows a live "working" dot from this. */
   onStreamingChange?: (streaming: boolean) => void;
+  /** Which server chat route to POST to. Defaults to the board/meeting chat;
+   *  the Marketing surface points this at /api/marketing/chat (Fable + site). */
+  endpoint?: string;
+  /** Which plays the launcher offers (default: the post-meeting card plays).
+   *  The Marketing surface passes just its own plays, e.g. ["blog_post"]. */
+  playIds?: PlayId[];
 }) {
   const [messages, setMessages] = useState<Msg[]>(initialSession?.turns ?? []);
   const [input, setInput] = useState("");
@@ -76,9 +84,11 @@ export default function MeetingChatStream({
   const disabled = scoped && ids.length === 0;
 
   // Launcher play buttons — a suggested play (opened from the Plays catalog)
-  // sorts first + is highlighted.
-  const suggested = suggestPlay && isPlayId(suggestPlay) && (CARD_PLAY_IDS as readonly string[]).includes(suggestPlay) ? (suggestPlay as PlayId) : null;
-  const playOrder: PlayId[] = suggested ? [suggested, ...CARD_PLAY_IDS.filter((id) => id !== suggested)] : [...CARD_PLAY_IDS];
+  // sorts first + is highlighted. The surface can override the set (default:
+  // post-meeting card plays; Marketing passes its own).
+  const availablePlays = playIds ?? [...CARD_PLAY_IDS];
+  const suggested = suggestPlay && isPlayId(suggestPlay) && (availablePlays as readonly string[]).includes(suggestPlay) ? (suggestPlay as PlayId) : null;
+  const playOrder: PlayId[] = suggested ? [suggested, ...availablePlays.filter((id) => id !== suggested)] : [...availablePlays];
 
   // Session persistence (Daybreak P8): created lazily on the first ask,
   // every completed turn appended. ALL writes are truly fire-and-forget —
@@ -294,7 +304,7 @@ export default function MeetingChatStream({
     // recoverable (poll the result key) or terminal (show it immediately).
     let streamOpened = false;
     try {
-      const res = await fetch("/api/board/ui/meeting-chat", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         signal: abortRef.current.signal,

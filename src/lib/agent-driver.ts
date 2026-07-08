@@ -17,6 +17,12 @@ export type AgentMeta = {
   // driver when unset. The Marketing lane sets this to "claude-fable-5" so the
   // blog-writing chat runs on Fable while every other surface stays on Opus.
   model?: string;
+  // Extra git repos to clone (best-effort, non-fatal) alongside the KB — cloned
+  // as SIBLINGS of workspace/ at /vercel/sandbox/<dir>, readable by the agent
+  // via additionalDirectories. The Marketing lane uses this to give the blog
+  // writer the live website source ("website-src"). `url` is host+path with no
+  // scheme (e.g. "github.com/ReddySolutions/web.git") — the PAT is injected.
+  extraRepos?: Array<{ url: string; dir: string }>;
   // When set, this run was triggered by /api/agent/oneshot from the MCP
   // server. post_slack_message goes to a result buffer (not Slack);
   // upload_slack_pdf is rejected. End-of-run writes the buffered answer
@@ -363,6 +369,21 @@ async function ensureLibraryCloned() {
   } catch (err) {
     // Non-fatal — submodules may be added later. Log and continue.
     trace("bootstrap", { output: "submodule update failed: " + (err instanceof Error ? err.message : String(err)) });
+  }
+  // Extra repos (e.g. the Marketing lane's website source). Cloned shallow as
+  // siblings of workspace/ so they don't pollute the KB git tree, and BEST-
+  // EFFORT: a missing repo or a PAT without access must never fail the run —
+  // the agent falls back to crawling the live site.
+  for (const r of (META.extraRepos || [])) {
+    const dest = "/vercel/sandbox/" + r.dir;
+    if (existsSync(dest)) { trace("bootstrap", { output: "extra repo present: " + r.dir }); continue; }
+    try {
+      const url = \`https://x-access-token:\${PAT}@\${r.url}\`;
+      execFileSync("git", ["clone", "--depth", "1", url, dest], { stdio: "inherit" });
+      trace("bootstrap", { output: "cloned extra repo " + r.url + " -> " + r.dir });
+    } catch (err) {
+      trace("bootstrap", { output: "extra repo clone FAILED (" + r.url + "): " + (err instanceof Error ? err.message : String(err)) });
+    }
   }
 }
 

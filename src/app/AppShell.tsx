@@ -32,7 +32,7 @@ async function syncRedirect(): Promise<never> {
 
 export const PLUM = "#773D72";
 
-export type NavKey = "home" | "meetings" | "sessions" | "plays" | "library" | "tasks" | "board" | "inbox" | "settings";
+export type NavKey = "home" | "meetings" | "sessions" | "plays" | "marketing" | "library" | "tasks" | "board" | "inbox" | "settings";
 
 // "board" stays in NavKey for the /board/[id] detail page, but the Board tab is
 // gone — Tasks (list + board view + filters/search/sort) replaces it.
@@ -41,6 +41,7 @@ const NAV: Array<{ key: NavKey; label: string; href: string }> = [
   { key: "meetings", label: "Meetings", href: "/meetings" },
   { key: "sessions", label: "Sessions", href: "/s" },
   { key: "plays", label: "Plays", href: "/plays" },
+  { key: "marketing", label: "Marketing", href: "/marketing" },
   { key: "library", label: "Library", href: "/library" },
   { key: "tasks", label: "Tasks", href: "/tasks" },
   { key: "inbox", label: "Inbox", href: "/board/inbox" },

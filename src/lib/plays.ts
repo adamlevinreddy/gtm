@@ -17,7 +17,8 @@ export type PlayId =
   | "account_catchup"
   | "redline"
   | "collateral"
-  | "accounts_quiet";
+  | "accounts_quiet"
+  | "blog_post";
 
 export type PlayContext = { botId?: string; account?: string };
 
@@ -120,6 +121,25 @@ export const PLAYS: Record<PlayId, Play> = {
     onCard: false,
     run: () =>
       `Find our qualified deals / SQLs that could move but haven't had a touch in ~3 weeks, with context on any behind-the-scenes email — the accounts slipping through the cracks. Rank by how warm they were and what would re-open them.`,
+  },
+  // Marketing surface (not a post-meeting card). Launched from /marketing, where
+  // it runs on Fable with the website source cloned + the marketing corpus.
+  blog_post: {
+    id: "blog_post",
+    label: "Create a new blog post",
+    emoji: "✍️",
+    blurb: "Draft a Reddy blog post in our voice — grounded in the site, our marketing library, and real customer calls.",
+    onCard: false,
+    run: () =>
+      `Let's create a new blog post for Reddy. First, in ONE short message, ask me what it should be about — topic/angle, audience, and any must-hit points — unless I've already told you. Then draft it:
+` +
+      `• VOICE + FRESHNESS: ground it in Reddy's real voice and positioning. Read our marketing materials under corpora/marketing/, and look at our CURRENT website (the source is cloned at ../website-src — read the product/marketing pages and the existing blog posts) so you match our tone, keep claims accurate, and don't repeat a post we've already published. Crawl the live site (reddy.io) if you need the rendered/most-recent version.
+` +
+      `• SUBSTANCE: pull real material from customer conversations — grep the meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) for relevant stories, quotes, objections, and outcomes worth citing (anonymize customer names unless they're clearly public references).
+` +
+      `• DELIVER (Markdown, in the chat): a working title + 2–3 alternates, a one-line SEO meta description, 1–3 suggested target keywords, then the full body with clear H2/H3 structure. Sharp and concrete — no fluff, no AI throat-clearing.
+` +
+      `Show me the draft here for review and iterate with me. Do NOT publish anything.`,
   },
 };
 
