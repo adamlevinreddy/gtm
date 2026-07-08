@@ -49,6 +49,9 @@ type OneshotRequest = {
   requestId?: string;
   // Lane the request came from. "email" unlocks file attachments in the driver.
   lane?: string;
+  // Override the Anthropic model for this run (e.g. the Marketing/blog lane sends
+  // "claude-fable-5"). Unset → the driver's default (Opus 4.8).
+  model?: string;
   // Clean human-typed text for the sessions mirror (question often carries
   // injected context blocks the user never wrote).
   displayText?: string;
@@ -169,6 +172,7 @@ export async function POST(req: NextRequest) {
       composioMcp,
       granolaMcp,
       isSharedChannel: false,
+      model: typeof body.model === "string" && body.model.length > 0 ? body.model : undefined,
       mcpRequestId: requestId,
       // Web-lane uploads, normalized to the driver's file shape (drop any
       // without a fetchable url, exactly like the Slack lane).

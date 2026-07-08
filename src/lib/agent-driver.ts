@@ -13,6 +13,10 @@ export type AgentMeta = {
   composioMcp: { url: string; headers: Record<string, string> } | null;
   granolaMcp: { url: string; headers: Record<string, string> } | null;
   isSharedChannel: boolean;
+  // Override the Anthropic model for this run. Defaults to Opus 4.8 in the
+  // driver when unset. The Marketing lane sets this to "claude-fable-5" so the
+  // blog-writing chat runs on Fable while every other surface stays on Opus.
+  model?: string;
   // When set, this run was triggered by /api/agent/oneshot from the MCP
   // server. post_slack_message goes to a result buffer (not Slack);
   // upload_slack_pdf is rejected. End-of-run writes the buffered answer
@@ -612,7 +616,7 @@ async function main() {
   }
 
   const queryOptions = {
-    model: "claude-opus-4-8",
+    model: META.model || "claude-opus-4-8",
     systemPrompt: { type: "preset", preset: "claude_code", append: ${JSON.stringify(APPEND_SYSTEM_PROMPT)} },
     cwd: "/vercel/sandbox/workspace",
     additionalDirectories: ["/vercel/sandbox"],
