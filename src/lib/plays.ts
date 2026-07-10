@@ -134,17 +134,17 @@ export const PLAYS: Record<PlayId, Play> = {
     blurb: "Mine this week's calls for a NEW, SEO/GEO-winnable blog topic we haven't covered — then draft it.",
     onCard: false,
     run: () =>
-      `Suggest a new blog post based on our customer conversations THIS WEEK. Work in this order and show your reasoning briefly:
+      `Suggest a new blog post based on the THEMES from our customer conversations this week. Follow the BLOG GUARDRAILS in your instructions (calls are for topics + context only, never reproduced; Reddy's POV leads; one thesis; no competitor size knocks; no em dashes). Work in this order and show your reasoning briefly:
 ` +
-      `1) THEMES: read this week's meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) and pull the recurring pain points / stories that keep coming up.
+      `1) THEMES: read this week's meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) to learn what leaders keep struggling with. Take the IDEAS only, never a quote, stat, or identity.
 ` +
-      `2) RULE OUT REPEATS: read our current published posts from the site source (../website-src — e.g. client/src/data/blogData.ts and shared/blogMeta.ts, including any not linked on /blog) and exclude anything we've already written. We want NEW content.
+      `2) RULE OUT REPEATS: read our published posts from the site source (../website-src, e.g. client/src/data/blogData.ts and shared/blogMeta.ts, including any not linked on /blog) and exclude anything we've already written. We want NEW content.
 ` +
-      `3) SEO / GEO IS THE BAR (not internal resonance): for each candidate, judge it by what people actually search or ask an LLM — check the real search landscape (WebFetch). Favor topics with genuine, recurring queries AND thin/weak existing results we can beat. A theme that's great for customers but nobody searches is NOT a good pick — say so.
+      `3) SEO / GEO IS THE BAR (not internal resonance): judge each candidate by what people actually search or ask an LLM (check the real landscape with WebFetch). Favor topics with genuine recurring queries AND thin existing results we can beat. A theme that's great for customers but nobody searches is NOT a good pick; say so.
 ` +
-      `4) RECOMMEND ONE, with 2–3 title options phrased the way people actually search, plus a one-line why-it-wins (search demand + how we out-rank what's there today).
+      `4) RECOMMEND ONE, with 2 to 3 title options phrased the way people actually search, plus a one-line why-it-wins (search demand + how we out-rank what's there today).
 ` +
-      `WHEN I SAY GO (or if I already told you the angle), draft the full post: follow the format of our Buyer's Guide / "10 best" posts (definitional opener, query-shaped H2s, stats welded to claims, a comparison table, and an FAQ block for the GEO play). Cover our FULL product suite where relevant (Simulations, Live Assist, Auto QA, coaching, Reporting) — not just simulations. Anonymize any named customers by default (keep the stories + stats, drop the names). Deliver in Markdown with title + alternates, an SEO meta description, and target keywords. Draft in the chat for review — do NOT publish.`,
+      `WHEN I SAY GO (or if I already gave you the angle), draft the full post around ONE clear thesis: lead with Reddy's own point of view, follow the shape of our Buyer's Guide / "10 best" posts (definitional opener, query-shaped H2s, a comparison table, an FAQ block for the GEO play), and cover our FULL product suite where relevant (Simulations, Live Assist, Auto QA, coaching, Reporting), not just simulations. External stats are optional and must follow guardrail 2. Deliver in Markdown with title + alternates, an SEO meta description, and target keywords. Draft in the chat for review; do NOT publish.`,
   },
   blog_post: {
     id: "blog_post",
@@ -153,13 +153,13 @@ export const PLAYS: Record<PlayId, Play> = {
     blurb: "Draft a Reddy blog post in our voice — grounded in the site, our marketing library, and real customer calls.",
     onCard: false,
     run: () =>
-      `Let's create a new blog post for Reddy. First, in ONE short message, ask me what it should be about — topic/angle, audience, and any must-hit points — unless I've already told you. Then draft it:
+      `Let's create a new blog post for Reddy. Follow the BLOG GUARDRAILS in your instructions (calls for topics + context only, never reproduced; Reddy's POV leads; one clear thesis; no competitor size knocks; consistent customer naming; no em dashes). First, in ONE short message, ask me what it should be about (topic/angle, audience, must-hit points) unless I've already told you. Then draft it:
 ` +
-      `• VOICE + FRESHNESS: ground it in Reddy's real voice and positioning. Read our marketing materials under corpora/marketing/, and look at our CURRENT website (the source is cloned at ../website-src — read the product/marketing pages and the existing blog posts) so you match our tone, keep claims accurate, and don't repeat a post we've already published. Crawl the live site (reddy.io) if you need the rendered/most-recent version.
+      `• VOICE + FRESHNESS: ground it in Reddy's real voice and positioning. Read our marketing materials under corpora/marketing/, and look at our CURRENT website (source cloned at ../website-src, read the product/marketing pages and the existing blog posts in client/src/data/blogData.ts) so you match our tone, keep claims accurate, and don't repeat a post we've already published.
 ` +
-      `• SUBSTANCE: pull real material from customer conversations — grep the meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) for relevant stories, quotes, objections, and outcomes worth citing (anonymize customer names unless they're clearly public references).
+      `• SUBSTANCE: build the piece on ONE thesis grounded in Reddy's point of view. Use customer conversations only to understand the problem, never to quote, cite a stat, or attribute anything (guardrail 1).
 ` +
-      `• DELIVER (Markdown, in the chat): a working title + 2–3 alternates, a one-line SEO meta description, 1–3 suggested target keywords, then the full body with clear H2/H3 structure. Sharp and concrete — no fluff, no AI throat-clearing.
+      `• DELIVER (Markdown, in the chat): a working title + 2 to 3 alternates, a one-line SEO meta description, 1 to 3 suggested target keywords, then the full body with clear H2/H3 structure carrying the thesis. Sharp and concrete, no fluff.
 ` +
       `Show me the draft here for review and iterate with me. Do NOT publish anything.`,
   },
