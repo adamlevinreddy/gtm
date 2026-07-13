@@ -32,9 +32,11 @@ export async function GET(req: NextRequest) {
   }
 
   let stateEmail: string | null = null;
+  let stateReturn: string | null = null;
   try {
-    const parsed = JSON.parse(decodeURIComponent(stateRaw)) as { email?: string };
+    const parsed = JSON.parse(decodeURIComponent(stateRaw)) as { email?: string; return?: string };
     stateEmail = parsed.email ?? null;
+    stateReturn = parsed.return ?? null;
   } catch {
     // fall through with null
   }
@@ -77,7 +79,14 @@ export async function GET(req: NextRequest) {
     });
     await kvLinkCalendarToEmail(calendarId, email);
 
-    const successUrl = `${baseUrl}/api/oauth/recall-calendar/success?email=${encodeURIComponent(email)}&calendar_id=${encodeURIComponent(calendarId)}`;
+    // Web-initiated connects (/settings) return to the settings page so the
+    // row flips green in place; Slack-initiated ones keep the standalone
+    // success page ("you can close this tab"). Only the literal "settings"
+    // value redirects — state is attacker-visible, never an open redirect.
+    const successUrl =
+      stateReturn === "settings"
+        ? `${baseUrl}/settings?connected=recall-calendar`
+        : `${baseUrl}/api/oauth/recall-calendar/success?email=${encodeURIComponent(email)}&calendar_id=${encodeURIComponent(calendarId)}`;
     return NextResponse.redirect(successUrl, 302);
   } catch (err) {
     console.error(

@@ -10,6 +10,7 @@ import { warmLabels } from "@/lib/company-resolver";
 import {
   listAllCalendars,
   listCalendarEventsByStart,
+  kvLookupCalendarForEmail,
   type CalendarEvent,
 } from "@/lib/recall-calendar-v2";
 import { getBlockChecker, eventUid } from "@/lib/meeting-optout";
@@ -122,7 +123,7 @@ export default async function HomePage() {
   // ONE meetings read (30d) feeds today/overnight/needs-you AND the account
   // rollup — the review caught a second serial 30d fetch that doubled the
   // page's KV work for identical data.
-  const [labeled, upcoming, myTasks, overnightTasks, connStatus] = await Promise.all([
+  const [labeled, upcoming, myTasks, overnightTasks, connStatus, notetakerCalId] = await Promise.all([
     pat
       ? labeledMeetings(pat, 30, 400)
       : Promise.resolve({ meetings: [] as LabeledMeeting[], uncachedEvidence: [] }),
@@ -144,11 +145,16 @@ export default async function HomePage() {
     // Connection status for the post-sign-in "connect your tools" nudge.
     // Best-effort — null (unknown / Composio off) shows no banner.
     process.env.COMPOSIO_API_KEY ? getConnectionStatus(viewer).catch(() => null) : Promise.resolve(null),
+    // Notetaker calendar: KV mapping only (written by the OAuth callback) —
+    // a plain "never connected" signal, no Recall API round-trip. Revoked
+    // calendars still surface accurately on /settings.
+    kvLookupCalendarForEmail(viewer),
   ]);
 
   const missingTools = connStatus
     ? availableToolkits().filter((t) => !connStatus[t.slug]).map((t) => t.label)
     : [];
+  if (!notetakerCalId) missingTools.push("Reddy Notetaker");
 
   if (labeled.uncachedEvidence.length > 0) {
     after(async () => {

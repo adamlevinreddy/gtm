@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getConnectionStatus, availableToolkits, TOOLKITS, type ToolkitSlug } from "@/lib/composio";
 import { isConnected as isGranolaConnected } from "@/lib/granola";
+import { isCalendarConnectedForEmail } from "@/lib/recall-calendar-v2";
 import { PLUM, BORDER, BORDER_SOFT, OK } from "@/lib/tokens";
 import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
@@ -72,21 +73,26 @@ export default async function SettingsPage({
   if (!viewer) return <Gate />;
   const sp = await searchParams;
 
-  let connections: Record<ToolkitSlug, boolean> | null = null;
-  let granolaOn = false;
-  if (process.env.COMPOSIO_API_KEY) {
-    [connections, granolaOn] = await Promise.all([
-      getConnectionStatus(viewer).catch(() => null),
-      isGranolaConnected(viewer).catch(() => false),
-    ]);
-  }
+  // Granola + notetaker status are our own KV/Recall reads — independent of
+  // Composio, so they render even when the Composio status check is down.
+  const [connections, granolaOn, notetakerOn] = await Promise.all([
+    process.env.COMPOSIO_API_KEY
+      ? getConnectionStatus(viewer).catch(() => null)
+      : Promise.resolve<Record<ToolkitSlug, boolean> | null>(null),
+    isGranolaConnected(viewer).catch(() => false),
+    isCalendarConnectedForEmail(viewer).catch(() => false),
+  ]);
   const toolkits = availableToolkits();
   const emailQ = encodeURIComponent(viewer);
 
-  // Post-OAuth banner (Composio returns to ?connected=<slug>).
-  const justConnected = sp.connected
-    ? TOOLKITS.find((t) => t.slug === sp.connected)?.label ?? sp.connected
-    : null;
+  // Post-OAuth banner (Composio returns to ?connected=<slug>; the notetaker
+  // flow returns to ?connected=recall-calendar).
+  const justConnected =
+    sp.connected === "recall-calendar"
+      ? "Reddy Notetaker"
+      : sp.connected
+        ? TOOLKITS.find((t) => t.slug === sp.connected)?.label ?? sp.connected
+        : null;
   const connectError = sp.connect === "error" || sp.connect === "badslug";
 
   return (
@@ -116,8 +122,8 @@ export default async function SettingsPage({
             </div>
           )}
 
-          {connections ? (
-            <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4">
+            {connections ? (
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                   Core — connect these
@@ -133,18 +139,30 @@ export default async function SettingsPage({
                   ))}
                 </div>
               </div>
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                  Meetings <span className="normal-case font-normal text-zinc-400">(optional — the notetaker already covers calls)</span>
-                </p>
+            ) : (
+              <p className="text-sm text-zinc-400">
+                Connection status unavailable right now — the tools still work from Slack.
+              </p>
+            )}
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                Meetings
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <ConnRow
+                  label="Reddy Notetaker"
+                  connected={notetakerOn}
+                  href={`/api/oauth/recall-calendar/start?email=${emailQ}&return=settings`}
+                />
                 <ConnRow label="Granola" connected={granolaOn} href={`/api/oauth/granola/start?email=${emailQ}`} />
               </div>
+              <p className="mt-2 text-xs text-zinc-400">
+                Connect the notetaker once and it auto-joins meetings on your calendar, posting the
+                recording + transcript to the team&apos;s knowledge base. Granola is optional — the
+                notetaker already covers calls.
+              </p>
             </div>
-          ) : (
-            <p className="text-sm text-zinc-400">
-              Connection status unavailable right now — the tools still work from Slack.
-            </p>
-          )}
+          </div>
         </Section>
 
         <Section

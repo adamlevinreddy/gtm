@@ -451,3 +451,15 @@ export async function kvLookupEmailForCalendar(calendarId: string): Promise<stri
 export async function kvLookupCalendarForEmail(email: string): Promise<string | null> {
   return (await kv.get<string>(kvKeyEmailToCalendar(email)).catch(() => null)) ?? null;
 }
+
+// "Is this teammate's notetaker calendar live?" — for the web connect UI.
+// A calendar counts as connected unless Recall reports it "disconnected"
+// (revoked refresh token → needs a re-consent) or it no longer exists.
+// "connecting" (the brief post-OAuth state) counts as connected so the
+// settings row doesn't flash back to "Connect" right after the flow.
+export async function isCalendarConnectedForEmail(email: string): Promise<boolean> {
+  const calendarId = await kvLookupCalendarForEmail(email);
+  if (!calendarId) return false;
+  const calendar = await getRecallCalendar(calendarId).catch(() => null);
+  return !!calendar && calendar.status !== "disconnected";
+}
