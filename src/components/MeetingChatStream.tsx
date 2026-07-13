@@ -67,7 +67,7 @@ export default function MeetingChatStream({
    *  the Marketing surface points this at /api/marketing/chat (Fable + site). */
   endpoint?: string;
   /** Which plays the launcher offers (default: the post-meeting card plays).
-   *  The Marketing surface passes just its own plays, e.g. ["blog_post"]. */
+   *  The Marketing surface passes just its own plays, e.g. ["blog"]. */
   playIds?: PlayId[];
   /** Persistent action buttons rendered below the composer (always visible),
    *  each of which sends its `prompt` as a turn. Marketing uses this for

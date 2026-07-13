@@ -81,7 +81,7 @@ export default function MarketingClient({ materials }: { materials: LibraryFile[
           unscoped
           endpoint={MARKETING_CHAT_ENDPOINT}
           playIds={MARKETING_PLAY_IDS}
-          suggestPlay="blog_suggest"
+          suggestPlay="blog"
           title="Marketing studio · Fable"
           scopeLabel="Fable"
           placeholder="Describe the blog post you want to write…"

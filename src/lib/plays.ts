@@ -18,8 +18,7 @@ export type PlayId =
   | "redline"
   | "collateral"
   | "accounts_quiet"
-  | "blog_suggest"
-  | "blog_post";
+  | "blog";
 
 export type PlayContext = { botId?: string; account?: string };
 
@@ -125,43 +124,35 @@ export const PLAYS: Record<PlayId, Play> = {
   },
   // Marketing surface (not a post-meeting card). Launched from /marketing, where
   // it runs on Fable with the website source cloned + the marketing corpus.
-  // The instruction is tuned from a real session so the FIRST answer is already
-  // SEO-vetted — no need to re-prompt for search-fit, full-suite, or anonymizing.
-  blog_suggest: {
-    id: "blog_suggest",
-    label: "Suggest this week's blog",
-    emoji: "🗞️",
-    blurb: "Mine this week's calls for a NEW, SEO/GEO-winnable blog topic we haven't covered — then draft it.",
-    onCard: false,
-    run: () =>
-      `Suggest a new blog post based on the THEMES from our customer conversations this week. Follow the BLOG GUARDRAILS in your instructions (calls are for topics + context only, never reproduced; Reddy's POV leads; one thesis; no competitor size knocks; no em dashes). Work in this order and show your reasoning briefly:
-` +
-      `1) THEMES: read this week's meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) to learn what leaders keep struggling with. Take the IDEAS only, never a quote, stat, or identity.
-` +
-      `2) RULE OUT REPEATS: read our published posts from the site source (../website-src, e.g. client/src/data/blogData.ts and shared/blogMeta.ts, including any not linked on /blog) and exclude anything we've already written. We want NEW content.
-` +
-      `3) SEO / GEO IS THE BAR (not internal resonance): judge each candidate by what people actually search or ask an LLM (check the real landscape with WebFetch). Favor topics with genuine recurring queries AND thin existing results we can beat. A theme that's great for customers but nobody searches is NOT a good pick; say so.
-` +
-      `4) RECOMMEND ONE, with 2 to 3 title options phrased the way people actually search, plus a one-line why-it-wins (search demand + how we out-rank what's there today).
-` +
-      `WHEN I SAY GO (or if I already gave you the angle), draft the full post around ONE clear thesis: lead with Reddy's own point of view, follow the shape of our Buyer's Guide / "10 best" posts (definitional opener, query-shaped H2s, a comparison table, an FAQ block for the GEO play), and cover our FULL product suite where relevant (Simulations, Live Assist, Auto QA, coaching, Reporting), not just simulations. External stats are optional and must follow guardrail 2. Deliver in Markdown with title + alternates, an SEO meta description, and target keywords. Draft in the chat for review; do NOT publish.`,
-  },
-  blog_post: {
-    id: "blog_post",
-    label: "Create a new blog post",
+  // ONE play for the whole blog motion: it opens by asking what to look at
+  // (last week's meetings, Search Console data, a given angle), then researches
+  // the chosen lanes and drafts. The BLOG GUARDRAILS (1-14) and the copywriting
+  // constitution live in the /api/marketing/chat preamble, which governs every
+  // turn; this play carries the workflow.
+  blog: {
+    id: "blog",
+    label: "Write a new blog",
     emoji: "✍️",
-    blurb: "Draft a Reddy blog post in our voice — grounded in the site, our marketing library, and real customer calls.",
+    blurb: "The whole blog motion in one play — mine meetings and Search Console for the topic, research the live landscape, draft in Reddy's voice.",
     onCard: false,
     run: () =>
-      `Let's create a new blog post for Reddy. Follow the BLOG GUARDRAILS in your instructions (calls for topics + context only, never reproduced; Reddy's POV leads; one clear thesis; no competitor size knocks; consistent customer naming; no em dashes). First, in ONE short message, ask me what it should be about (topic/angle, audience, must-hit points) unless I've already told you. Then draft it:
+      `Help me write a new blog post for Reddy. The BLOG GUARDRAILS and the copywriting constitution in your instructions apply to everything below.
 ` +
-      `• VOICE + FRESHNESS: ground it in Reddy's real voice and positioning. Read our marketing materials under corpora/marketing/, and look at our CURRENT website (source cloned at ../website-src, read the product/marketing pages and the existing blog posts in client/src/data/blogData.ts) so you match our tone, keep claims accurate, and don't repeat a post we've already published.
+      `ASK ME FIRST: in ONE short message, ask: "Is there anything specific you'd like me to look at for this blog? I can mine the last week of meetings for topics, check our SEO / Search Console data for winnable queries, work from an angle you already have, or any mix." Then STOP and wait for my answer before researching or drafting. Skip the question only if I already gave you the topic or angle.
 ` +
-      `• SUBSTANCE: build the piece on ONE thesis grounded in Reddy's point of view. Use customer conversations only to understand the problem, never to quote, cite a stat, or attribute anything (guardrail 1).
+      `THEN RESEARCH the lanes my answer calls for (briefly show your reasoning):
 ` +
-      `• DELIVER (Markdown, in the chat): a working title + 2 to 3 alternates, a one-line SEO meta description, 1 to 3 suggested target keywords, then the full body with clear H2/H3 structure carrying the thesis. Sharp and concrete, no fluff.
+      `• MEETINGS: read the last week's transcripts (corpora/success/customers/*/meetings/*/transcript.txt) to learn what leaders keep struggling with. Take the IDEAS only, never a quote, stat, or identity (guardrail 1).
 ` +
-      `Show me the draft here for review and iterate with me. Do NOT publish anything.`,
+      `• SEARCH DATA (supermetrics MCP): query Google Search Console (sc-domain:reddy.io) per guardrail 10 — the winnable zone is non-brand queries at position 5 to 15 with real impressions, plus question-shaped queries AI engines lift answers from. Ignore CTR on non-brand terms. Name the GSC data behind each pick. Queries are async (data_query, then get_async_query_results), so fire them early and keep working while they run.
+` +
+      `• LANDSCAPE (WebSearch, then WebFetch to read): what ranks today for each candidate query, and what competitors have published and how they position their features RIGHT NOW — never from memory; their sites and content change. Favor topics with genuine recurring queries AND thin or stale existing results we can beat.
+` +
+      `• REPEATS + VOICE: read our published posts in the site source (../website-src, client/src/data/blogData.ts and shared/blogMeta.ts, including any not linked on /blog) so we never repeat a topic, and corpora/marketing/ for voice and positioning.
+` +
+      `RECOMMEND ONE topic (unless I already fixed it): 2 to 3 title options phrased the way people actually search, plus a one-line why-it-wins naming the GSC and landscape evidence. A theme that's great for customers but nobody searches is NOT a good pick; say so.
+` +
+      `WHEN I SAY GO, draft the full post around ONE clear thesis: lead with Reddy's own point of view, follow the shape of our Buyer's Guide / "10 best" posts (definitional opener, query-shaped H2s, a comparison table where it fits, and a question-shaped liftable FAQ for AI citation per guardrail 11), and cover our FULL product suite where relevant (Simulations, Live Assist, Auto QA, coaching, Reporting), not just simulations. External stats are optional and must follow guardrail 2. Deliver in Markdown in the chat: a working title + 2 to 3 alternates, a one-line SEO meta description, 1 to 3 target keywords, then the full body. Draft here for review and iterate with me; do NOT publish.`,
   },
 };
 

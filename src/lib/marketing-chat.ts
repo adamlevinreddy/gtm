@@ -7,7 +7,7 @@ import type { PlayId } from "@/lib/plays";
 
 export const MARKETING_CHAT_ENDPOINT = "/api/marketing/chat";
 
-export const MARKETING_PLAY_IDS: PlayId[] = ["blog_suggest", "blog_post"];
+export const MARKETING_PLAY_IDS: PlayId[] = ["blog"];
 
 export const MARKETING_FOOTER_ACTIONS: Array<{ label: string; emoji?: string; prompt: string }> = [
   {

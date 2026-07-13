@@ -63,10 +63,11 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
   - \`corpora/marketing/\` — channel strategy + per-campaign artifacts.
   - \`corpora/deliverables/{slug}/\` — files previously generated + emailed via the bot (proposals, decks, etc.), kept for cross-surface pickup. When asked to "pull up / resend / find" a past deliverable, \`git pull\` then glob here (e.g. \`ls corpora/deliverables/*\` and grep the slug) — and re-share it (Slack: \`upload_slack_pdf\` that path; email: same).
   - \`design-system/\` — Reddy visual design tokens (FlechaS + Inter fonts, color palette). Embedded in every PDF we generate.
-- You have \`Read\`, \`Write\`, \`Edit\`, \`Bash\`, \`Glob\`, \`Grep\`, \`WebFetch\`, \`TodoWrite\`, \`Task\` tools available, plus the \`reddy-gtm\` MCP server with three Slack-specific tools:
+- You have \`Read\`, \`Write\`, \`Edit\`, \`Bash\`, \`Glob\`, \`Grep\`, \`WebFetch\`, \`WebSearch\` (query the live web — use it for anything time-sensitive: current competitor features/positioning, market landscape, what ranks for a search query today), \`TodoWrite\`, \`Task\` tools available, plus the \`reddy-gtm\` MCP server with three Slack-specific tools:
   - \`post_slack_message(text)\` — reply in the current thread (mrkdwn)
   - \`upload_slack_pdf(filePath, title)\` — attach a file
   - \`fetch_url(url, savePath)\` — download a URL (the built-in WebFetch doesn't save binaries; use this for logos/images)
+- **Supermetrics MCP** (\`mcp__supermetrics__*\`): the marketing data warehouse — Google Search Console (property \`sc-domain:reddy.io\`), Google Analytics 4, Google Ads, and LinkedIn Ads. Flow: \`get_today\` → \`data_source_discovery\` → \`accounts_discovery\` → \`field_discovery\` → \`data_query\` → \`get_async_query_results\`. Queries are ASYNC — submit early, do other work while they run. Use GSC for real search-demand data (impressions, clicks, average position by query/page) instead of guessing keywords.
 - **Per-user external tools (via Composio MCP)**: when the user has connected their accounts (by saying "@Reddy-GTM set me up" or running \`/reddy-connect\`), you'll have access to the \`composio\` MCP server with tools from: Gmail, Google Calendar, Google Drive, Google Sheets, Google Docs, HubSpot, LinkedIn, Apollo, DocuSign. Only toolkits the user has actually connected will work. The turn payload includes a \`connectedToolkits\` array so you know which are live; if it's missing \`gmail\` / \`hubspot\` / etc., tell the user in Slack: "You haven't connected X yet — say '@Reddy-GTM set me up' or run \`/reddy-connect\` and click the link." Don't try disconnected tools; they'll error.
   - These run AS the Slack user who mentioned you — reading their Gmail, writing their drafts, reading their HubSpot deals, accessing calendars they have permission to see. Everything is scoped to that user's permissions in each service.
   - Common tool names you'll see on the \`composio\` server: \`GMAIL_FETCH_EMAILS\`, \`GMAIL_CREATE_EMAIL_DRAFT\`, \`GMAIL_SEND_EMAIL\`, \`GOOGLECALENDAR_EVENTS_LIST\`, \`GOOGLECALENDAR_FIND_FREE_SLOTS\`, \`GOOGLECALENDAR_CREATE_EVENT\`, \`GOOGLEDRIVE_FIND_FILE\`, \`GOOGLEDRIVE_DOWNLOAD_FILE\`, \`GOOGLESHEETS_*\`, \`GOOGLEDOCS_*\`, \`HUBSPOT_*\`, \`LINKEDIN_*\`, \`APOLLO_*\`, \`DOCUSIGN_*\`.
@@ -636,6 +637,20 @@ async function main() {
     trace("info", { output: "Granola MCP registered for " + META.slackUserEmail });
   }
 
+  // Supermetrics MCP — the marketing data warehouse (Google Search Console,
+  // GA4, Google Ads, LinkedIn Ads), authed by the workspace-level key that
+  // both lanes already pass into the sandbox env. Same hosted Streamable-HTTP
+  // shape as Granola. Data queries are ASYNC on Supermetrics' side
+  // (data_query submits, get_async_query_results polls).
+  if (process.env.SUPERMETRICS_API_KEY) {
+    mcpServers["supermetrics"] = {
+      type: "http",
+      url: "https://mcp.supermetrics.com/mcp",
+      headers: { Authorization: "Bearer " + process.env.SUPERMETRICS_API_KEY },
+    };
+    trace("info", { output: "Supermetrics MCP registered" });
+  }
+
   const queryOptions = {
     model: META.model || "claude-opus-4-8",
     systemPrompt: { type: "preset", preset: "claude_code", append: ${JSON.stringify(APPEND_SYSTEM_PROMPT)} },
@@ -643,7 +658,7 @@ async function main() {
     additionalDirectories: ["/vercel/sandbox"],
     settingSources: ["project"],
     allowedTools: [
-      "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "TodoWrite",
+      "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite",
       // Subagent fan-out + orchestration. "Agent" is the current SDK name for the
       // subagent tool (renamed from "Task"); keep both so it works across SDK versions.
       // "Workflow" lets the bot orchestrate large off-thread batch jobs (audits,
