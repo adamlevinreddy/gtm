@@ -144,7 +144,7 @@ export const PLAYS: Record<PlayId, Play> = {
 ` +
       `• MEETINGS: read the last week's transcripts (corpora/success/customers/*/meetings/*/transcript.txt) to learn what leaders keep struggling with. Take the IDEAS only, never a quote, stat, or identity (guardrail 1).
 ` +
-      `• SEARCH DATA (supermetrics MCP): query Google Search Console (sc-domain:reddy.io) per guardrail 10 — the winnable zone is non-brand queries at position 5 to 15 with real impressions, plus question-shaped queries AI engines lift answers from. Ignore CTR on non-brand terms. Name the GSC data behind each pick. Queries are async (data_query, then get_async_query_results), so fire them early and keep working while they run.
+      `• SEARCH DATA (supermetrics MCP): query Google Search Console (sc-domain:reddy.io) per guardrail 10 — the winnable zone is non-brand queries at position 5 to 15 with real impressions, plus question-shaped queries AI engines lift answers from. Ignore CTR on non-brand terms. Name the GSC data behind each pick. For COMPETITOR coverage, pull Semrush Analytics (source id SR) organic keywords — keyword, position, search volume — for the competitor domains in play (zenarate.com and whoever else the topic implicates), and run the gap vs reddy.io: category terms they rank for that we don't are prime targets. Queries are async (data_query, then get_async_query_results), so fire them early and keep working while they run.
 ` +
       `• LANDSCAPE (WebSearch, then WebFetch to read): what ranks today for each candidate query, and what competitors have published and how they position their features RIGHT NOW — never from memory; their sites and content change. Favor topics with genuine recurring queries AND thin or stale existing results we can beat.
 ` +
