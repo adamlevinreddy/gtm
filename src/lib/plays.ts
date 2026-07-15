@@ -168,7 +168,7 @@ export const PLAYS: Record<PlayId, Play> = {
     run: () =>
       `Help me build an outbound sequence. FIRST read the constitution: corpora/marketing/outbound/smykm-guide.md (research method + email anatomy), corpora/marketing/outbound/sequence-templates.md (per-campaign-type skeletons), and corpora/marketing/copywriting-guide.md. The OUTREACH RULES in your instructions apply to everything below.
 ` +
-      `ASK ME FIRST, in ONE short message (skip anything I already told you): (1) campaign type — fresh cold outbound, ABM on named accounts, or reviving people we've talked to before; (2) channels — Instantly email, HeyReach LinkedIn, or both; (3) the audience and where the list is — paste names here or upload a CSV/XLSX with the panel on this page (uploads land in corpora/marketing/uploads/); (4) context — the offer or event, CTA, who's sending and in whose voice; (5) any must-hit points or constraints. Then STOP and wait.
+      `ASK ME FIRST, in ONE short message (skip anything I already told you): (1) campaign type — fresh cold outbound, ABM on named accounts, or reviving people we've talked to before; (2) channels — Instantly email, HeyReach LinkedIn, or both; (3) the audience and where the list is — paste names here or upload a CSV/XLSX with the panel on this page (uploads land in corpora/marketing/uploads/); (4) context — the offer or event, CTA, who's sending and in whose voice, plus the sender's authentic ties beyond the inventory in the guide (anything true that could connect to these prospects); (5) what we already know about these accounts' stack and situation (tools they run, prior conversations) so the value prop can subtract instead of recite; (6) any must-hit points or constraints. Then STOP and wait.
 ` +
       `THEN BUILD, in this order, checking in with me between stages:
 ` +
@@ -176,11 +176,13 @@ export const PLAYS: Record<PlayId, Play> = {
 ` +
       `2) RESEARCH each prospect per the SMYKM guide: fan out parallel subagents (Task tool), one per prospect, covering the four lanes (own posts FIRST, then human, company, space) plus the CRM. Hard rules: nothing older than ~12 months, no fabrication (label VERIFIED vs inferred), verify they still hold the role. For revival campaigns, start from our meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) and HubSpot history: what we discussed, why it stalled, what's changed since.
 ` +
-      `3) PERSONALIZE: fill each prospect's merge fields ({{smykmSubject}}, {{smykmOpener}}, {{hookCallback}}, and whatever the skeleton needs). Where the research surfaced no in-window hook, SAY SO and use the company/space fallback rather than faking depth.
+      `3) DECISION POINTS, before drafting: anything the research turned up that changes the play comes back to me as a QUESTION with options and your recommendation, per the guide's judgment-calls section — role transitions, competitive proof points, stack claims you can't source, missing authentic ties (truth slots), altitude concerns. Never decide silently; never announce a decision you made for me.
 ` +
-      `4) DELIVER in the chat: the full sequence (every step, subject + body; LinkedIn connect notes under 300 characters) plus a per-prospect table of hooks and merge-field values with sources. Iterate with me until approved.
+      `4) PERSONALIZE: fill each prospect's merge fields ({{smykmSubject}}, {{smykmOpener}}, {{hookCallback}}, and whatever the skeleton needs). Subjects follow the sender-element rule (one element must be mine/Reddy's — research alone never makes the subject). Value props are SUBTRACTIVE: concede what the account already has, pitch the gap and the connective tissue. Where the research surfaced no in-window hook, SAY SO and use the company/space fallback (or the space-lingo move) rather than faking depth.
 ` +
-      `5) SETUP (only after I explicitly say to): create the campaign in Instantly via the instantly MCP tools — campaign PAUSED, sequence steps in, leads uploaded with their custom variables — and the LinkedIn sequence in HeyReach via the heyreach MCP or the official HeyReach CLI (per your tool notes; if neither works, tell me and deliver the LinkedIn steps as copy). NEVER activate, launch, send, or delete anything. Report back the campaign IDs and links so I can review in the apps and launch myself.`,
+      `5) DELIVER in the chat: the full sequence (every step, subject + body; LinkedIn connect notes under 300 characters) plus a per-prospect table of hooks and merge-field values with sources, with any [confirm or cut] truth slots called out for my answer. Iterate with me until approved.
+` +
+      `6) SETUP (only after I explicitly say to): create the campaign in Instantly via the instantly MCP tools — campaign PAUSED, sequence steps in, leads uploaded with their custom variables — and the LinkedIn sequence in HeyReach via the heyreach MCP or the official HeyReach CLI (per your tool notes; if neither works, tell me and deliver the LinkedIn steps as copy). NEVER activate, launch, send, or delete anything. Report back the campaign IDs and links so I can review in the apps and launch myself.`,
   },
 };
 
