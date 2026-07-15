@@ -180,9 +180,7 @@ export const PLAYS: Record<PlayId, Play> = {
 ` +
       `4) DELIVER in the chat: the full sequence (every step, subject + body; LinkedIn connect notes under 300 characters) plus a per-prospect table of hooks and merge-field values with sources. Iterate with me until approved.
 ` +
-      `5) SETUP (only after I explicitly say to): create the campaign in Instantly via the instantly MCP tools — campaign PAUSED, sequence steps in, leads uploaded with their custom variables — and the LinkedIn sequence via the heyreach MCP if it's connected (if not, tell me and deliver the LinkedIn steps as copy). NEVER activate, launch, send, or delete anything. Report back the campaign IDs and links so I can review in the apps and launch myself.
-` +
-      `MORE TEMPLATES: if I ask for new templates or variants instead of a live campaign, generate them per the library-growth loop in sequence-templates.md (campaign type + persona + vertical named, slots marked, merge fields in place), deliver here for review, and remind me approved winners go into sequence-templates.md.`,
+      `5) SETUP (only after I explicitly say to): create the campaign in Instantly via the instantly MCP tools — campaign PAUSED, sequence steps in, leads uploaded with their custom variables — and the LinkedIn sequence via the heyreach MCP if it's connected (if not, tell me and deliver the LinkedIn steps as copy). NEVER activate, launch, send, or delete anything. Report back the campaign IDs and links so I can review in the apps and launch myself.`,
   },
 };
 
