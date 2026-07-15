@@ -18,7 +18,8 @@ export type PlayId =
   | "redline"
   | "collateral"
   | "accounts_quiet"
-  | "blog";
+  | "blog"
+  | "outreach";
 
 export type PlayContext = { botId?: string; account?: string };
 
@@ -153,6 +154,35 @@ export const PLAYS: Record<PlayId, Play> = {
       `RECOMMEND ONE topic (unless I already fixed it): 2 to 3 title options phrased the way people actually search, plus a one-line why-it-wins naming the GSC and landscape evidence. A theme that's great for customers but nobody searches is NOT a good pick; say so.
 ` +
       `WHEN I SAY GO, draft the full post around ONE clear thesis: lead with Reddy's own point of view, follow the shape of our Buyer's Guide / "10 best" posts (definitional opener, query-shaped H2s, a comparison table where it fits, and a question-shaped liftable FAQ for AI citation per guardrail 11), and cover our FULL product suite where relevant (Simulations, Live Assist, Auto QA, coaching, Reporting), not just simulations. External stats are optional and must follow guardrail 2. Deliver in Markdown in the chat: a working title + 2 to 3 alternates, a one-line SEO meta description, 1 to 3 target keywords, then the full body. Draft here for review and iterate with me; do NOT publish.`,
+  },
+  // SMYKM outbound sequences across Instantly (email) + HeyReach (LinkedIn).
+  // Same surface/model as the blog play; the OUTREACH RULES in the
+  // /api/marketing/chat preamble govern every turn (draft-only, explicit
+  // approval before any Instantly/HeyReach write).
+  outreach: {
+    id: "outreach",
+    label: "Build an outreach sequence",
+    emoji: "📬",
+    blurb: "SMYKM outbound across Instantly email + HeyReach LinkedIn — campaign skeleton by type, per-prospect research, drafts, and (on your go) setup in the tools.",
+    onCard: false,
+    run: () =>
+      `Help me build an outbound sequence. FIRST read the constitution: corpora/marketing/outbound/smykm-guide.md (research method + email anatomy), corpora/marketing/outbound/sequence-templates.md (per-campaign-type skeletons), and corpora/marketing/copywriting-guide.md. The OUTREACH RULES in your instructions apply to everything below.
+` +
+      `ASK ME FIRST, in ONE short message (skip anything I already told you): (1) campaign type — fresh cold outbound, ABM on named accounts, or reviving people we've talked to before; (2) channels — Instantly email, HeyReach LinkedIn, or both; (3) the audience and where the list is — paste names here or upload a CSV/XLSX with the panel on this page (uploads land in corpora/marketing/uploads/); (4) context — the offer or event, CTA, who's sending and in whose voice; (5) any must-hit points or constraints. Then STOP and wait.
+` +
+      `THEN BUILD, in this order, checking in with me between stages:
+` +
+      `1) SKELETON: assemble the sequence from sequence-templates.md for my campaign type — every step, day offsets, and each slot marked [TEMPLATED] vs [PERSONALIZED] with merge fields in {{camelCase}}. Show me the skeleton + the templated copy for approval BEFORE researching prospects.
+` +
+      `2) RESEARCH each prospect per the SMYKM guide: fan out parallel subagents (Task tool), one per prospect, covering the four lanes (own posts FIRST, then human, company, space) plus the CRM. Hard rules: nothing older than ~12 months, no fabrication (label VERIFIED vs inferred), verify they still hold the role. For revival campaigns, start from our meeting transcripts (corpora/success/customers/*/meetings/*/transcript.txt) and HubSpot history: what we discussed, why it stalled, what's changed since.
+` +
+      `3) PERSONALIZE: fill each prospect's merge fields ({{smykmSubject}}, {{smykmOpener}}, {{hookCallback}}, and whatever the skeleton needs). Where the research surfaced no in-window hook, SAY SO and use the company/space fallback rather than faking depth.
+` +
+      `4) DELIVER in the chat: the full sequence (every step, subject + body; LinkedIn connect notes under 300 characters) plus a per-prospect table of hooks and merge-field values with sources. Iterate with me until approved.
+` +
+      `5) SETUP (only after I explicitly say to): create the campaign in Instantly via the instantly MCP tools — campaign PAUSED, sequence steps in, leads uploaded with their custom variables — and the LinkedIn sequence via the heyreach MCP if it's connected (if not, tell me and deliver the LinkedIn steps as copy). NEVER activate, launch, send, or delete anything. Report back the campaign IDs and links so I can review in the apps and launch myself.
+` +
+      `MORE TEMPLATES: if I ask for new templates or variants instead of a live campaign, generate them per the library-growth loop in sequence-templates.md (campaign type + persona + vertical named, slots marked, merge fields in place), deliver here for review, and remind me approved winners go into sequence-templates.md.`,
   },
 };
 

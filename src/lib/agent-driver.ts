@@ -68,6 +68,8 @@ const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Re
   - \`upload_slack_pdf(filePath, title)\` — attach a file
   - \`fetch_url(url, savePath)\` — download a URL (the built-in WebFetch doesn't save binaries; use this for logos/images)
 - **Supermetrics MCP** (\`mcp__supermetrics__*\`): the marketing data warehouse — Google Search Console (property \`sc-domain:reddy.io\`), Google Analytics 4, Google Ads, and LinkedIn Ads. Flow: \`get_today\` → \`data_source_discovery\` → \`accounts_discovery\` → \`field_discovery\` → \`data_query\` → \`get_async_query_results\`. Queries are ASYNC — submit early, do other work while they run. Use GSC for real search-demand data (impressions, clicks, average position by query/page) instead of guessing keywords.
+- **Instantly MCP** (\`mcp__instantly__*\`, if registered): our cold-email platform — campaigns, sequences, lead lists, analytics (full Instantly V2 API). **HARD RULE: writes are DRAFT-ONLY by default — create campaigns paused, never activate/launch/send/delete anything unless the user explicitly approves that exact action in this conversation.** Reads (analytics, campaign lists) are always fine.
+- **HeyReach MCP** (\`mcp__heyreach__*\`, if registered): LinkedIn outreach — campaigns, sequences, lead lists, inbox. Same HARD RULE as Instantly: draft-only writes, no activation/sending/deleting without explicit user approval in this conversation. (If the MCP isn't registered, the REST key \`HEYREACH_API_KEY\` is in env for read-only curl use.)
 - **Per-user external tools (via Composio MCP)**: when the user has connected their accounts (by saying "@Reddy-GTM set me up" or running \`/reddy-connect\`), you'll have access to the \`composio\` MCP server with tools from: Gmail, Google Calendar, Google Drive, Google Sheets, Google Docs, HubSpot, LinkedIn, Apollo, DocuSign. Only toolkits the user has actually connected will work. The turn payload includes a \`connectedToolkits\` array so you know which are live; if it's missing \`gmail\` / \`hubspot\` / etc., tell the user in Slack: "You haven't connected X yet — say '@Reddy-GTM set me up' or run \`/reddy-connect\` and click the link." Don't try disconnected tools; they'll error.
   - These run AS the Slack user who mentioned you — reading their Gmail, writing their drafts, reading their HubSpot deals, accessing calendars they have permission to see. Everything is scoped to that user's permissions in each service.
   - Common tool names you'll see on the \`composio\` server: \`GMAIL_FETCH_EMAILS\`, \`GMAIL_CREATE_EMAIL_DRAFT\`, \`GMAIL_SEND_EMAIL\`, \`GOOGLECALENDAR_EVENTS_LIST\`, \`GOOGLECALENDAR_FIND_FREE_SLOTS\`, \`GOOGLECALENDAR_CREATE_EVENT\`, \`GOOGLEDRIVE_FIND_FILE\`, \`GOOGLEDRIVE_DOWNLOAD_FILE\`, \`GOOGLESHEETS_*\`, \`GOOGLEDOCS_*\`, \`HUBSPOT_*\`, \`LINKEDIN_*\`, \`APOLLO_*\`, \`DOCUSIGN_*\`.
@@ -651,6 +653,32 @@ async function main() {
     trace("info", { output: "Supermetrics MCP registered" });
   }
 
+  // Instantly MCP — cold-email campaigns/sequences/leads (full V2 API surface).
+  // Header auth per the server's own instructions (x-instantly-api-key; the
+  // /mcp/KEY path form is legacy). Write ops are gated by prompt rules: draft/
+  // paused only, never activate or send without explicit user approval.
+  if (process.env.INSTANTLY_API_KEY) {
+    mcpServers["instantly"] = {
+      type: "http",
+      url: "https://mcp.instantly.ai/mcp",
+      headers: { "x-instantly-api-key": process.env.INSTANTLY_API_KEY },
+    };
+    trace("info", { output: "Instantly MCP registered" });
+  }
+
+  // HeyReach MCP — LinkedIn outreach sequences. HeyReach mints a per-workspace
+  // MCP URL + dedicated MCP key (dashboard: Integrations → HeyReach MCP Server);
+  // the REST HEYREACH_API_KEY is NOT it. Registered only once both env vars are
+  // set. Same draft-only write gating as Instantly.
+  if (process.env.HEYREACH_MCP_URL) {
+    mcpServers["heyreach"] = {
+      type: "http",
+      url: process.env.HEYREACH_MCP_URL,
+      headers: process.env.HEYREACH_MCP_KEY ? { "X-API-Key": process.env.HEYREACH_MCP_KEY } : {},
+    };
+    trace("info", { output: "HeyReach MCP registered" });
+  }
+
   const queryOptions = {
     model: META.model || "claude-opus-4-8",
     systemPrompt: { type: "preset", preset: "claude_code", append: ${JSON.stringify(APPEND_SYSTEM_PROMPT)} },
@@ -697,6 +725,7 @@ async function main() {
       SUPERMETRICS_API_KEY: process.env.SUPERMETRICS_API_KEY ?? "",
       EXA_API_KEY: process.env.EXA_API_KEY ?? "",
       HEYREACH_API_KEY: process.env.HEYREACH_API_KEY ?? "",
+      INSTANTLY_API_KEY: process.env.INSTANTLY_API_KEY ?? "",
       GRANOLA_API_KEY: process.env.GRANOLA_API_KEY ?? "",
       RECALL_API_KEY: process.env.RECALL_API_KEY ?? "",
       RECALL_REGION: process.env.RECALL_REGION ?? "us-west-2",

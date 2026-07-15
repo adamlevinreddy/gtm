@@ -84,13 +84,14 @@ export default function MarketingClient({ materials }: { materials: LibraryFile[
           suggestPlay="blog"
           title="Marketing studio · Fable"
           scopeLabel="Fable"
-          placeholder="Describe the blog post you want to write…"
+          placeholder="Describe the blog post or outreach campaign you want to build…"
           persist
           showCost
           sessionScope={{ label: "Marketing", source: "marketing" }}
           starters={[
             "What have we already published, so we don't repeat ourselves?",
             "Draft a post on how contact centers cut ramp time with Reddy.",
+            "Draft new SMYKM email templates for an ABM campaign into BPOs.",
           ]}
           footerActions={MARKETING_FOOTER_ACTIONS}
         />
