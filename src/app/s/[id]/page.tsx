@@ -10,10 +10,11 @@ import AppShell, { resolveViewer } from "@/app/AppShell";
 import Gate from "@/app/Gate";
 import MeetingChatStream from "@/components/MeetingChatStream";
 import {
-  MARKETING_CHAT_ENDPOINT,
-  MARKETING_PLAY_IDS,
+  MARKETING_MODES,
   MARKETING_FOOTER_ACTIONS,
   isMarketingSession,
+  isMarketingMode,
+  marketingChatEndpoint,
 } from "@/lib/marketing-chat";
 
 export const dynamic = "force-dynamic";
@@ -63,12 +64,15 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
     }
   }
 
-  const scope = found.session.scope as { botIds?: string[]; note?: string; label?: string; source?: string } | null;
+  const scope = found.session.scope as { botIds?: string[]; note?: string; label?: string; source?: string; mode?: string } | null;
   const botIds = scope?.botIds ?? [];
   const scoped = botIds.length > 0;
   // Resuming a Marketing session must stay on Fable (+ website source + the
-  // marketing plays / Save-to-Docs action), not silently fall back to Opus.
+  // marketing plays / Save-to-Docs action), not silently fall back to Opus —
+  // and keep its MODE (blog/outreach/other) so the preamble loads the same
+  // constitution the session started with. Pre-mode sessions → "other".
   const marketing = isMarketingSession(scope);
+  const marketingMode = isMarketingMode(scope?.mode) ? scope.mode : ("other" as const);
 
   return (
     <AppShell active="sessions" viewer={viewer} maxWidth="max-w-4xl">
@@ -90,8 +94,8 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
           initialCostUsd={found.session.costUsd ?? 0}
           {...(marketing
             ? {
-                endpoint: MARKETING_CHAT_ENDPOINT,
-                playIds: MARKETING_PLAY_IDS,
+                endpoint: marketingChatEndpoint(marketingMode),
+                playIds: MARKETING_MODES[marketingMode].playIds,
                 footerActions: MARKETING_FOOTER_ACTIONS,
               }
             : {})}

@@ -47,7 +47,7 @@ export default function MeetingChatStream({
   scopeLabel?: string;
   /** Persisted onto the session scope (label + source) even when unscoped —
    *  e.g. tagging a session started from a Play. */
-  sessionScope?: { label?: string; source?: string };
+  sessionScope?: { label?: string; source?: string; mode?: string };
   starters?: string[];
   /** A play to surface FIRST in the launcher's play buttons (e.g. opened from
    *  the Plays catalog). */

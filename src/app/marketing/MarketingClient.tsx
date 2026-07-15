@@ -4,7 +4,13 @@ import { useRef, useState } from "react";
 import { Upload, FileText, Check, Loader2, ExternalLink } from "lucide-react";
 import { PLUM, PLUM_TINT, BORDER, BORDER_SOFT } from "@/lib/tokens";
 import MeetingChatStream from "@/components/MeetingChatStream";
-import { MARKETING_CHAT_ENDPOINT, MARKETING_PLAY_IDS, MARKETING_FOOTER_ACTIONS } from "@/lib/marketing-chat";
+import {
+  MARKETING_MODES,
+  MARKETING_MODE_ORDER,
+  MARKETING_FOOTER_ACTIONS,
+  marketingChatEndpoint,
+  type MarketingMode,
+} from "@/lib/marketing-chat";
 
 type LibraryFile = {
   path: string;
@@ -25,6 +31,9 @@ function fmtSize(n: number | null): string {
 const fileHref = (path: string) => `/api/library/file?path=${encodeURIComponent(path)}`;
 
 export default function MarketingClient({ materials }: { materials: LibraryFile[] }) {
+  // Mode-first: pick what you're making, THEN the chat opens with that mode's
+  // suggested prompts, plays, and server-side context. null = chooser screen.
+  const [mode, setMode] = useState<MarketingMode | null>(null);
   const [files, setFiles] = useState<LibraryFile[]>(materials);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -72,29 +81,76 @@ export default function MarketingClient({ materials }: { materials: LibraryFile[
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-      {/* The Fable blog chat */}
+      {/* The Fable studio: mode chooser first, then the chat primed for that mode */}
       <div
         className="flex h-[calc(100vh-220px)] min-h-[540px] flex-col overflow-hidden rounded-xl border bg-white"
         style={{ borderColor: BORDER }}
       >
-        <MeetingChatStream
-          unscoped
-          endpoint={MARKETING_CHAT_ENDPOINT}
-          playIds={MARKETING_PLAY_IDS}
-          suggestPlay="blog"
-          title="Marketing studio · Fable"
-          scopeLabel="Fable"
-          placeholder="Describe the blog post or outreach campaign you want to build…"
-          persist
-          showCost
-          sessionScope={{ label: "Marketing", source: "marketing" }}
-          starters={[
-            "What have we already published, so we don't repeat ourselves?",
-            "Draft a post on how contact centers cut ramp time with Reddy.",
-            "Draft new SMYKM email templates for an ABM campaign into BPOs.",
-          ]}
-          footerActions={MARKETING_FOOTER_ACTIONS}
-        />
+        {mode === null ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
+            <div className="text-center">
+              <h2 className="text-lg font-semibold" style={{ color: PLUM }}>
+                What are we making?
+              </h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                Pick a lane and the studio loads the right playbook — or go freeform.
+              </p>
+            </div>
+            <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
+              {MARKETING_MODE_ORDER.map((m) => {
+                const cfg = MARKETING_MODES[m];
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className="flex flex-col items-center gap-2 rounded-xl border px-4 py-6 text-center transition-colors hover:border-zinc-400"
+                    style={{ borderColor: BORDER, background: "#FAFAFA" }}
+                  >
+                    <span aria-hidden className="text-2xl leading-none">{cfg.emoji}</span>
+                    <span className="text-sm font-semibold text-zinc-800">{cfg.label}</span>
+                    <span className="text-xs leading-snug text-zinc-500">{cfg.blurb}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div
+              className="flex shrink-0 items-center justify-between border-b px-4 py-2"
+              style={{ borderColor: BORDER_SOFT, background: PLUM_TINT }}
+            >
+              <span className="text-xs font-medium" style={{ color: PLUM }}>
+                {MARKETING_MODES[mode].emoji} {MARKETING_MODES[mode].label}
+              </span>
+              <button
+                type="button"
+                onClick={() => setMode(null)}
+                className="text-xs text-zinc-400 hover:text-zinc-600"
+              >
+                ← change (starts a new session)
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <MeetingChatStream
+                key={mode}
+                unscoped
+                endpoint={marketingChatEndpoint(mode)}
+                playIds={MARKETING_MODES[mode].playIds}
+                {...(MARKETING_MODES[mode].suggestPlay ? { suggestPlay: MARKETING_MODES[mode].suggestPlay } : {})}
+                title="Marketing studio · Fable"
+                scopeLabel="Fable"
+                placeholder={MARKETING_MODES[mode].placeholder}
+                persist
+                showCost
+                sessionScope={{ label: "Marketing", source: "marketing", mode }}
+                starters={MARKETING_MODES[mode].starters}
+                footerActions={MARKETING_FOOTER_ACTIONS}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Marketing library + upload */}
