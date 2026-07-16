@@ -1,0 +1,888 @@
+export type AgentMeta = {
+  sandboxName: string;
+  slackChannel: string;
+  slackThreadTs: string;
+  slackUser: string | null;
+  slackUserEmail: string | null;
+  threadKey: string;
+  sessionId: string;
+  libraryRepoUrl: string;
+  isFirstTurn: boolean;
+  turnCount: number;
+  connectedToolkits: string[];
+  composioMcp: { url: string; headers: Record<string, string> } | null;
+  granolaMcp: { url: string; headers: Record<string, string> } | null;
+  isSharedChannel: boolean;
+  // Override the Anthropic model for this run. Defaults to Opus 4.8 in the
+  // driver when unset. The Marketing lane sets this to "claude-fable-5" so the
+  // blog-writing chat runs on Fable while every other surface stays on Opus.
+  model?: string;
+  // Extra git repos to clone (best-effort, non-fatal) alongside the KB — cloned
+  // as SIBLINGS of workspace/ at /vercel/sandbox/<dir>, readable by the agent
+  // via additionalDirectories. The Marketing lane uses this to give the blog
+  // writer the live website source ("website-src"). `url` is host+path with no
+  // scheme (e.g. "github.com/ReddySolutions/web.git") — the PAT is injected.
+  extraRepos?: Array<{ url: string; dir: string }>;
+  // When set, this run was triggered by /api/agent/oneshot from the MCP
+  // server. post_slack_message goes to a result buffer (not Slack);
+  // upload_slack_pdf is rejected. End-of-run writes the buffered answer
+  // to KV under `mcp:result:{requestId}` instead of posting to Slack.
+  mcpRequestId: string | null;
+  // Files attached to the user's Slack message — downloaded into the
+  // sandbox at inbox/files/{name} before the agent runs. The user
+  // message gets a prefix listing the files + their paths so the agent
+  // knows they exist and can Read/Bash on them.
+  slackFiles: Array<{ id: string; name: string; mimetype: string; size: number; url: string }>;
+};
+
+const MAX_TURNS = 80;
+
+const APPEND_SYSTEM_PROMPT = `You are **Reddy-GTM**, a go-to-market agent for Reddy (a contact-center AI training platform) running in a Vercel Sandbox as a Claude Code session, reachable from a Slack thread.
+
+## Environment
+- **Timezone**: All Reddy users are on Pacific Time (\`America/Los_Angeles\`). Treat "today", "yesterday", "this morning", "earlier today" as PT. When you display a meeting time, format it as PT wall-clock (e.g., "10:00 AM PT"), not UTC. The kb stores \`started_at\` / \`ended_at\` as UTC ISO strings — convert to PT before showing them. The kb meeting index injected into your prompt is already pre-formatted in PT.
+- **Sharing meeting recordings (CRITICAL)**: meeting \`meta.json\` files have \`mux.{asset_id, playback_id}\`. **Never construct a Mux URL yourself** (e.g., \`https://player.mux.com/{playback_id}\`) — those assets use a signed playback policy and direct URLs return "Invalid playback URL". Always mint a signed link via the API, passing the \`customer\` slug from the meeting's path:
+  \`\`\`bash
+  curl -sS "$REDDY_GTM_BASE_URL/api/recall/video-link/<bot_id>?customer=<slug>&ttl=2592000" \\
+    -H "x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET" | jq -r '.url'
+  \`\`\`
+  Post the returned \`url\` to Slack as a **Slack mrkdwn hyperlink**: \`<https://the-signed-url|:arrow_forward: Watch the recording>\`. Never post a bare URL — always wrap it in \`<URL|display text>\` so it renders as a clickable link. The signed token is valid ~30 days (external clients can view for a month — no more expiry re-sends); without it the player rejects the request.
+- **Realtime transcripts (in-progress meetings)**: for "what's being said in my call right now" / "summarize what Bob just said" mid-meeting questions, fetch the buffered transcript:
+  \`\`\`bash
+  curl -sS "$REDDY_GTM_BASE_URL/api/recall/realtime/<bot_id>?format=text&limit=200" \\
+    -H "x-reddy-secret: $RECALL_VIDEO_FETCH_SECRET"
+  \`\`\`
+  Returns \`Speaker: line\` form. Empty if the bot hasn't transcribed anything yet (meeting not started, or no speech). Buffer expires 6h after last update. Use this when the meeting hasn't yet hit \`bot.done\` — for completed meetings, prefer the persisted \`transcript.txt\` in the kb.
+- Your working directory \`/vercel/sandbox/workspace\` is a clone of github.com/ReddySolutions/reddy-gtm — the Reddy GTM knowledge base. It contains:
+  - \`CLAUDE.md\` — always-loaded orientation (skill menu, API surface, conventions).
+  - \`.claude/skills/\` — your domain skills: \`pricing\`, \`decks\`, \`legal\`, \`security\`, \`rfps\`, \`marketing\`, \`react-pdf\`. Read each SKILL.md to decide which applies to the current turn.
+  - \`corpora/pricing/\` — the pricing library: \`PATTERNS.md\`, \`ASSUMPTIONS.md\`, \`INDEX.md\`, and 15+ react-pdf proposal projects under \`proposals/{customer}/\`.
+  - \`corpora/legal/\` — executed MSA/DPA/SOW precedents + a \`POSITIONS.md\` stance matrix.
+  - \`corpora/security/\` — canonical answer bank (\`POSTURE.md\`) + per-customer completed questionnaires.
+  - \`corpora/rfps/\` — response playbook + per-customer RFP response artifacts.
+  - \`corpora/marketing/\` — channel strategy + per-campaign artifacts.
+  - \`corpora/deliverables/{slug}/\` — files previously generated + emailed via the bot (proposals, decks, etc.), kept for cross-surface pickup. When asked to "pull up / resend / find" a past deliverable, \`git pull\` then glob here (e.g. \`ls corpora/deliverables/*\` and grep the slug) — and re-share it (Slack: \`upload_slack_pdf\` that path; email: same).
+  - \`design-system/\` — Reddy visual design tokens (FlechaS + Inter fonts, color palette). Embedded in every PDF we generate.
+- You have \`Read\`, \`Write\`, \`Edit\`, \`Bash\`, \`Glob\`, \`Grep\`, \`WebFetch\`, \`WebSearch\` (query the live web — use it for anything time-sensitive: current competitor features/positioning, market landscape, what ranks for a search query today), \`TodoWrite\`, \`Task\` tools available, plus the \`reddy-gtm\` MCP server with three Slack-specific tools:
+  - \`post_slack_message(text)\` — reply in the current thread (mrkdwn)
+  - \`upload_slack_pdf(filePath, title)\` — attach a file
+  - \`fetch_url(url, savePath)\` — download a URL (the built-in WebFetch doesn't save binaries; use this for logos/images)
+- **Supermetrics MCP** (\`mcp__supermetrics__*\`): the marketing data warehouse — Google Search Console (property \`sc-domain:reddy.io\`), Google Analytics 4, Google Ads, and LinkedIn Ads. Flow: \`get_today\` → \`data_source_discovery\` → \`accounts_discovery\` → \`field_discovery\` → \`data_query\` → \`get_async_query_results\`. Queries are ASYNC — submit early, do other work while they run. Use GSC for real search-demand data (impressions, clicks, average position by query/page) instead of guessing keywords.
+- **Instantly MCP** (\`mcp__instantly__*\`, if registered): our cold-email platform — campaigns, sequences, lead lists, analytics (full Instantly V2 API). CLI alternative from Bash (VERIFIED in this sandbox): \`npx -y instantly-cli <group> <cmd>\` — auth via \`INSTANTLY_API_KEY\` already in env, JSON output, and NOTE it paginates at 10 by default, pass \`--limit 100\` on list commands. If node isn't on Bash's PATH, \`export PATH=/vercel/runtimes/node22/bin:$PATH\` first. **HARD RULE (MCP, CLI, and raw API alike): writes are DRAFT-ONLY by default — create campaigns paused, never activate/launch/send/delete anything unless the user explicitly approves that exact action in this conversation.** Reads (analytics, campaign lists) are always fine.
+- **HeyReach** (LinkedIn outreach — campaigns, sequences, leads, inbox): via \`mcp__heyreach__*\` if that MCP is registered, otherwise from Bash (VERIFIED in this sandbox): \`npx -y heyreach-cli campaigns list\` etc. — auth is implicit via the \`HEYREACH_API_KEY\` already in env (there is NO \`auth\` subcommand; a bad key just 401s), same node-PATH note as above. HeyReach's official standalone binary also exists (\`curl -sfL https://github.com/heyreach/heyreach-cli-releases/releases/latest/download/install.sh | bash\`) if npx misbehaves. Same HARD RULE as Instantly: draft-only writes, no activation/sending/deleting without explicit user approval in this conversation.
+- **Per-user external tools (via Composio MCP)**: when the user has connected their accounts (by saying "@Reddy-GTM set me up" or running \`/reddy-connect\`), you'll have access to the \`composio\` MCP server with tools from: Gmail, Google Calendar, Google Drive, Google Sheets, Google Docs, HubSpot, LinkedIn, Apollo, DocuSign. Only toolkits the user has actually connected will work. The turn payload includes a \`connectedToolkits\` array so you know which are live; if it's missing \`gmail\` / \`hubspot\` / etc., tell the user in Slack: "You haven't connected X yet — say '@Reddy-GTM set me up' or run \`/reddy-connect\` and click the link." Don't try disconnected tools; they'll error.
+  - These run AS the Slack user who mentioned you — reading their Gmail, writing their drafts, reading their HubSpot deals, accessing calendars they have permission to see. Everything is scoped to that user's permissions in each service.
+  - Common tool names you'll see on the \`composio\` server: \`GMAIL_FETCH_EMAILS\`, \`GMAIL_CREATE_EMAIL_DRAFT\`, \`GMAIL_SEND_EMAIL\`, \`GOOGLECALENDAR_EVENTS_LIST\`, \`GOOGLECALENDAR_FIND_FREE_SLOTS\`, \`GOOGLECALENDAR_CREATE_EVENT\`, \`GOOGLEDRIVE_FIND_FILE\`, \`GOOGLEDRIVE_DOWNLOAD_FILE\`, \`GOOGLESHEETS_*\`, \`GOOGLEDOCS_*\`, \`HUBSPOT_*\`, \`LINKEDIN_*\`, \`APOLLO_*\`, \`DOCUSIGN_*\`.
+- **Granola MCP (separate from Composio)**: when the user has connected Granola via "set me up", a \`granola\` MCP server is registered with their personal OAuth token. Prefer this over the legacy \`GRANOLA_API_KEY\` curl path — the MCP is per-user (returns only their meetings) and auto-refreshes tokens. Use it for any "what did we discuss", "recent calls", "transcript of X" question. If \`granola\` is NOT in the connected services list, tell the user to run \`@Reddy-GTM set me up\` and click "Connect Granola".
+- **Team Google Drive**: the shared Reddy folder id is \`${process.env.DRIVE_SHARED_FOLDER_ID || "1MCjCHCagypCHe5Z4ysSvVGfuQRX2pnI1"}\`. When the user asks to save a deliverable to the Drive (e.g. "save this in our drive folder for this customer as well"), use their connected googledrive Composio tools to upload it there — inside a subfolder named after the customer (create it if missing) — and reply with the file's Drive link. "What's in our drive" questions can list that folder the same way. If \`googledrive\` isn't in \`connectedToolkits\`, say so and point them to \`/reddy-connect\`.
+
+## Turn-start convention
+At the start of every turn, refresh the workspace so you pick up any saves from other threads:
+\`\`\`bash
+cd /vercel/sandbox/workspace && git pull --rebase origin main
+\`\`\`
+Committed work from other threads propagates to you this way. Uncommitted work stays isolated per-thread.
+
+## How you decide what to do
+The user is talking to you from Slack. Infer their intent from the message content and the thread history. Pick the right skill:
+- Pricing → read \`.claude/skills/pricing/SKILL.md\`
+- Decks → read \`.claude/skills/decks/SKILL.md\`
+- Legal / contracts → read \`.claude/skills/legal/SKILL.md\`
+- Security questionnaires → read \`.claude/skills/security/SKILL.md\`
+- RFPs / RFIs / RFQs → read \`.claude/skills/rfps/SKILL.md\`
+- Marketing (strategy, campaigns, analytics) → read \`.claude/skills/marketing/SKILL.md\`
+- Google Tag Manager (audit + fix tags/triggers/variables on \`GTM-5ZZPN9R2\`) → read \`.claude/skills/gtm/SKILL.md\`. Wraps \`GET /api/gtm/audit\` and \`POST /api/gtm/exec\` via a GCP service account — no per-user Composio auth needed.
+- Ambiguous ("thinking about pricing for Acme") → ask ONE clarifying question via \`post_slack_message\` before committing to a path.
+
+## Conversation style — CRITICAL
+
+**Your plain assistant-text responses are invisible to the user. There is no terminal, no web UI — only the Slack thread. The user ONLY sees what you post via \`mcp__reddy-gtm__post_slack_message\` or \`mcp__reddy-gtm__upload_slack_pdf\`.** If you finish your turn without calling one of those tools, the user sees nothing but a ✅ reaction on their original message. That is a bug from their POV.
+
+Every turn MUST end with at least one \`post_slack_message\` or \`upload_slack_pdf\` call. Usually:
+- For Q&A / research: call \`post_slack_message\` with your final answer, in Slack mrkdwn.
+- For a multi-step build: post a brief acknowledgment early ("reading the Vistra context, picking a reference…"), then \`upload_slack_pdf\` for the deliverable, then a concluding \`post_slack_message\` inviting iteration and reminding them they can 🔒 / "save" to commit.
+- For clarifying questions: call \`post_slack_message\` with the one question.
+
+Do NOT dump your reasoning as plain text and end — that reasoning goes to /dev/null. Put the final answer in \`post_slack_message\`.
+
+- Use Slack mrkdwn: \`*bold*\`, \`_italic_\`, \`\\\`code\\\`\`, \`> quotes\`, bullet points, and \`<URL|display text>\` for hyperlinks. **Never post bare URLs** — always wrap them: \`<https://example.com|Click here>\`. No Markdown headings (\`#\` / \`##\`) — Slack renders them as literal hash marks. No Markdown link syntax (\`[text](url)\`) — Slack doesn't render it; use \`<URL|text>\` instead.
+- Keep messages concise (3-10 lines typical).
+- Cite precedent by name when you make decisions ("I priced this at \\$42/agent BYOT — Vistra 2-yr was \\$12 Sims-only at 1K agents, Cincinnati 2-yr hosted was \\$60 at 350 agents; \\$42 lands between them").
+
+## Write-back semantics — IMPORTANT
+
+**Default: do NOT commit.** Iterate freely in the sandbox workspace. Files you create / modify are preserved across the 30-min idle snapshot per-thread, but invisible to other threads until explicitly saved.
+
+**Two user signals promote work to the library:**
+1. 🔒 (lock) emoji reaction on any bot message — the service dispatches a synthetic "USER_INTENT: save to library" message to you.
+2. Keyword in a user message: "save", "save it", "commit", "lock it in", "ship it", "save to library".
+
+**On either signal**, stage the relevant dirty paths, commit, pull --rebase, push. Be explicit about paths — never \`git add -A\`:
+\`\`\`bash
+export PATH=/vercel/runtimes/node22/bin:/usr/bin:/bin
+cd /vercel/sandbox/workspace
+git status --short
+git add corpora/pricing/proposals/{customer}/   # or corpora/legal/... , decks/... , etc.
+git -c commit.gpgsign=false commit -m "<concise summary>"
+git pull --rebase origin main
+git push origin main
+\`\`\`
+Then \`post_slack_message\` with a short confirmation: "_Saved — pushed to \`corpora/pricing/proposals/acme/\`._"
+
+Do NOT autocommit at the end of a successful build. Do NOT commit iterations, test fixtures, or scratch work. If the user hasn't signaled, leave it local.
+
+## Board tasks — never create duplicates
+Before you create ANY board task (board_create or board_create_subtask), you MUST first call board_list scoped to the board you intend to create on (pass customerSlug/ownerEmail when you know them) and scan for a near-duplicate:
+1. Treat as a duplicate any OPEN (non-Completed, non-dismissed) item with the same kind whose title describes the same intent for the same customer — judge by meaning, not exact string match.
+2. If a near-duplicate exists: do NOT create a second one. Instead call board_add_activity on the existing item (kind:"comment") to note the new context, and tell the user you updated the existing task, citing its title. (Ask first before changing an existing task's status/owner/column — comments/logs are additive and safe.)
+3. Only create a new task when board_list returns no reasonable match.
+For board_create_subtask, check the parent's existing children (board_get on the parentId) rather than the whole board.
+This applies on every surface — Slack, the meetings view, and elsewhere — because you are one shared agent.
+
+## Conditional follow-ups (watches)
+When the user EXPLICITLY asks to set up a conditional or scheduled follow-up — e.g. "if I don't hear back from Nike by Monday, draft a follow-up and remind me", "if this deal has no activity by next month, remind me and pre-draft a reach-out", or "if they go quiet, send our pricing again in two weeks" — create a "watch" (NOT a board task). Only when they clearly ask; then confirm what you armed, which play it'll run, and when it'll check. It never sends anything: on the date it checks the condition and, if it trips, RUNS THE PLAY YOU CHOSE (a draft/deliverable) and pings #sales tagging them. Create it with:
+  curl -sS -X POST "$REDDY_GTM_BASE_URL/api/watchers" \\
+    -H "x-board-secret: $BOARD_API_SECRET" -H "content-type: application/json" \\
+    -d '{"owner":"<current user's @reddy.io email>","account":"Nike","domain":"nike.com","signal":"no_reply","inDays":4,"note":"<their words>","play":"recap_email","botId":"<meeting bot_id if about a meeting, else omit>","slackChannel":"<current Slack channel id if in Slack, else omit>","slackThreadTs":"<current thread ts if in Slack, else omit>"}'
+- signal: "no_reply" (no inbound email from the account by the date) | "no_activity" (no HubSpot/deal activity by the date) | "time_only" (just remind on the date).
+- play: which play it RUNS when it trips — pick the id matching what the follow-up owes: recap_email (a follow-up email nudge — the default when they just say "follow up") | pricing | rfp | account_catchup | recording_link | redline | collateral | accounts_quiet.
+- timing: pass inDays (integer) OR checkAfter (ISO date); resolve "Monday"/"next month"/"in two weeks" yourself. owner = the current user's email (you have it from the turn context). Omit fields you don't know.
+
+## Recalling past work (team sessions)
+For "what did we (or anyone) do on X", "have we talked to Acme", "did someone already draft that / look into this" — search EVERYONE's past sessions (the team's saved chats, across all users) by content:
+  curl -sS "$REDDY_GTM_BASE_URL/api/sessions/search?q=<url-encoded terms>" -H "x-board-secret: $BOARD_API_SECRET"
+Returns matching sessions: { title, viewer (who did it), updatedAt, snippet, url }. Cite the person and link the url (\`<url|title>\`) so they can open it. Check here before saying you don't know about prior work.
+
+## What NOT to do
+- Don't ask permission before using Read/Edit/Bash in the workspace — you have full authority.
+- Don't create a board task without first checking board_list for an existing near-duplicate — update the existing one instead.
+- Don't create a new proposal directory on every iteration; update the existing one for the active thread.
+- Don't fabricate competitor pricing or historical Reddy deals. Cite what's actually in the library.
+- Don't post internal reasoning to Slack; keep that in thinking blocks.
+- Don't \`git add\`/commit unless the user signaled save.
+`;
+
+export function buildAgentDriver(meta: AgentMeta): string {
+  return `// Auto-generated Reddy-GTM driver — do not edit by hand
+// Sandbox: ${meta.sandboxName} · Turn: ${meta.turnCount} · Session: ${meta.sessionId}
+
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+const META = ${JSON.stringify(meta, null, 2)};
+const TURN_NUMBER = parseInt(process.argv[2] ?? "${meta.turnCount}", 10);
+const SLACK_CHANNEL = process.env.SLACK_CHANNEL;
+const SLACK_THREAD_TS = process.env.SLACK_THREAD_TS;
+const SLACK_TOKEN = process.env.SLACK_BOT_TOKEN;
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const PAT = process.env.PRICING_LIBRARY_GITHUB_PAT;
+const THREAD_KEY = process.env.AGENT_THREAD_KEY;
+const SESSION_ID = process.env.AGENT_SESSION_ID;
+const TRACE_KEY = THREAD_KEY + ":trace:" + TURN_NUMBER;
+
+// MCP one-shot mode: when set, post_slack_message goes to a result
+// buffer (not Slack), upload_slack_pdf is rejected, end-of-run writes
+// the buffer to KV under \`mcp:result:\${MCP_REQUEST_ID}\` for the
+// /api/agent/oneshot endpoint to pick up.
+const MCP_REQUEST_ID = META.mcpRequestId;
+const MCP_MODE = !!MCP_REQUEST_ID;
+// The email lane (bot@reddy.io) is a flavor of MCP mode that CAN deliver file
+// attachments: the agent persists a generated file to the KB and bot-mail (which
+// has the Composio key the sandbox lacks) reads it back + attaches it. Gate the
+// attach behavior on this, NOT on MCP_MODE — the Claude Desktop MCP path is also
+// MCP_MODE and has nothing to deliver an attachment.
+const EMAIL_LANE = process.env.AGENT_LANE === "email";
+// Web lane (the board/home chat panels): file deliverables persist to the KB
+// deliverables library and surface in the panel as download cards, exactly
+// like the email lane's attach path — same persistence, different delivery.
+const WEB_LANE = process.env.AGENT_LANE === "web";
+const mcpBuffer = { answer: [], references: [], attachments: [] };
+const attachHint = EMAIL_LANE
+  ? "You are on the EMAIL lane: to attach a file you generate (PDF/xlsx/etc.) to your reply, call upload_slack_pdf(filePath, title) — it becomes a real email attachment (NOT a Slack upload) AND is saved to the cross-surface library at corpora/deliverables/{slug-of-title}/ so it can be pulled up later from Slack/email. Give a descriptive title (e.g. 'Advensus pricing proposal'). Prefer attaching over linking. Still end the turn with one post_slack_message for the email body text."
+  : WEB_LANE
+    ? "You are on the WEB lane (the team's app chat): when you generate a FILE deliverable (PDF/xlsx/docx), call upload_slack_pdf(filePath, title) — it is saved to the cross-surface library (corpora/deliverables/{slug-of-title}/) and appears in the chat panel as a download card the user can lock as the latest version for an account. Give a descriptive title. Still end with one post_slack_message for the answer text."
+    : "upload_slack_pdf errors here; for builds tell them to do it from Slack.";
+function mcpAppendAnswer(text) { mcpBuffer.answer.push(text); }
+function mcpAppendReference(label, url, type) {
+  mcpBuffer.references.push({ label, url, type: type || "link" });
+}
+
+// Session sync (Daybreak Arc V): Slack- and email-lane conversations mirror
+// into the web app's Sessions (/s) so one conversation is visible everywhere.
+// Web-lane turns are recorded by the web client itself — skip them here.
+// Fire-and-forget: sync failures never touch the run.
+const SESSION_SYNC = (!MCP_MODE) || EMAIL_LANE;
+async function recordTurn(role, content) {
+  if (!SESSION_SYNC || !content) return;
+  try {
+    const base = process.env.REDDY_GTM_BASE_URL || "https://reddy-gtm.com";
+    await fetch(base + "/api/agent/turns", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-board-secret": process.env.BOARD_API_SECRET || "" },
+      body: JSON.stringify({
+        threadKey: META.threadKey,
+        lane: EMAIL_LANE ? "email" : "slack",
+        channel: META.slackChannel,
+        threadTs: META.slackThreadTs,
+        userEmail: META.slackUserEmail,
+        role: role,
+        content: String(content).slice(0, 200000),
+      }),
+    });
+  } catch (e) {
+    trace("session_sync_error", { error: String(e && e.message ? e.message : e) });
+  }
+}
+
+// ────────── Slack helpers ──────────
+async function slackApi(method, body) {
+  const res = await fetch(\`https://slack.com/api/\${method}\`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8", Authorization: "Bearer " + SLACK_TOKEN },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+async function postSlackMessage(text) {
+  return slackApi("chat.postMessage", { channel: SLACK_CHANNEL, thread_ts: SLACK_THREAD_TS, text });
+}
+async function setReaction(name) {
+  return slackApi("reactions.add", { channel: SLACK_CHANNEL, name, timestamp: SLACK_THREAD_TS }).catch(() => null);
+}
+async function removeReaction(name) {
+  return slackApi("reactions.remove", { channel: SLACK_CHANNEL, name, timestamp: SLACK_THREAD_TS }).catch(() => null);
+}
+async function uploadPdfToSlack(filePath, title) {
+  const buf = await readFile(filePath);
+  const name = path.basename(filePath);
+  const urlRes = await fetch(\`https://slack.com/api/files.getUploadURLExternal?\${new URLSearchParams({ filename: name, length: String(buf.length) })}\`, {
+    method: "POST", headers: { Authorization: "Bearer " + SLACK_TOKEN },
+  });
+  const u = await urlRes.json();
+  if (!u.ok) throw new Error("getUploadURLExternal failed: " + JSON.stringify(u));
+  const putRes = await fetch(u.upload_url, { method: "POST", body: buf, headers: { "Content-Type": "application/pdf" } });
+  if (!putRes.ok) throw new Error("upload PUT failed: " + putRes.status);
+  const complete = await fetch("https://slack.com/api/files.completeUploadExternal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8", Authorization: "Bearer " + SLACK_TOKEN },
+    body: JSON.stringify({ files: [{ id: u.file_id, title: title || name }], channel_id: SLACK_CHANNEL, thread_ts: SLACK_THREAD_TS }),
+  });
+  const c = await complete.json();
+  if (!c.ok) throw new Error("completeUploadExternal failed: " + JSON.stringify(c));
+  return c;
+}
+
+// Email lane: persist a generated file to the KB DELIVERABLES LIBRARY (Contents
+// API PUT — one call, unique path so no 409/tree-dance) so bot-mail can read its
+// bytes to attach AND any surface's agent can glob + re-share it later. KEPT (not
+// purged): this is the cross-surface library, organized by a title slug.
+function attachMimeType(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  const map = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", csv: "text/csv", txt: "text/plain", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+  return map[ext] || "application/octet-stream";
+}
+function librarySlug(title, fallbackName) {
+  const base = String(title || fallbackName || "deliverable").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return base || "deliverable";
+}
+async function persistAttachmentToKb(filePath, title) {
+  const buf = await readFile(filePath);
+  if (buf.length > 20 * 1024 * 1024) throw new Error("attachment too large (" + buf.length + " bytes; Gmail cap ~25MB)");
+  // Sanitize the agent-chosen filename (no fixed convention in this lane).
+  let name = path.basename(filePath).replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "attachment";
+  if (!name.includes(".")) name += ".pdf";
+  // corpora/deliverables/{title-slug}/{shortRunId}-{name}: discoverable by slug,
+  // unique by run id (so re-runs never 409 against an existing path).
+  const slug = librarySlug(title, name);
+  const shortId = String(MCP_REQUEST_ID).slice(0, 8);
+  const repoPath = "corpora/deliverables/" + slug + "/" + shortId + "-" + name;
+  const res = await fetch("https://api.github.com/repos/ReddySolutions/reddy-gtm/contents/" + repoPath.split("/").map(encodeURIComponent).join("/"), {
+    method: "PUT",
+    headers: { Authorization: "Bearer " + PAT, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    body: JSON.stringify({ message: "deliverable: " + slug + " (" + MCP_REQUEST_ID + ")", content: buf.toString("base64"), branch: "main" }),
+  });
+  if (!res.ok) throw new Error("kb deliverable PUT " + res.status + " " + (await res.text()).slice(0, 200));
+  mcpBuffer.attachments.push({ name, mimetype: attachMimeType(name), kbPath: repoPath });
+  return { name, repoPath, bytes: buf.length };
+}
+
+// ────────── KV helpers ──────────
+async function kvGet(key) {
+  const res = await fetch(\`\${KV_URL}/get/\${encodeURIComponent(key)}\`, { headers: { Authorization: "Bearer " + KV_TOKEN } });
+  const d = await res.json();
+  if (!d || d.result == null) return null;
+  try { return JSON.parse(d.result); } catch { return d.result; }
+}
+async function kvSet(key, value, ttlSeconds = 30 * 24 * 60 * 60) {
+  await fetch(\`\${KV_URL}/set/\${encodeURIComponent(key)}?EX=\${ttlSeconds}\`, {
+    method: "POST", headers: { Authorization: "Bearer " + KV_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify(value),
+  });
+}
+
+// ────────── TRACE (firehose) ──────────
+const TRACE = [];
+function trace(kind, payload) { TRACE.push({ ts: new Date().toISOString(), kind, ...payload }); }
+function chunkString(s, n) { const out = []; for (let i = 0; i < s.length; i += n) out.push(s.slice(i, i + n)); return out; }
+async function dumpTraceToSlack(header) {
+  // Single concise message. Full trace is in KV at TRACE_KEY — pull via
+  // \`node scripts/debug-agent.mjs --threadTs <ts>\` for the firehose.
+  const lastErr = [...TRACE].reverse().find((e) => e.kind === "fatal" || e.kind === "agent_tool_result" && e.is_error);
+  const tail = lastErr ? ("\\n\`\`\`\\n" + JSON.stringify(lastErr, null, 2).slice(0, 2000) + "\\n\`\`\`") : "";
+  await postSlackMessage(header + tail).catch(() => {});
+}
+
+// ────────── Bootstrap ──────────
+function execLog(label, cmd, args, opts) {
+  trace("exec", { label, cmd, args });
+  try {
+    const out = execFileSync(cmd, args, { ...opts, encoding: "utf-8", stdio: ["inherit", "pipe", "pipe"] });
+    trace("exec_output", { label, exitCode: 0, stdout: String(out || "") });
+    process.stdout.write(String(out || ""));
+    return String(out || "");
+  } catch (err) {
+    const stderr = err?.stderr ? String(err.stderr) : "";
+    const stdout = err?.stdout ? String(err.stdout) : "";
+    trace("exec_output", { label, exitCode: err?.status ?? null, stdout, stderr, error: err?.message });
+    process.stderr.write(stderr || String(err));
+    throw err;
+  }
+}
+
+async function ensureLibraryCloned() {
+  if (!PAT) throw new Error("PRICING_LIBRARY_GITHUB_PAT not set");
+  if (!existsSync("workspace/CLAUDE.md")) {
+    trace("bootstrap", { output: "cloning library into workspace/" });
+    const cloneUrl = \`https://x-access-token:\${PAT}@\${META.libraryRepoUrl}\`;
+    execFileSync("git", ["clone", cloneUrl, "workspace"], { stdio: "inherit" });
+    execFileSync("git", ["-C", "workspace", "config", "user.email", "reddy-gtm-bot@reddy.io"], { stdio: "inherit" });
+    execFileSync("git", ["-C", "workspace", "config", "user.name", "Reddy-GTM Bot"], { stdio: "inherit" });
+  } else {
+    trace("bootstrap", { output: "workspace already present" });
+  }
+  // Rewrite any https://github.com/ URLs in submodules to go through the PAT,
+  // then initialize + update. Cheap if already up-to-date, so run every time.
+  execFileSync("git", ["-C", "workspace", "config", "--local", \`url.https://x-access-token:\${PAT}@github.com/.insteadOf\`, "https://github.com/"], { stdio: "inherit" });
+  try {
+    execFileSync("git", ["-C", "workspace", "submodule", "update", "--init", "--recursive"], { stdio: "inherit" });
+    trace("bootstrap", { output: "submodules updated" });
+  } catch (err) {
+    // Non-fatal — submodules may be added later. Log and continue.
+    trace("bootstrap", { output: "submodule update failed: " + (err instanceof Error ? err.message : String(err)) });
+  }
+  // Extra repos (e.g. the Marketing lane's website source). Cloned shallow as
+  // siblings of workspace/ so they don't pollute the KB git tree, and BEST-
+  // EFFORT: a missing repo or a PAT without access must never fail the run —
+  // the agent falls back to crawling the live site.
+  for (const r of (META.extraRepos || [])) {
+    const dest = "/vercel/sandbox/" + r.dir;
+    if (existsSync(dest)) { trace("bootstrap", { output: "extra repo present: " + r.dir }); continue; }
+    try {
+      const url = \`https://x-access-token:\${PAT}@\${r.url}\`;
+      execFileSync("git", ["clone", "--depth", "1", url, dest], { stdio: "inherit" });
+      trace("bootstrap", { output: "cloned extra repo " + r.url + " -> " + r.dir });
+    } catch (err) {
+      trace("bootstrap", { output: "extra repo clone FAILED (" + r.url + "): " + (err instanceof Error ? err.message : String(err)) });
+    }
+  }
+}
+
+async function ensureSdkInstalled() {
+  if (existsSync("node_modules/@anthropic-ai/claude-agent-sdk")) { trace("bootstrap", { output: "sdk present" }); return; }
+  execLog("npm-init", "npm", ["init", "-y"]);
+  execLog("npm-install-sdk", "npm", ["install", "--no-fund", "@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-code", "zod"]);
+}
+
+// ────────── Agent SDK invocation ──────────
+async function main() {
+  await ensureLibraryCloned();
+  await ensureSdkInstalled();
+
+  const { query, createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
+  const { z } = await import("zod");
+
+  // Flipped to true inside the Slack-posting MCP tool handlers (post_slack_message,
+  // upload_slack_pdf). Used at end-of-turn to decide whether to set ✅/❌ reactions
+  // and whether to dump a fallback message if the agent ended without calling them.
+  let slackPosted = false;
+
+  const turn = JSON.parse(await readFile(\`inbox/turn-\${TURN_NUMBER}.json\`, "utf-8"));
+  trace("info", { output: "turn payload: " + JSON.stringify(turn) });
+  // Sessions mirror gets the CLEAN text the human typed (displayText), not the
+  // enriched prompt with injected index/meanwhile blocks.
+  void recordTurn("user", turn.displayText || turn.userText);
+
+  // Board API helper — the in-sandbox tools call back to /api/board/* as the
+  // current Slack user (x-board-actor) with the shared secret. String concat
+  // only (no backticks / no \${}) so this stays literal inside the driver template.
+  const boardFetch = async (apiPath, body) => {
+    try {
+      const base = process.env.REDDY_GTM_BASE_URL || "https://reddy-gtm.com";
+      const r = await fetch(base + "/api/board/" + apiPath, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-board-secret": process.env.BOARD_API_SECRET || "",
+          "x-board-actor": (META && META.slackUserEmail) || "",
+        },
+        body: JSON.stringify(body || {}),
+      });
+      const text = await r.text();
+      trace("tool_call", { name: "board:" + apiPath, status: r.status });
+      return { content: [{ type: "text", text: "HTTP " + r.status + " " + text }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: "board error: " + (e && e.message ? e.message : String(e)) }], isError: true };
+    }
+  };
+
+  // Domain MCP server — Slack + fetch_url + the GTM board. PDF compile uses Bash.
+  const reddyMcp = createSdkMcpServer({
+    name: "reddy-gtm",
+    version: "0.1.0",
+    tools: [
+      tool(
+        "post_slack_message",
+        "Post a mrkdwn message to the current Slack thread. Use for all user-visible replies.",
+        { text: z.string().describe("The message text (Slack mrkdwn).") },
+        async ({ text }) => {
+          if (MCP_MODE) {
+            mcpAppendAnswer(text);
+            trace("tool_call", { name: "post_slack_message", mcp: true, textPreview: text.slice(0, 200) });
+            slackPosted = true; // re-purposed in MCP mode: "did the agent reply at all"
+            return { content: [{ type: "text", text: "buffered for MCP response" }] };
+          }
+          const r = await postSlackMessage(text);
+          trace("tool_call", { name: "post_slack_message", textPreview: text.slice(0, 200), ok: r?.ok });
+          if (r?.ok) {
+            slackPosted = true;
+            void recordTurn("assistant", text); // sessions mirror
+          }
+          return { content: [{ type: "text", text: r?.ok ? "posted" : "post failed: " + JSON.stringify(r) }] };
+        },
+      ),
+      tool(
+        "upload_slack_pdf",
+        "Upload a PDF file from the sandbox filesystem to the current Slack thread. The file will appear inline.",
+        {
+          filePath: z.string().describe("Absolute or workspace-relative path to the PDF."),
+          title: z.string().describe("Short title shown above the file in Slack."),
+        },
+        async ({ filePath, title }) => {
+          const abs = path.isAbsolute(filePath) ? filePath : path.join("/vercel/sandbox", filePath);
+          if (EMAIL_LANE || WEB_LANE) {
+            // Email/web lanes: persist to the KB + buffer it; bot-mail attaches
+            // it to the reply, the web panel renders a download card. (The
+            // answer text still rides via post_slack_message.)
+            try {
+              const r = await persistAttachmentToKb(abs, title);
+              trace("tool_call", { name: "upload_slack_pdf", mode: EMAIL_LANE ? "email-attach" : "web-artifact", kbPath: r.repoPath, bytes: r.bytes });
+              slackPosted = true; // counts as "the agent produced a deliverable"
+              return { content: [{ type: "text", text: (EMAIL_LANE ? "Attached " + r.name + " to the email reply" : "Delivered " + r.name + " to the chat panel") + " (saved to the library at " + r.repoPath + ")." }] };
+            } catch (e) {
+              return { content: [{ type: "text", text: "ERROR attaching file: " + (e instanceof Error ? e.message : String(e)) + ". Post a link or summary via post_slack_message instead." }], isError: true };
+            }
+          }
+          if (MCP_MODE) {
+            // Non-email MCP (Claude Desktop) — file deliverables don't fit a sync
+            // response and nothing downstream delivers them. Tell the agent to link.
+            return { content: [{ type: "text", text: "ERROR: upload_slack_pdf is not available in MCP mode. Either (a) post a link to the artifact via post_slack_message + reference URL, or (b) tell the user this is a build task best done by mentioning @Reddy-GTM in Slack." }], isError: true };
+          }
+          await uploadPdfToSlack(abs, title);
+          trace("tool_call", { name: "upload_slack_pdf", filePath: abs, title });
+          slackPosted = true;
+          return { content: [{ type: "text", text: "uploaded " + path.basename(abs) + " as '" + title + "'" }] };
+        },
+      ),
+      tool(
+        "fetch_url",
+        "Download an HTTP(S) URL and save the bytes to a sandbox path. Use for customer logos and any remote binary asset.",
+        {
+          url: z.string().url(),
+          savePath: z.string().describe("Path inside the sandbox to save the file to."),
+        },
+        async ({ url, savePath }) => {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(\`fetch \${url} -> \${res.status}\`);
+          const abs = path.isAbsolute(savePath) ? savePath : path.join("/vercel/sandbox", savePath);
+          mkdirSync(path.dirname(abs), { recursive: true });
+          const buf = Buffer.from(await res.arrayBuffer());
+          await writeFile(abs, buf);
+          trace("tool_call", { name: "fetch_url", url, savePath: abs, bytes: buf.length });
+          return { content: [{ type: "text", text: \`saved \${buf.length} bytes to \${abs}\` }] };
+        },
+      ),
+      tool(
+        "board_list",
+        "List work items from a board. boardKey is one of 'gtm' (pre-sale / prospects / unsigned pilots), 'success' (signed customers), 'operations' (internal) — defaults to gtm. Optional filters {ownerEmail, customerSlug}. Use for 'what's on the board', 'what's open for <customer>', 'my tasks'. Returns items with their current version (needed to move/update them).",
+        { boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), mode: z.string().optional() },
+        async (args) => boardFetch("list", args),
+      ),
+      tool(
+        "board_get",
+        "Get one board work item with its subtasks and activity feed. Pass {id}.",
+        { id: z.string() },
+        async (args) => boardFetch("get", args),
+      ),
+      tool(
+        "board_create",
+        "Create a board work item. FIRST call board_list (same boardKey, + customerSlug/ownerEmail when known) and check for an OPEN near-duplicate (same kind + same intent for the same customer); if one exists, do NOT create — add a board_add_activity comment on it and tell the user you updated the existing task. Only create when there's no match. boardKey ∈ 'gtm'|'success'|'operations' (default gtm: gtm=pre-sale/prospects/unsigned pilots, success=signed customers, operations=internal). kind ∈ pricing_proposal|rfp_response|followup_email|meeting_prep|deck_qbr|prep_custom_demo|contract_redline|book_meeting|recording_link|scheduling|account_research|enablement_collateral|crm_update|log_to_hubspot|generic. A human-created task defaults to the 'To Do' column. Set botAssigned:true so the bot does a first pass when it reaches 'Reddy Working'. When creating from a post-meeting proposal, set sourceRef to the meeting botId so the task links back to its recording/transcript.",
+        { title: z.string(), kind: z.string(), boardKey: z.string().optional(), ownerEmail: z.string().optional(), customerSlug: z.string().optional(), dueAt: z.string().optional(), botAssigned: z.boolean().optional(), sourceRef: z.string().optional() },
+        async (args) => boardFetch("create", args),
+      ),
+      tool(
+        "board_move",
+        "Move a work item between columns: Unsorted | To Do | Reddy Working | Reddy Waiting | Completed. Pass {id, expectedVersion, column} (expectedVersion from board_get/board_list). Moving a bot-assigned item into 'Reddy Working' fires the bot to do a first-pass draft.",
+        { id: z.string(), expectedVersion: z.number(), column: z.string() },
+        async (args) => boardFetch("move", args),
+      ),
+      tool(
+        "board_assign",
+        "Assign a work item to a teammate and/or the bot. Pass {id, expectedVersion, ownerEmail?, botAssigned?}.",
+        { id: z.string(), expectedVersion: z.number(), ownerEmail: z.string().optional(), botAssigned: z.boolean().optional() },
+        async (args) => boardFetch("assign", args),
+      ),
+      tool(
+        "board_add_activity",
+        "Add a comment or log a real-world activity (email sent, call made) on a work item. Pass {id, kind:'comment'|'logged_activity', body}.",
+        { id: z.string(), kind: z.string(), body: z.string() },
+        async (args) => boardFetch("activity", args),
+      ),
+      tool(
+        "board_create_subtask",
+        "Create a subtask under a parent work item (e.g. a follow-up under an in-flight deal task). Pass {parentId, title, kind, ownerEmail?, dueAt?}. From a post-meeting proposal, set sourceRef to the meeting botId.",
+        { parentId: z.string(), title: z.string(), kind: z.string(), ownerEmail: z.string().optional(), dueAt: z.string().optional(), sourceRef: z.string().optional(), customerSlug: z.string().optional() },
+        async (args) => boardFetch("subtask", args),
+      ),
+      tool(
+        "board_set_status",
+        "Set a work item's status directly (triage|approved|in_progress|waiting|blocked|done|dismissed). Prefer board_move for normal column moves. Pass {id, expectedVersion, status, dismissedReason?}.",
+        { id: z.string(), expectedVersion: z.number(), status: z.string(), dismissedReason: z.string().optional() },
+        async (args) => boardFetch("update", { id: args.id, expectedVersion: args.expectedVersion, patch: { status: args.status, dismissedReason: args.dismissedReason } }),
+      ),
+    ],
+  });
+
+  // Surface connection state into the prompt so the agent knows exactly
+  // which per-user tools are live. Without this the agent has to guess
+  // from the MCP tool list, and since a registered-but-partial composio
+  // MCP still shows *some* tools, it often says "nothing's connected"
+  // when in fact 6 of 8 are.
+  const connectedServices = [
+    ...(Array.isArray(META.connectedToolkits) ? META.connectedToolkits : []),
+    ...(META.granolaMcp ? ["granola"] : []),
+  ];
+  const connectedBlock =
+    connectedServices.length > 0
+      ? \`Connected services for this user (\${META.slackUserEmail}): \${connectedServices.join(", ")}. Tools from these are live on the corresponding MCP (composio for Gmail/HubSpot/etc., granola for meetings); use them without asking.\`
+      : \`No external services are connected yet for \${META.slackUserEmail || "this user"}. If the user's ask needs Gmail / Calendar / Drive / Sheets / Docs / HubSpot / LinkedIn / Apollo / Granola, tell them to \\\`@Reddy-GTM set me up\\\` first.\`;
+  const mcpModeBlock = MCP_MODE
+    ? \` [MODE: MCP one-shot — Claude Desktop/Code via the reddy-gtm MCP server, NOT Slack. Same answer-discipline as Slack (brief, cite precedent, link out instead of inlining raw artifacts). \${attachHint} Skip 🔒/save prompts. End the turn with one \\\`post_slack_message\\\`. CRITICAL FOR MEETING/TRANSCRIPT/RECORDING QUERIES: a kb meeting index is pre-injected at the top of this user message — it has bot_id, customer_slug, attendees, transcript/video flags, AND pre-minted \\\`video_url\\\` for every meeting that has a video. If the user asks for a video link, JUST RETURN THE \\\`video_url\\\` from the index — no need to curl \\\`/api/recall/video-link\\\`. If you do need to glob the kb for transcript content, use \\\`ls corpora/success/customers/*/meetings/*/transcript.txt\\\` (note the wildcard — \\\`_unsorted/\\\` is a real slug). Do NOT call Granola tools (\\\`mcp__composio__GRANOLA_*\\\`, \\\`list_meetings\\\`, etc.) for transcript queries unless the kb glob returns zero AND the index shows nothing.]\`
+    : "";
+
+  // Download any user-attached files into the sandbox so the agent can
+  // Read / Bash on them. Slack url_private_download needs the bot token;
+  // web-lane uploads come from our own /api/board/ui/upload endpoint and need
+  // x-board-secret. Files land at inbox/files/{name}.
+  const downloadedFiles = [];
+  if (Array.isArray(META.slackFiles) && META.slackFiles.length > 0) {
+    mkdirSync("inbox/files", { recursive: true });
+    for (const f of META.slackFiles) {
+      const safeName = String(f.name || "upload").replace(/[\\\\/:*?"<>|]/g, "_").slice(0, 200);
+      const dst = \`inbox/files/\${safeName}\`;
+      const absDst = "/vercel/sandbox/" + dst;
+      try {
+        const isSlackUrl = /slack\\.com/.test(String(f.url || ""));
+        const dlHeaders = isSlackUrl
+          ? { Authorization: "Bearer " + SLACK_TOKEN }
+          : (process.env.BOARD_API_SECRET ? { "x-board-secret": process.env.BOARD_API_SECRET } : {});
+        const res = await fetch(f.url, { headers: dlHeaders });
+        if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        await writeFile(dst, buf);
+        downloadedFiles.push({ ...f, path: absDst, downloaded_bytes: buf.length });
+        trace("file_download", { name: safeName, mimetype: f.mimetype, bytes: buf.length, path: absDst });
+      } catch (err) {
+        downloadedFiles.push({ ...f, path: null, error: err instanceof Error ? err.message : String(err) });
+        trace("file_download_error", { name: safeName, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  const filesBlock = downloadedFiles.length > 0
+    ? " [Attached files (saved into the sandbox):\\n" + downloadedFiles.map((f) => \`  • \${f.path || "(download failed)"} — \${f.name} (\${f.mimetype}, \${Math.round((f.size || 0)/1024)}KB)\`).join("\\n") + "\\nThe user shared these files with their message — read them to answer. Use \\\`Read\\\` for text/markdown, \\\`Bash\\\` (e.g., pdftotext, csvkit, openpyxl via python) for PDFs/spreadsheets, \\\`Read\\\` directly for images.]"
+    : "";
+
+  const userContent = \`[turn \${TURN_NUMBER}] [\${connectedBlock}]\${mcpModeBlock}\${filesBlock} \${turn.userText}\`;
+
+  // If the user has connected Google via Composio, their per-user MCP URL
+  // was generated service-side and passed through META. Register it
+  // alongside the in-process reddy-gtm MCP; Claude Agent SDK handles routing.
+  const mcpServers = { "reddy-gtm": reddyMcp };
+  if (META.composioMcp) {
+    mcpServers["composio"] = {
+      type: "http",
+      url: META.composioMcp.url,
+      headers: META.composioMcp.headers,
+    };
+    trace("info", { output: "Composio MCP registered for " + META.slackUserEmail });
+  }
+  // Granola has its own per-user OAuth (no Composio toolkit). The API
+  // route fetched + refreshed tokens and passed the auth header through.
+  if (META.granolaMcp) {
+    mcpServers["granola"] = {
+      type: "http",
+      url: META.granolaMcp.url,
+      headers: META.granolaMcp.headers,
+    };
+    trace("info", { output: "Granola MCP registered for " + META.slackUserEmail });
+  }
+
+  // Supermetrics MCP — the marketing data warehouse (Google Search Console,
+  // GA4, Google Ads, LinkedIn Ads), authed by the workspace-level key that
+  // both lanes already pass into the sandbox env. Same hosted Streamable-HTTP
+  // shape as Granola. Data queries are ASYNC on Supermetrics' side
+  // (data_query submits, get_async_query_results polls).
+  if (process.env.SUPERMETRICS_API_KEY) {
+    mcpServers["supermetrics"] = {
+      type: "http",
+      url: "https://mcp.supermetrics.com/mcp",
+      headers: { Authorization: "Bearer " + process.env.SUPERMETRICS_API_KEY },
+    };
+    trace("info", { output: "Supermetrics MCP registered" });
+  }
+
+  // Instantly MCP — cold-email campaigns/sequences/leads (full V2 API surface).
+  // Header auth per the server's own instructions (x-instantly-api-key; the
+  // /mcp/KEY path form is legacy). Write ops are gated by prompt rules: draft/
+  // paused only, never activate or send without explicit user approval.
+  if (process.env.INSTANTLY_API_KEY) {
+    mcpServers["instantly"] = {
+      type: "http",
+      url: "https://mcp.instantly.ai/mcp",
+      headers: { "x-instantly-api-key": process.env.INSTANTLY_API_KEY },
+    };
+    trace("info", { output: "Instantly MCP registered" });
+  }
+
+  // HeyReach MCP — LinkedIn outreach sequences. HeyReach mints a per-workspace
+  // MCP URL + dedicated MCP key (dashboard: Integrations → HeyReach MCP Server);
+  // the REST HEYREACH_API_KEY is NOT it. Registered only once both env vars are
+  // set. Same draft-only write gating as Instantly.
+  if (process.env.HEYREACH_MCP_URL) {
+    mcpServers["heyreach"] = {
+      type: "http",
+      url: process.env.HEYREACH_MCP_URL,
+      headers: process.env.HEYREACH_MCP_KEY ? { "X-API-Key": process.env.HEYREACH_MCP_KEY } : {},
+    };
+    trace("info", { output: "HeyReach MCP registered" });
+  }
+
+  const queryOptions = {
+    model: META.model || "claude-opus-4-8",
+    systemPrompt: { type: "preset", preset: "claude_code", append: ${JSON.stringify(APPEND_SYSTEM_PROMPT)} },
+    cwd: "/vercel/sandbox/workspace",
+    additionalDirectories: ["/vercel/sandbox"],
+    settingSources: ["project"],
+    allowedTools: [
+      "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite",
+      // Subagent fan-out + orchestration. "Agent" is the current SDK name for the
+      // subagent tool (renamed from "Task"); keep both so it works across SDK versions.
+      // "Workflow" lets the bot orchestrate large off-thread batch jobs (audits,
+      // multi-customer research). Subagent definitions live in the KB at .claude/agents/
+      // and load via settingSources:["project"].
+      "Task", "Agent", "Workflow",
+      "mcp__reddy-gtm__post_slack_message",
+      "mcp__reddy-gtm__upload_slack_pdf",
+      "mcp__reddy-gtm__fetch_url",
+      "mcp__reddy-gtm__board_list",
+      "mcp__reddy-gtm__board_get",
+      "mcp__reddy-gtm__board_create",
+      "mcp__reddy-gtm__board_move",
+      "mcp__reddy-gtm__board_assign",
+      "mcp__reddy-gtm__board_add_activity",
+      "mcp__reddy-gtm__board_create_subtask",
+      "mcp__reddy-gtm__board_set_status",
+    ],
+    mcpServers,
+    thinking: { type: "adaptive" },
+    // Highest practical effort for an INTERACTIVE agent (a Slack user is waiting).
+    // "max" is also valid on Opus 4.8 but risks overthinking/latency in the loop;
+    // bump to "max" for unattended/proactive runs where correctness > latency.
+    effort: "xhigh",
+    maxTurns: ${MAX_TURNS},
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    env: {
+      ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+      ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+      CLAUDE_AGENT_SDK_CLIENT_APP: "reddy-gtm/0.1",
+      // GTM data + enrichment APIs the agent calls via Bash + curl
+      APOLLO_API_KEY: process.env.APOLLO_API_KEY ?? "",
+      ENRICHLAYER_API_KEY: process.env.ENRICHLAYER_API_KEY ?? "",
+      HUBSPOT_API_KEY: process.env.HUBSPOT_API_KEY ?? "",
+      SUPERMETRICS_API_KEY: process.env.SUPERMETRICS_API_KEY ?? "",
+      EXA_API_KEY: process.env.EXA_API_KEY ?? "",
+      HEYREACH_API_KEY: process.env.HEYREACH_API_KEY ?? "",
+      INSTANTLY_API_KEY: process.env.INSTANTLY_API_KEY ?? "",
+      GRANOLA_API_KEY: process.env.GRANOLA_API_KEY ?? "",
+      RECALL_API_KEY: process.env.RECALL_API_KEY ?? "",
+      RECALL_REGION: process.env.RECALL_REGION ?? "us-west-2",
+      RECALL_VIDEO_FETCH_SECRET: process.env.RECALL_VIDEO_FETCH_SECRET ?? "",
+      MUX_TOKEN_ID: process.env.MUX_TOKEN_ID ?? "",
+      MUX_TOKEN_SECRET: process.env.MUX_TOKEN_SECRET ?? "",
+      // Reddy Postgres
+      POSTGRES_URL: process.env.POSTGRES_URL ?? "",
+      POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING ?? "",
+      // Base URL for legacy /api/* routes the agent can hit
+      REDDY_GTM_BASE_URL: process.env.REDDY_GTM_BASE_URL ?? "https://reddy-gtm.com",
+      // Lets the agent's Bash curl internal routes that require it (e.g. the
+      // conditional-follow-up create at /api/watchers). This env block fully
+      // REPLACES the agent subprocess env, so anything not listed is absent.
+      BOARD_API_SECRET: process.env.BOARD_API_SECRET ?? "",
+      // Slack context (so MCP tools inside the SDK can post back)
+      SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
+      SLACK_CHANNEL: process.env.SLACK_CHANNEL ?? "",
+      SLACK_THREAD_TS: process.env.SLACK_THREAD_TS ?? "",
+      // Don't pull video.mp4 bytes on git pull — they live in LFS and the
+      // agent only reads small text pointers. Fresh download URLs come
+      // from /api/recall/video/[botId] when needed.
+      GIT_LFS_SKIP_SMUDGE: "1",
+    },
+  };
+
+  // On the first turn start a fresh session with our chosen UUID; subsequent
+  // turns resume that session so the agent carries context across Slack turns.
+  if (META.isFirstTurn) {
+    queryOptions.sessionId = SESSION_ID;
+  } else {
+    queryOptions.resume = SESSION_ID;
+  }
+
+  trace("info", { output: "starting query", isFirstTurn: META.isFirstTurn, sessionId: SESSION_ID });
+
+  const q = query({ prompt: userContent, options: queryOptions });
+
+  // Roll up this run's model spend so the web lane can show per-session cost
+  // (matters most for the Fable marketing lane). The SDK emits one result
+  // message per run carrying total_cost_usd + usage; sum defensively.
+  let runCostUsd = 0;
+  let runInputTokens = 0;
+  let runOutputTokens = 0;
+
+  // Only flip when a *Slack-posting* MCP tool succeeds — not Read/Bash/Skill/etc.
+  // Set inside the tool handlers above; closed over here.
+  for await (const message of q) {
+    if (message.type === "assistant") {
+      for (const block of message.message?.content ?? []) {
+        if (block.type === "tool_use") trace("agent_tool_use", { name: block.name, input: block.input });
+        else if (block.type === "text") trace("assistant_text", { output: block.text });
+        else if (block.type === "thinking") trace("assistant_thinking", { output: block.thinking || "" });
+      }
+    } else if (message.type === "user" && message.message?.content) {
+      // tool_result blocks — just trace; the slackPosted flag is set inside the
+      // MCP tool handlers themselves, not inferred from tool_result here.
+      for (const block of message.message.content) {
+        if (block.type === "tool_result") {
+          trace("agent_tool_result", {
+            tool_use_id: block.tool_use_id,
+            is_error: block.is_error,
+            content: typeof block.content === "string" ? block.content.slice(0, 2000) : JSON.stringify(block.content).slice(0, 2000),
+          });
+        }
+      }
+    } else if (message.type === "result") {
+      runCostUsd += Number(message.total_cost_usd) || 0;
+      runInputTokens += Number(message.usage?.input_tokens) || 0;
+      runOutputTokens += Number(message.usage?.output_tokens) || 0;
+      trace("result", {
+        subtype: message.subtype,
+        is_error: message.is_error,
+        num_turns: message.num_turns,
+        total_cost_usd: message.total_cost_usd,
+        duration_ms: message.duration_ms,
+      });
+    } else {
+      trace("stream_" + message.type, { raw: JSON.stringify(message).slice(0, 1000) });
+    }
+  }
+
+  await kvSet(TRACE_KEY, TRACE).catch(() => {});
+
+  // MCP mode: write the buffered answer + references to KV so /api/agent/
+  // oneshot can pick it up. No Slack reactions, no fallbacks.
+  if (MCP_MODE) {
+    const lastText = [...TRACE].reverse().find((e) => e.kind === "assistant_text" && typeof e.output === "string" && e.output.trim().length > 0);
+    const fallbackAnswer = lastText ? String(lastText.output) : "";
+    const finalAnswer = mcpBuffer.answer.length > 0 ? mcpBuffer.answer.join("\\n\\n") : fallbackAnswer;
+    await kvSet("mcp:result:" + MCP_REQUEST_ID, {
+      ok: true,
+      answer: finalAnswer,
+      references: mcpBuffer.references,
+      attachments: mcpBuffer.attachments,
+      costUsd: runCostUsd,
+      model: META.model || "claude-opus-4-8",
+      inputTokens: runInputTokens,
+      outputTokens: runOutputTokens,
+      finishedAt: new Date().toISOString(),
+    }, 3 * 60 * 60).catch(() => {});
+    if (EMAIL_LANE) await recordTurn("assistant", finalAnswer); // sessions mirror
+    console.log("[agent-driver] MCP run " + MCP_REQUEST_ID + " complete (" + finalAnswer.length + " chars, " + mcpBuffer.attachments.length + " attachments)");
+    return;
+  }
+
+  // Privacy disclosure: if any Composio MCP tool ran this turn AND this thread
+  // is in a shared channel (anything that isn't a 1:1 DM), remind the user
+  // that their authenticated tools are reachable by anyone mentioning
+  // @Reddy-GTM in this thread until they close it.
+  if (META.isSharedChannel) {
+    const composioToolUsed = TRACE.some(
+      (e) => e.kind === "agent_tool_use" && typeof e.name === "string" && e.name.startsWith("mcp__composio__"),
+    );
+    if (composioToolUsed && slackPosted) {
+      await postSlackMessage(
+        "_:lock_with_ink_pen: Heads up: anyone who mentions me in this thread inherits access to *your* authenticated tools (Gmail, Calendar, HubSpot, etc.). React :end: or say \`@Reddy-GTM end thread\` to close the session + stop the sandbox._"
+      ).catch(() => {});
+    }
+  }
+
+  // Agent never posted anything user-visible? Surface whatever text it emitted
+  // as a fallback so the user sees SOMETHING (better than a silent green check).
+  if (!slackPosted) {
+    const lastText = [...TRACE].reverse().find((e) => e.kind === "assistant_text" && typeof e.output === "string" && e.output.trim().length > 0);
+    if (lastText) {
+      const fallback = "_(auto-posted — I forgot to use the Slack tool)_\\n\\n" + String(lastText.output).slice(0, 3800);
+      await postSlackMessage(fallback).catch(() => {});
+      slackPosted = true;
+    } else {
+      await postSlackMessage(\`:warning: Reddy-GTM finished without a reply. Trace: \\\`\${TRACE_KEY}\\\`.\`).catch(() => {});
+    }
+  }
+
+  await removeReaction("speech_balloon");
+  await setReaction(slackPosted ? "white_check_mark" : "x");
+
+  console.log(\`[agent-driver] Turn \${TURN_NUMBER} complete\`);
+}
+
+main().catch(async (err) => {
+  console.error("[agent-driver] FATAL:", err);
+  trace("fatal", { error: err instanceof Error ? (err.stack || err.message) : String(err) });
+  await kvSet(TRACE_KEY, TRACE).catch(() => {});
+  if (MCP_MODE) {
+    await kvSet("mcp:result:" + MCP_REQUEST_ID, {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      finishedAt: new Date().toISOString(),
+    }, 3 * 60 * 60).catch(() => {});
+    process.exit(1);
+  }
+  const header = \`:rotating_light: *Reddy-GTM driver crashed* · sandbox=\\\`\${META.sandboxName}\\\` · trace=\\\`\${TRACE_KEY}\\\`\\nError: \\\`\${err instanceof Error ? err.message : String(err)}\\\`\`;
+  await dumpTraceToSlack(header).catch(() => {});
+  await removeReaction("speech_balloon").catch(() => {});
+  await setReaction("x").catch(() => {});
+  process.exit(1);
+});
+`;
+}

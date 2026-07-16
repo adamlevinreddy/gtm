@@ -1,0 +1,10 @@
+{
+  "categories": {
+    "bpo": { "label": "BPO / Outsourcing", "action": "tag" },
+    "media": { "label": "Media / Press", "action": "tag" }
+  },
+  "companies": [
+    { "name": "TTEC", "aliases": ["TTEC DIGITAL", "TTEC Digital", "ttec"], "category": "bpo", "added": "2026-03-28", "source": "test" },
+    { "name": "CX Today", "aliases": [], "category": "media", "added": "2026-03-28", "source": "test" }
+  ]
+}

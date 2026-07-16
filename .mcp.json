@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "supermetrics": {
+      "type": "streamableHttp",
+      "url": "https://mcp.supermetrics.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SUPERMETRICS_API_KEY}"
+      }
+    }
+  }
+}
